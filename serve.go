@@ -81,6 +81,10 @@ type Client interface {
 	AuditorReady(context.Context, *AuditRequest) (*ReadyResponse, error)
 	AuditorApplicable(context.Context, *AuditRequest) (*ApplicableResponse, error)
 	Audit(context.Context, *AuditRequest) (*AuditResponse, error)
+	AnalyzerDescriptor(context.Context) (*AnalyzerDescriptor, error)
+	AnalyzerReady(context.Context, *AnalyzeRequest) (*ReadyResponse, error)
+	AnalyzerApplicable(context.Context, *AnalyzeRequest) (*ApplicableResponse, error)
+	Analyze(context.Context, *AnalyzeRequest) (*AnalyzeResponse, error)
 }
 
 // HandshakeConfig returns the shared HashiCorp go-plugin handshake configuration.
@@ -102,22 +106,22 @@ func ClientPluginMap() map[string]hplugin.Plugin {
 // ServeDetector serves one detector plugin over Bomly's managed HashiCorp
 // go-plugin gRPC transport. Call it from the plugin binary's main function.
 func ServeDetector(detector ServedDetector) {
-	serve(detector, nil, nil)
+	serve(detector, nil, nil, nil)
 }
 
 // ServeMatcher serves one matcher plugin over Bomly's managed HashiCorp
 // go-plugin gRPC transport. Call it from the plugin binary's main function.
 func ServeMatcher(matcher ServedMatcher) {
-	serve(nil, matcher, nil)
+	serve(nil, matcher, nil, nil)
 }
 
 // ServeAuditor serves one auditor plugin over Bomly's managed HashiCorp
 // go-plugin gRPC transport. Call it from the plugin binary's main function.
 func ServeAuditor(auditor ServedAuditor) {
-	serve(nil, nil, auditor)
+	serve(nil, nil, auditor, nil)
 }
 
-func serve(detector ServedDetector, matcher ServedMatcher, auditor ServedAuditor) {
+func serve(detector ServedDetector, matcher ServedMatcher, auditor ServedAuditor, analyzer ServedAnalyzer) {
 	hplugin.Serve(&hplugin.ServeConfig{
 		HandshakeConfig: HandshakeConfig(),
 		Plugins: map[string]hplugin.Plugin{
@@ -126,6 +130,7 @@ func serve(detector ServedDetector, matcher ServedMatcher, auditor ServedAuditor
 					detector: detector,
 					matcher:  matcher,
 					auditor:  auditor,
+					analyzer: analyzer,
 				},
 			},
 		},
@@ -151,6 +156,7 @@ type serviceServer struct {
 	detector ServedDetector
 	matcher  ServedMatcher
 	auditor  ServedAuditor
+	analyzer ServedAnalyzer
 }
 
 type pluginServiceServer interface {
@@ -169,6 +175,10 @@ type pluginServiceServer interface {
 	AuditorReady(context.Context, *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error)
 	AuditorApplicable(context.Context, *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error)
 	Audit(context.Context, *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error)
+	AnalyzerDescriptor(context.Context, *emptypb.Empty) (*wrapperspb.BytesValue, error)
+	AnalyzerReady(context.Context, *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error)
+	AnalyzerApplicable(context.Context, *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error)
+	Analyze(context.Context, *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error)
 }
 
 func (s *serviceServer) DetectorDescriptor(ctx context.Context, _ *emptypb.Empty) (*wrapperspb.BytesValue, error) {
@@ -499,6 +509,10 @@ func registerPluginService(server *grpc.Server, impl *serviceServer) {
 			{MethodName: "AuditorReady", Handler: auditorReadyHandler},
 			{MethodName: "AuditorApplicable", Handler: auditorApplicableHandler},
 			{MethodName: "Audit", Handler: auditHandler},
+			{MethodName: "AnalyzerDescriptor", Handler: analyzerDescriptorHandler},
+			{MethodName: "AnalyzerReady", Handler: analyzerReadyHandler},
+			{MethodName: "AnalyzerApplicable", Handler: analyzerApplicableHandler},
+			{MethodName: "Analyze", Handler: analyzeHandler},
 		},
 	}, impl)
 }

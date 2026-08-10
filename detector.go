@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 
 	"go.uber.org/zap"
@@ -126,6 +127,9 @@ type DetectorDescriptor struct {
 	// regardless of its name (e.g. "pyvenv.cfg" identifies a Python
 	// virtualenv). Optional; omitted by older plugins.
 	IgnoredDirectoryMarkers []string `json:"ignoredDirectoryMarkers,omitempty"`
+	// ConfigSchema optionally documents the detector's configuration block as
+	// a JSON Schema. Build it with ConfigSchemaFor.
+	ConfigSchema json.RawMessage `json:"configSchema,omitempty"`
 }
 
 // Clone returns a deep copy of the detector descriptor.
@@ -138,6 +142,7 @@ func (d DetectorDescriptor) Clone() DetectorDescriptor {
 	clone.FallbackDetectors = append([]string(nil), d.FallbackDetectors...)
 	clone.IgnoredDirectories = append([]string(nil), d.IgnoredDirectories...)
 	clone.IgnoredDirectoryMarkers = append([]string(nil), d.IgnoredDirectoryMarkers...)
+	clone.ConfigSchema = append(json.RawMessage(nil), d.ConfigSchema...)
 	clone.PackageManagerSupport = make([]PackageManagerSupport, len(d.PackageManagerSupport))
 	for idx, support := range d.PackageManagerSupport {
 		clone.PackageManagerSupport[idx] = support

@@ -11,10 +11,8 @@
 //     lifecycle, or other package metadata
 //   - auditor: evaluates graph and registry data and emits findings or risk
 //     scores
-//
-// Reachability analyzers are represented in the SDK for Bomly core and built-in
-// analyzers, but external analyzer plugins are not currently supported by the
-// managed plugin runtime.
+//   - analyzer: runs code analysis (e.g. reachability) over the matched graph
+//     and annotates registry vulnerability entries
 //
 // A plugin binary serves its role from main by calling one of the runtime
 // entrypoints:
@@ -24,9 +22,10 @@
 //	}
 //
 // The corresponding plugin-facing interfaces are ServedDetector, ServedMatcher,
-// and ServedAuditor. They use the same request and response types as Bomly core:
-// DetectionRequest and DetectionResult for detectors, MatchRequest and
-// MatchResult for matchers, and AuditRequest and AuditResult for auditors.
+// ServedAuditor, and ServedAnalyzer. They use the same request and response
+// types as Bomly core: DetectionRequest and DetectionResult for detectors,
+// MatchRequest and MatchResult for matchers, AuditRequest and AuditResult for
+// auditors, and AnalyzeRequest and AnalyzeResult for analyzers.
 //
 // The central data model deliberately separates pipeline stages. Dependency is
 // a detection-time graph node with identity, locations, scopes, and edges.

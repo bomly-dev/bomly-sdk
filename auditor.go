@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 )
 
@@ -57,6 +58,9 @@ type AuditorDescriptor struct {
 	Tags                []string         `json:"tags,omitempty"`
 	SupportedEcosystems []Ecosystem      `json:"supportedEcosystems,omitempty"`
 	SupportedManagers   []PackageManager `json:"supportedManagers,omitempty"`
+	// ConfigSchema optionally documents the auditor's configuration block as
+	// a JSON Schema. Build it with ConfigSchemaFor.
+	ConfigSchema json.RawMessage `json:"configSchema,omitempty"`
 }
 
 // Auditor analyzes graphs or components and returns findings.

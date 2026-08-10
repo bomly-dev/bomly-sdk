@@ -33,6 +33,13 @@ const (
 // PluginTargetType identifies the discovery target families a plugin supports.
 type PluginTargetType string
 
+// CapabilityPackageUpdates is advertised in a matcher's or analyzer's
+// descriptor Capabilities to signal that it can return
+// MatchResult.PackageUpdates / AnalyzeResult.PackageUpdates deltas when the
+// request sets AcceptPackageUpdates. Hosts and plugins that do not know this
+// capability keep exchanging full registries — the protocol v1 baseline.
+const CapabilityPackageUpdates = "package-updates-v1"
+
 // ReadyResponse reports whether a plugin is ready to run.
 type ReadyResponse struct {
 	Ready bool `json:"ready"`

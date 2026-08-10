@@ -38,6 +38,24 @@ func (r *PackageRegistry) Add(pkg *Package) *Package {
 	return stored
 }
 
+// ApplyPackageUpdates merges package-update deltas returned by a matcher or
+// analyzer (MatchResult.PackageUpdates / AnalyzeResult.PackageUpdates) into
+// the registry. Each update is merged into any existing record with the same
+// PURL via the registry's standard merge semantics; updates without a PURL are
+// ignored. It returns the registry for convenience.
+func ApplyPackageUpdates(registry *PackageRegistry, updates []*Package) *PackageRegistry {
+	if registry == nil {
+		if len(updates) == 0 {
+			return nil
+		}
+		registry = NewPackageRegistry()
+	}
+	for _, update := range updates {
+		registry.Add(update)
+	}
+	return registry
+}
+
 // Ensure returns the registry package for purl, creating an empty one when
 // absent. Returns nil for an empty purl.
 func (r *PackageRegistry) Ensure(purl string) *Package {

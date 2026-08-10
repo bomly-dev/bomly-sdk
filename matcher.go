@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 )
 
@@ -29,6 +30,12 @@ type MatcherDescriptor struct {
 	Tags                []string         `json:"tags,omitempty"`
 	SupportedEcosystems []Ecosystem      `json:"supportedEcosystems,omitempty"`
 	SupportedManagers   []PackageManager `json:"supportedManagers,omitempty"`
+	// Capabilities advertises optional protocol features this matcher
+	// supports, such as CapabilityPackageUpdates.
+	Capabilities []string `json:"capabilities,omitempty"`
+	// ConfigSchema optionally documents the matcher's configuration block as
+	// a JSON Schema. Build it with ConfigSchemaFor.
+	ConfigSchema json.RawMessage `json:"configSchema,omitempty"`
 }
 
 // MatchRequest defines input for a matcher. Matchers enrich the package
@@ -44,13 +51,25 @@ type MatchRequest struct {
 	Registry        *PackageRegistry `json:"registry,omitempty"`
 	Target          *Dependency      `json:"target,omitempty"`
 	MatcherFilter   MatcherFilter    `json:"matcherFilter"`
-	Stderr          io.Writer        `json:"-"`
+	// AcceptPackageUpdates signals that the host understands
+	// MatchResult.PackageUpdates. Matchers advertising
+	// CapabilityPackageUpdates may return updates instead of a full registry
+	// only when this is true.
+	AcceptPackageUpdates bool      `json:"acceptPackageUpdates,omitempty"`
+	Stderr               io.Writer `json:"-"`
 }
 
 // MatchResult contains the package registry after matcher enrichment.
+//
+// A matcher returns either Registry (the full enriched registry — the
+// protocol v1 baseline) or, when the request set AcceptPackageUpdates,
+// PackageUpdates: only the packages it touched. The host merges updates into
+// its registry by PURL. When Registry is non-nil it wins and PackageUpdates
+// is ignored.
 type MatchResult struct {
-	Registry     *PackageRegistry `json:"registry,omitempty"`
-	MatcherStats MatcherStats     `json:"matcherStats,omitempty"`
+	Registry       *PackageRegistry `json:"registry,omitempty"`
+	PackageUpdates []*Package       `json:"packageUpdates,omitempty"`
+	MatcherStats   MatcherStats     `json:"matcherStats,omitempty"`
 }
 
 // MatcherStats describes one completed matcher run and optional summary counts.

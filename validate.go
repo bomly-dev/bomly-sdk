@@ -69,6 +69,14 @@ func ValidateAuditorDescriptor(descriptor *AuditorDescriptor) error {
 	return validateComponentDescriptor("auditor", componentFromAuditorDescriptor(*descriptor))
 }
 
+// ValidateAnalyzerDescriptor validates typed analyzer registration data.
+func ValidateAnalyzerDescriptor(descriptor *AnalyzerDescriptor) error {
+	if descriptor == nil {
+		return fmt.Errorf("analyzer descriptor is nil")
+	}
+	return validateComponentDescriptor("analyzer", componentFromAnalyzerDescriptor(*descriptor))
+}
+
 func validateComponentDescriptor(kind string, descriptor ComponentDescriptor) error {
 	if strings.TrimSpace(descriptor.Name) == "" {
 		return fmt.Errorf("%s descriptor name is required", kind)
@@ -91,9 +99,13 @@ func componentFromDetectorDescriptor(descriptor DetectorDescriptor) ComponentDes
 }
 
 func componentFromMatcherDescriptor(descriptor MatcherDescriptor) ComponentDescriptor {
-	return ComponentDescriptor(descriptor)
+	return ComponentDescriptor{Name: descriptor.Name, DisplayName: descriptor.DisplayName, Aliases: descriptor.Aliases, Tags: descriptor.Tags, SupportedEcosystems: descriptor.SupportedEcosystems, SupportedManagers: descriptor.SupportedManagers}
 }
 
 func componentFromAuditorDescriptor(descriptor AuditorDescriptor) ComponentDescriptor {
-	return ComponentDescriptor(descriptor)
+	return ComponentDescriptor{Name: descriptor.Name, DisplayName: descriptor.DisplayName, Aliases: descriptor.Aliases, Tags: descriptor.Tags, SupportedEcosystems: descriptor.SupportedEcosystems, SupportedManagers: descriptor.SupportedManagers}
+}
+
+func componentFromAnalyzerDescriptor(descriptor AnalyzerDescriptor) ComponentDescriptor {
+	return ComponentDescriptor{Name: descriptor.Name, DisplayName: descriptor.DisplayName, Aliases: descriptor.Aliases, Tags: descriptor.Tags, SupportedEcosystems: descriptor.SupportedEcosystems, SupportedManagers: descriptor.SupportedManagers}
 }

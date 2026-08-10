@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 )
 
@@ -33,6 +34,12 @@ type AnalyzerDescriptor struct {
 	SupportedLanguages []Language `json:"supportedLanguages,omitempty"`
 	// SupportedTiers communicates the precision the analyzer can deliver.
 	SupportedTiers []ReachabilityTier `json:"supportedTiers,omitempty"`
+	// Capabilities advertises optional protocol features this analyzer
+	// supports, such as CapabilityPackageUpdates.
+	Capabilities []string `json:"capabilities,omitempty"`
+	// ConfigSchema optionally documents the analyzer's configuration block as
+	// a JSON Schema. Build it with ConfigSchemaFor.
+	ConfigSchema json.RawMessage `json:"configSchema,omitempty"`
 }
 
 // AnalyzeRequest defines input for an analyzer. Analyzers annotate
@@ -49,7 +56,12 @@ type AnalyzeRequest struct {
 	Registry        *PackageRegistry `json:"registry,omitempty"`
 	Target          *Dependency      `json:"target,omitempty"`
 	AnalyzerFilter  AnalyzerFilter   `json:"analyzerFilter"`
-	Stderr          io.Writer        `json:"-"`
+	// AcceptPackageUpdates signals that the host understands
+	// AnalyzeResult.PackageUpdates. Analyzers advertising
+	// CapabilityPackageUpdates may return updates instead of a full registry
+	// only when this is true.
+	AcceptPackageUpdates bool      `json:"acceptPackageUpdates,omitempty"`
+	Stderr               io.Writer `json:"-"`
 }
 
 // ReachabilityStats tallies the per-analyzer outcome distribution.
@@ -61,10 +73,16 @@ type ReachabilityStats struct {
 }
 
 // AnalyzeResult contains the registry after analyzer enrichment.
+// An analyzer returns either Registry (the full annotated registry — the
+// protocol v1 baseline) or, when the request set AcceptPackageUpdates,
+// PackageUpdates: only the packages it touched. The host merges updates into
+// its registry by PURL. When Registry is non-nil it wins and PackageUpdates
+// is ignored.
 type AnalyzeResult struct {
-	Registry      *PackageRegistry             `json:"registry,omitempty"`
-	AnalyzerRuns  []string                     `json:"analyzerRuns,omitempty"`
-	AnalyzerStats map[string]ReachabilityStats `json:"analyzerStats,omitempty"`
+	Registry       *PackageRegistry             `json:"registry,omitempty"`
+	PackageUpdates []*Package                   `json:"packageUpdates,omitempty"`
+	AnalyzerRuns   []string                     `json:"analyzerRuns,omitempty"`
+	AnalyzerStats  map[string]ReachabilityStats `json:"analyzerStats,omitempty"`
 }
 
 // Analyzer enriches Vulnerability entries with reachability data derived from
