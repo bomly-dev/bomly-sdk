@@ -1,0 +1,68 @@
+# Bomly SDK
+
+`github.com/bomly-dev/bomly-sdk` is the contract module for building Bomly
+components: detectors, matchers, auditors, and analyzers. It contains the
+neutral domain types (dependencies, packages, vulnerabilities, findings, the
+package registry), the component interfaces, and the managed-plugin serving
+adapters and gRPC protocol used by external plugin binaries.
+
+```sh
+go get github.com/bomly-dev/bomly-sdk@latest
+```
+
+## Building a plugin
+
+A Bomly plugin is a standalone Go binary that imports this module and serves
+one component over the managed-plugin runtime:
+
+```go
+package main
+
+import sdk "github.com/bomly-dev/bomly-sdk"
+
+func main() {
+	sdk.ServeDetector(myDetector{})
+}
+```
+
+See the [Bomly plugin documentation](https://github.com/bomly-dev/bomly-cli/blob/main/docs/PLUGINS.md)
+for the full authoring guide, packaging layout (`bomly-plugin.json`), and
+installation flow.
+
+Embed the `Base*` types (`sdk.BaseDetector`, `sdk.BaseMatcher`,
+`sdk.BaseAuditor`, `sdk.BaseAnalyzer`) in your implementation so future
+additions to the component interfaces do not break your build.
+
+## Compatibility
+
+Two independent compatibility axes govern this module:
+
+1. **In-process (Go API)** — the component interfaces and types consumed by
+   embedders. Signature changes require a recompile. Embedding the `Base*`
+   defaults insulates implementations from most interface growth.
+2. **Wire (managed-plugin protocol `bomly.plugin.v1`)** — JSON payloads
+   exchanged with external plugin binaries. Within protocol v1, changes are
+   strictly additive: new optional (`omitempty`) fields and new optional RPCs
+   only. Hosts treat unimplemented RPCs as feature fall-backs; unknown JSON
+   fields are ignored by both sides. Fields and RPCs are never removed,
+   renamed, or repurposed within v1. A breaking wire change would ship as a
+   new `bomly.plugin.v2` service negotiated alongside v1 — old binaries keep
+   speaking v1.
+
+Plugin binaries built against an older SDK release keep working against newer
+hosts (and vice versa) as long as both speak protocol v1.
+
+## Versioning and releases
+
+Releases are plain semver tags (`vX.Y.Z`) cut from `main`. While the module is
+v0, minor releases may adjust the in-process Go API (the wire contract stays
+additive regardless); patch releases are always safe. Consumers — Bomly itself
+and plugin repositories — should pin released versions, never commits or
+branches.
+
+Release ordering when the contract changes: this module tags first, plugin
+repositories adopt the new tag, then Bomly updates its pin.
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).
