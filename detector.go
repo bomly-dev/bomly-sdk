@@ -257,6 +257,10 @@ type DetectorRemediationProvider interface {
 
 // FallbackDetector optionally provides a fallback detector that should run when
 // the primary detector cannot produce a result.
+//
+// Deprecated: the host executes planned detector chains; fallback interfaces
+// are no longer consulted. The interface is kept for one release so existing
+// implementations keep compiling.
 type FallbackDetector interface {
 	FallbackDetector() Detector
 }
