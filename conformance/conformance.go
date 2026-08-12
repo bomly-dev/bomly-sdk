@@ -492,6 +492,14 @@ func testDetectorSupport(t *testing.T, m sdk.Module, detector sdk.Detector) {
 			t.Errorf("package-manager support entry %d (%s) has no evidence patterns; discovery cannot plan the detector without them", idx, entry.PackageManager.Name())
 		}
 	}
+
+	// Declared target kinds (when any) must be non-empty values; an empty list
+	// is fine and means the host derives the default kinds.
+	for idx, kind := range m.Detector.TargetKinds {
+		if strings.TrimSpace(string(kind)) == "" {
+			t.Errorf("target kind entry %d is empty; omit the entry or declare a concrete execution target kind", idx)
+		}
+	}
 }
 
 // testMatcherPackageUpdates drives Match with AcceptPackageUpdates=true on an

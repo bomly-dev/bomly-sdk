@@ -48,7 +48,11 @@ type HostContext interface {
 type DetectorModule struct {
 	Descriptor DetectorDescriptor
 	Support    []PackageManagerSupport
-	New        func(context.Context, HostContext) (Detector, error)
+	// TargetKinds lists the execution target kinds the detector supports.
+	// Empty means the host derives the default [filesystem, git-repository],
+	// mirroring the managed-plugin derivation.
+	TargetKinds []ExecutionTargetKind
+	New         func(context.Context, HostContext) (Detector, error)
 }
 
 // MatcherModule declares one matcher component.
@@ -115,6 +119,11 @@ func ValidateModule(m Module) error {
 		for _, support := range m.Detector.Support {
 			if support.PackageManager.Name() == "" {
 				return fmt.Errorf("detector module support must not contain empty package manager values")
+			}
+		}
+		for _, kind := range m.Detector.TargetKinds {
+			if string(kind) == "" {
+				return fmt.Errorf("detector module target kinds must not contain empty values")
 			}
 		}
 	case PluginKindMatcher:

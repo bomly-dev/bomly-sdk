@@ -86,6 +86,23 @@ func TestValidateModule(t *testing.T) {
 			wantErr: "is invalid",
 		},
 		{
+			name: "valid detector with target kinds",
+			module: Module{Kind: PluginKindDetector, Detector: func() *DetectorModule {
+				module := detectorModuleFixture()
+				module.TargetKinds = []ExecutionTargetKind{ExecutionTargetFilesystem, ExecutionTargetGitRepository}
+				return module
+			}()},
+		},
+		{
+			name: "empty target kind",
+			module: Module{Kind: PluginKindDetector, Detector: func() *DetectorModule {
+				module := detectorModuleFixture()
+				module.TargetKinds = []ExecutionTargetKind{ExecutionTargetFilesystem, ""}
+				return module
+			}()},
+			wantErr: "target kinds must not contain empty values",
+		},
+		{
 			name: "missing constructor",
 			module: Module{Kind: PluginKindDetector, Detector: &DetectorModule{
 				Descriptor: DetectorDescriptor{Name: "fake"},

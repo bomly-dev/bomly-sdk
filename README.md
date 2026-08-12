@@ -33,6 +33,18 @@ Embed the `Base*` types (`sdk.BaseDetector`, `sdk.BaseMatcher`,
 `sdk.BaseAuditor`, `sdk.BaseAnalyzer`) in your implementation so future
 additions to the component interfaces do not break your build.
 
+## Helper packages
+
+The SDK ships shared helper subpackages so component modules and external
+plugins reuse the same implementations Bomly's built-ins use:
+
+- `system` — bounded filesystem reads plus exec, path, and environment wrappers.
+- `filecache` — TTL-based on-disk JSON cache with typed `Get`/`Set` helpers.
+- `logkit` — secret-safe subprocess logging: argument/URL sanitizers, command fields, stderr counter.
+- `detectorkit` — detector helpers: manifest metadata, source positions, remediation hints, subgraphs, build-tool readiness and timeouts.
+- `matcherkit` — matcher helpers: registry package seeding and license normalization.
+- `testkit` — test helpers: fuzz graph invariants, Go binary builders, lockfile position assertions.
+
 ## Compatibility
 
 Two independent compatibility axes govern this module:
