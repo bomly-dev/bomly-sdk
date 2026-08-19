@@ -67,6 +67,70 @@ type PackageLicense struct {
 type Digest struct {
 	Algorithm DigestAlgorithm `json:"algorithm,omitempty"`
 	Value     string          `json:"value,omitempty"`
+	// Subject says what the digest covers. Empty means the published artifact,
+	// which is what most ecosystems record and what a consumer should assume.
+	// It exists because some ecosystems record a hash that is not a hash of a
+	// file: a Go module's "h1:" value is SHA-256 over a manifest of the source
+	// tree's file hashes, not over the module zip, so a consumer that treats it
+	// as an artifact digest and compares it against a downloaded file will
+	// always find a mismatch.
+	Subject DigestSubject `json:"subject,omitempty"`
+}
+
+// DigestSubject identifies what a digest was computed over.
+type DigestSubject string
+
+const (
+	// DigestSubjectArtifact is a digest of the published file itself. It is
+	// the zero value: a producer that does not say means the artifact.
+	DigestSubjectArtifact DigestSubject = ""
+	// DigestSubjectSourceTree is a digest over a source tree or over a
+	// manifest of its file hashes, such as a Go module "h1:" dirhash.
+	DigestSubjectSourceTree DigestSubject = "source-tree"
+	// DigestSubjectMetadata is a digest of a package's metadata document
+	// rather than of the package itself, such as a manifest or lockfile entry.
+	DigestSubjectMetadata DigestSubject = "metadata"
+)
+
+// PackageAttestation records a signed statement about how a package was built
+// or published: an in-toto statement such as SLSA provenance, or a
+// publish-time signature.
+//
+// Bomly does not fetch or verify attestations today. The type exists so a
+// matcher that does can attach what it found without a model change, and so
+// consumers can tell a verified statement from one that was merely present --
+// a distinction that matters more than the statement itself, and that is
+// easily lost when provenance data is carried in untyped metadata.
+type PackageAttestation struct {
+	// PredicateType identifies what the statement asserts, using the in-toto
+	// predicate vocabulary (for example "https://slsa.dev/provenance/v1").
+	PredicateType string `json:"predicate_type,omitempty"`
+	// Source names the component or service that attached the statement, in
+	// the same style as PackageScorecard.Source.
+	Source string `json:"source,omitempty"`
+	// URL is where the statement can be fetched.
+	URL string `json:"url,omitempty"`
+	// Digest identifies the statement itself, so two fetches of one URL can be
+	// told apart.
+	Digest *Digest `json:"digest,omitempty"`
+	// Issuer is the identity that signed the statement -- an OIDC identity, a
+	// key id, or a registry account -- as reported by whatever verified it.
+	Issuer string `json:"issuer,omitempty"`
+	// Verified records that the component attaching this statement checked its
+	// signature. False means the statement was found but not verified, which is
+	// weaker evidence rather than evidence of tampering; consumers must not
+	// present an unverified statement as proof of provenance.
+	Verified bool `json:"verified,omitempty"`
+}
+
+// Clone returns a deep copy.
+func (a PackageAttestation) Clone() PackageAttestation {
+	clone := a
+	if a.Digest != nil {
+		digest := *a.Digest
+		clone.Digest = &digest
+	}
+	return clone
 }
 
 // PackageEOL captures end-of-life enrichment attached by the EOL matcher.
@@ -180,13 +244,14 @@ type Package struct {
 	// Origin.Normalized().
 	Origin *PackageOrigin `json:"origin,omitempty"`
 
-	CPEs            []string            `json:"cpes,omitempty"`
-	Digests         []Digest            `json:"digests,omitempty"`
-	Licenses        []PackageLicense    `json:"licenses,omitempty"`
-	Vulnerabilities []Vulnerability     `json:"vulnerabilities,omitempty"`
-	Scorecard       *PackageScorecard   `json:"scorecard,omitempty"`
-	EOL             *PackageEOL         `json:"eol,omitempty"`
-	Remediation     *PackageRemediation `json:"remediation,omitempty"`
+	CPEs            []string             `json:"cpes,omitempty"`
+	Digests         []Digest             `json:"digests,omitempty"`
+	Licenses        []PackageLicense     `json:"licenses,omitempty"`
+	Vulnerabilities []Vulnerability      `json:"vulnerabilities,omitempty"`
+	Attestations    []PackageAttestation `json:"attestations,omitempty"`
+	Scorecard       *PackageScorecard    `json:"scorecard,omitempty"`
+	EOL             *PackageEOL          `json:"eol,omitempty"`
+	Remediation     *PackageRemediation  `json:"remediation,omitempty"`
 
 	// Matched indicates that this package was successfully matched by one or
 	// more external enrichment sources.
@@ -285,6 +350,12 @@ func (p *Package) Clone() *Package {
 		}
 	}
 	clone.Origin = p.Origin.Clone()
+	if len(p.Attestations) > 0 {
+		clone.Attestations = make([]PackageAttestation, 0, len(p.Attestations))
+		for _, attestation := range p.Attestations {
+			clone.Attestations = append(clone.Attestations, attestation.Clone())
+		}
+	}
 	clone.Scorecard = p.Scorecard.Clone()
 	clone.EOL = p.EOL.Clone()
 	clone.Remediation = p.Remediation.Clone()
@@ -333,6 +404,12 @@ func (p *Package) MergeFrom(src *Package) {
 	// Two records of one package that disagree about where it came from settle
 	// to no origin rather than to whichever was merged first.
 	p.Origin = ReconcileOrigin(p.Origin, src.Origin)
+	if len(p.Attestations) == 0 && len(src.Attestations) > 0 {
+		p.Attestations = make([]PackageAttestation, 0, len(src.Attestations))
+		for _, attestation := range src.Attestations {
+			p.Attestations = append(p.Attestations, attestation.Clone())
+		}
+	}
 	if len(p.CPEs) == 0 {
 		p.CPEs = cloneStrings(src.CPEs)
 	}
