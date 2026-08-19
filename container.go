@@ -170,6 +170,10 @@ func addNodeIfMissing(g *Graph, node *Dependency) error {
 		if existing, ok := g.Node(node.ID); ok && existing != nil {
 			existing.Relationship = MergeDependencyRelationship(existing.Relationship, node.Relationship)
 			mergeDependencyLocations(existing, clone.Locations)
+			// One node is one package. Where two records of it disagree about
+			// where it came from, the merge settles to no origin rather than
+			// to whichever arrived first.
+			existing.Origin = ReconcileOrigin(existing.Origin, clone.Origin)
 		}
 		return nil
 	}

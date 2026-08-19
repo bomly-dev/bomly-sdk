@@ -175,6 +175,10 @@ type Package struct {
 	ID          string `json:"id,omitempty"`
 	Copyright   string `json:"copyright,omitempty"`
 	ResolvedURL string `json:"resolved_url,omitempty"`
+	// Origin is where this package came from: carried from the dependency that
+	// referenced it, or resolved by a matcher. Read it through
+	// Origin.Normalized().
+	Origin *PackageOrigin `json:"origin,omitempty"`
 
 	CPEs            []string            `json:"cpes,omitempty"`
 	Digests         []Digest            `json:"digests,omitempty"`
@@ -280,6 +284,7 @@ func (p *Package) Clone() *Package {
 			clone.Vulnerabilities = append(clone.Vulnerabilities, v.Clone())
 		}
 	}
+	clone.Origin = p.Origin.Clone()
 	clone.Scorecard = p.Scorecard.Clone()
 	clone.EOL = p.EOL.Clone()
 	clone.Remediation = p.Remediation.Clone()
@@ -325,6 +330,9 @@ func (p *Package) MergeFrom(src *Package) {
 	if p.ResolvedURL == "" {
 		p.ResolvedURL = src.ResolvedURL
 	}
+	// Two records of one package that disagree about where it came from settle
+	// to no origin rather than to whichever was merged first.
+	p.Origin = ReconcileOrigin(p.Origin, src.Origin)
 	if len(p.CPEs) == 0 {
 		p.CPEs = cloneStrings(src.CPEs)
 	}
@@ -428,6 +436,7 @@ func PackageFromDependency(dep *Dependency) *Package {
 		},
 		ID:          purl,
 		ResolvedURL: dep.ResolvedURL,
+		Origin:      dep.Origin.Clone(),
 	}
 }
 
