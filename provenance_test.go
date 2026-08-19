@@ -153,3 +153,59 @@ func TestPackageMergeFromKeepsDistinctDigests(t *testing.T) {
 		t.Fatalf("attestations = %d, want two: statements with different digests are different", len(pkg.Attestations))
 	}
 }
+
+// Verification belongs to whoever performed it. A record naming one issuer must
+// never come out verified because a different issuer verified something else.
+func TestPackageMergeFromKeepsVerificationWithItsIssuer(t *testing.T) {
+	statement := func(issuer string, verified bool) PackageAttestation {
+		return PackageAttestation{
+			Source:        "provenance-matcher",
+			PredicateType: "https://slsa.dev/provenance/v1",
+			URL:           "https://example.test/provenance",
+			Issuer:        issuer,
+			Verified:      verified,
+		}
+	}
+
+	t.Run("different issuers stay separate", func(t *testing.T) {
+		pkg := &Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{statement("issuer-a", false)}}
+		pkg.MergeFrom(&Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{statement("issuer-b", true)}})
+
+		if len(pkg.Attestations) != 2 {
+			t.Fatalf("attestations = %+v, want both issuers kept", pkg.Attestations)
+		}
+		for _, attestation := range pkg.Attestations {
+			if attestation.Issuer == "issuer-a" && attestation.Verified {
+				t.Fatal("issuer-a's statement was marked verified by issuer-b's verification")
+			}
+		}
+	})
+
+	t.Run("an unknown issuer is filled from the verified record", func(t *testing.T) {
+		pkg := &Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{statement("", false)}}
+		pkg.MergeFrom(&Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{statement("issuer-b", true)}})
+
+		if len(pkg.Attestations) != 1 {
+			t.Fatalf("attestations = %+v, want one record", pkg.Attestations)
+		}
+		if !pkg.Attestations[0].Verified || pkg.Attestations[0].Issuer != "issuer-b" {
+			t.Fatalf("attestation = %+v, want verified and attributed to issuer-b", pkg.Attestations[0])
+		}
+	})
+}
+
+// Statements differing only by what their digest covers are different claims.
+func TestPackageMergeFromKeepsDistinctDigestSubjects(t *testing.T) {
+	pkg := &Package{
+		Coordinates:  Coordinates{PURL: "pkg:golang/example.test/mod@1.0.0"},
+		Attestations: []PackageAttestation{{Source: "m", URL: "https://example.test/p", Digest: &Digest{Algorithm: DigestAlgorithmSHA256, Value: "aaa"}}},
+	}
+	pkg.MergeFrom(&Package{
+		Coordinates:  Coordinates{PURL: "pkg:golang/example.test/mod@1.0.0"},
+		Attestations: []PackageAttestation{{Source: "m", URL: "https://example.test/p", Digest: &Digest{Algorithm: DigestAlgorithmSHA256, Value: "aaa", Subject: DigestSubjectSourceTree}}},
+	})
+
+	if len(pkg.Attestations) != 2 {
+		t.Fatalf("attestations = %d, want two: one covers the artifact, one the source tree", len(pkg.Attestations))
+	}
+}

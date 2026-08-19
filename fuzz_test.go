@@ -175,11 +175,16 @@ func FuzzPackageOrigin(f *testing.F) {
 		// Reading back what was written must reach the same conclusion, and
 		// reconciling a record with itself must not change it.
 		assertPublishableOrigin(t, repository.Normalized())
+		// Normalizing an already-normalized origin must be a fixed point.
+		if once, twice := repository.Normalized(), repository.Normalized().Normalized(); !sameOrigin(once, twice) {
+			t.Fatalf("normalizing twice changed the origin: %+v then %+v", once, twice)
+		}
 		if settled, again := ReconcileOrigin(repository, repository), repository.Normalized(); !sameOrigin(settled, again) {
 			t.Fatalf("reconciling a record with itself changed it: %+v then %+v", again, settled)
 		}
 		// A disagreement is recorded rather than resolved, whatever the inputs.
-		if other := ArtifactOrigin("https://registry.example.test/other/pkg-1.0.0.tgz"); !artifact.Empty() && artifact.Normalized().ArtifactURL != other.ArtifactURL {
+		normalized := artifact.Normalized()
+		if other := ArtifactOrigin("https://registry.example.test/other/pkg-1.0.0.tgz"); normalized != nil && normalized.ArtifactURL != other.ArtifactURL {
 			if settled := ReconcileOrigin(artifact, other); !settled.Empty() {
 				t.Fatalf("two different origins settled on %+v", settled)
 			}

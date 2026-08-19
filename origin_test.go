@@ -16,7 +16,7 @@ func TestArtifactOrigin(t *testing.T) {
 		{name: "checksum fragment is stripped", raw: "https://registry.npmjs.org/react/-/react-18.2.0.tgz#ceeba773e3e9d2b6f1a2b6b9f4f1cb2f9c2e1a55", want: "https://registry.npmjs.org/react/-/react-18.2.0.tgz"},
 		{name: "uppercase scheme is normalized", raw: "HTTPS://files.pythonhosted.org/packages/x/django-5.0.tar.gz", want: "https://files.pythonhosted.org/packages/x/django-5.0.tar.gz"},
 		{name: "signed link carrying a query", raw: "https://nexus.corp/repo/pkg.tgz?token=abc123"},
-		{name: "embedded credentials", raw: "https://user:s3cret@nexus.corp/repo/pkg.tgz"},
+		{name: "embedded credentials", raw: "https://user:s3cret@nexus.corp/repo/pkg.tgz"}, //nolint:gosec // synthetic credential; rejecting it is the rule under test
 		{name: "registry root", raw: "https://registry.npmjs.org/"},
 		{name: "relative path", raw: "packages/lib"},
 		{name: "absolute local path", raw: "/Users/someone/src/project"},
@@ -82,7 +82,7 @@ func TestRepositoryOrigin(t *testing.T) {
 		{name: "overlong revision", raw: "https://github.com/owner/repo", revision: strings.Repeat("a", 129), wantRepo: "https://github.com/owner/repo"},
 		{name: "bare host", raw: "https://github.com", revision: "9f8e7d6"},
 		{name: "index root", raw: "https://index.crates.io/", revision: "9f8e7d6"},
-		{name: "credentialed remote", raw: "https://oauth2:glpat-xxxxxxxxxxxxxxxxxxxx@gitlab.corp/team/repo.git", revision: "9f8e7d6"},
+		{name: "credentialed remote", raw: "https://oauth2:glpat-xxxxxxxxxxxxxxxxxxxx@gitlab.corp/team/repo.git", revision: "9f8e7d6"}, //nolint:gosec // synthetic credential; rejecting it is the rule under test
 		{name: "ssh remote", raw: "ssh://github.com/owner/repo.git", revision: "9f8e7d6"},
 		{name: "local checkout", raw: "/Users/someone/src/repo", revision: "9f8e7d6"},
 	}
@@ -177,6 +177,64 @@ func TestPackageOriginHostCaseIsCanonical(t *testing.T) {
 		ArtifactOrigin("https://example.test/pkg-1.0.0.tgz"),
 	); !settled.Empty() {
 		t.Fatalf("origin = %+v, want a disagreement: the paths differ", settled)
+	}
+}
+
+// An explicit default port names the same origin as no port at all.
+func TestPackageOriginDefaultPortIsCanonical(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "https default port", raw: "https://example.test:443/pkg-1.0.0.tgz", want: "https://example.test/pkg-1.0.0.tgz"},
+		{name: "http default port", raw: "http://example.test:80/pkg-1.0.0.tgz", want: "http://example.test/pkg-1.0.0.tgz"},
+		{name: "a non-default port is part of the location", raw: "https://example.test:8443/pkg-1.0.0.tgz", want: "https://example.test:8443/pkg-1.0.0.tgz"},
+		{name: "an IPv6 literal keeps its brackets", raw: "https://[2001:db8::1]:443/pkg-1.0.0.tgz", want: "https://[2001:db8::1]/pkg-1.0.0.tgz"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			origin := ArtifactOrigin(tc.raw)
+			if origin == nil {
+				t.Fatalf("origin = nil, want %q", tc.want)
+			}
+			if origin.ArtifactURL != tc.want {
+				t.Fatalf("artifact = %q, want %q", origin.ArtifactURL, tc.want)
+			}
+		})
+	}
+
+	if settled := ReconcileOrigin(
+		ArtifactOrigin("https://example.test:443/pkg-1.0.0.tgz"),
+		ArtifactOrigin("https://example.test/pkg-1.0.0.tgz"),
+	); settled.Empty() {
+		t.Fatal("a default port alone must not read as a disagreement")
+	}
+	if settled := ReconcileOrigin(
+		ArtifactOrigin("https://example.test:8443/pkg-1.0.0.tgz"),
+		ArtifactOrigin("https://example.test/pkg-1.0.0.tgz"),
+	); !settled.Empty() {
+		t.Fatalf("origin = %+v, want a disagreement: a non-default port is a different location", settled)
+	}
+}
+
+// Empty and Normalized must answer one question, so a caller that guards on
+// Empty can read Normalized without a second nil check.
+func TestPackageOriginEmptyAgreesWithNormalized(t *testing.T) {
+	origins := []*PackageOrigin{
+		nil,
+		{},
+		{Disputed: true},
+		{ArtifactURL: "https://registry.npmjs.org/react/-/react-18.2.0.tgz"},
+		{ArtifactURL: "/Users/someone/pkg.tgz"},
+		{Repository: "file:///home/someone/repo"},
+		{Repository: "https://github.com/owner/repo", Revision: "feature@login"},
+		{Revision: "9f8e7d6"},
+	}
+	for _, origin := range origins {
+		if origin.Empty() != (origin.Normalized() == nil) {
+			t.Fatalf("Empty() and Normalized() disagree for %+v", origin)
+		}
 	}
 }
 

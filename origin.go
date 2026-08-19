@@ -107,6 +107,16 @@ func NormalizeOriginURL(raw string, repository bool) (string, bool) {
 	// reconcile to a disagreement, losing an origin to formatting alone. The
 	// path is left alone: it is case-sensitive.
 	parsed.Host = strings.ToLower(parsed.Host)
+	// An explicit default port names the same origin as no port at all, so
+	// dropping it keeps two spellings of one location from reading as a
+	// disagreement.
+	if port := parsed.Port(); (parsed.Scheme == "https" && port == "443") || (parsed.Scheme == "http" && port == "80") {
+		host := parsed.Hostname()
+		if strings.Contains(host, ":") {
+			host = "[" + host + "]" // an IPv6 literal keeps its brackets
+		}
+		parsed.Host = host
+	}
 	parsed.Fragment = ""
 	parsed.RawFragment = ""
 	// A host root names a server, not a package: a registry or index root on
@@ -128,13 +138,12 @@ func NormalizeOriginURL(raw string, repository bool) (string, bool) {
 	return normalized, true
 }
 
-// Empty reports whether o names no location. A disputed origin is empty: the
-// disagreement is recorded, but there is nothing to publish.
+// Empty reports whether o names no publishable location. A disputed origin is
+// empty -- the disagreement is recorded, but there is nothing to publish -- and
+// so is one whose values do not survive validation, so a caller that checks
+// Empty can read Normalized without a second nil check.
 func (o *PackageOrigin) Empty() bool {
-	if o == nil {
-		return true
-	}
-	return o.Disputed || (o.ArtifactURL == "" && o.Repository == "")
+	return o.Normalized() == nil
 }
 
 // Normalized returns o with every value re-validated, or nil when nothing

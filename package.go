@@ -134,25 +134,48 @@ func (p *Package) mergeAttestations(incoming []PackageAttestation) {
 	if len(incoming) == 0 {
 		return
 	}
-	index := make(map[attestationKey]int, len(p.Attestations)+len(incoming))
-	for i, attestation := range p.Attestations {
-		index[attestation.key()] = i
-	}
-	for _, attestation := range incoming {
-		key := attestation.key()
-		existing, found := index[key]
-		if !found {
-			index[key] = len(p.Attestations)
-			p.Attestations = append(p.Attestations, attestation.Clone())
-			continue
+	for _, candidate := range incoming {
+		merged := false
+		for i := range p.Attestations {
+			if !p.Attestations[i].describesSame(candidate) {
+				continue
+			}
+			p.Attestations[i].absorb(candidate)
+			merged = true
+			break
 		}
-		if attestation.Verified {
-			p.Attestations[existing].Verified = true
+		if !merged {
+			p.Attestations = append(p.Attestations, candidate.Clone())
 		}
 	}
 }
 
-// attestationKey identifies one statement for deduplication.
+// describesSame reports whether two records describe one statement. Their
+// issuers must be compatible: equal, or one of them unknown. Two records naming
+// different issuers are two statements -- different signers -- and folding them
+// together would report one signer's verification under the other's name.
+func (a PackageAttestation) describesSame(other PackageAttestation) bool {
+	if a.key() != other.key() {
+		return false
+	}
+	return a.Issuer == "" || other.Issuer == "" || a.Issuer == other.Issuer
+}
+
+// absorb folds a record describing the same statement into a. An unknown
+// issuer is filled from the other record, so a verified statement never ends up
+// without the identity that makes the verification meaningful.
+func (a *PackageAttestation) absorb(other PackageAttestation) {
+	if a.Issuer == "" {
+		a.Issuer = other.Issuer
+	}
+	if other.Verified {
+		a.Verified = true
+	}
+}
+
+// attestationKey identifies one statement for deduplication. Issuer is
+// deliberately absent: it is compared separately, because an unknown issuer is
+// compatible with a known one while two known issuers are not.
 type attestationKey struct {
 	source        string
 	predicateType string
@@ -164,7 +187,9 @@ type attestationKey struct {
 func (a PackageAttestation) key() attestationKey {
 	key := attestationKey{source: a.Source, predicateType: a.PredicateType, url: a.URL}
 	if a.Digest != nil {
-		key.digest = string(a.Digest.Algorithm) + ":" + a.Digest.Value
+		// Subject is part of the identity: the same bytes hashed over a
+		// source tree and over an artifact are different claims.
+		key.digest = string(a.Digest.Algorithm) + ":" + a.Digest.Value + ":" + string(a.Digest.Subject)
 	}
 	return key
 }
