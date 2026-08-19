@@ -102,6 +102,11 @@ func NormalizeOriginURL(raw string, repository bool) (string, bool) {
 		return "", false
 	}
 	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	// Hosts are case-insensitive, so two records writing one host differently
+	// name the same location. Without this they would compare unequal and
+	// reconcile to a disagreement, losing an origin to formatting alone. The
+	// path is left alone: it is case-sensitive.
+	parsed.Host = strings.ToLower(parsed.Host)
 	parsed.Fragment = ""
 	parsed.RawFragment = ""
 	// A host root names a server, not a package: a registry or index root on

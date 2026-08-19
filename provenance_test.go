@@ -110,3 +110,46 @@ func TestPackageAttestationsOmittedWhenEmpty(t *testing.T) {
 		t.Fatalf("an empty attestation list must not be serialized: %s", raw)
 	}
 }
+
+// Several components can attest to one package, so merging unions rather than
+// keeping whichever arrived first.
+func TestPackageMergeFromUnionsAttestations(t *testing.T) {
+	pkg := &Package{
+		Coordinates:  Coordinates{PURL: "pkg:npm/react@18.2.0"},
+		Attestations: []PackageAttestation{{Source: "provenance-matcher", PredicateType: "https://slsa.dev/provenance/v1", URL: "https://example.test/provenance"}},
+	}
+	pkg.MergeFrom(&Package{
+		Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"},
+		Attestations: []PackageAttestation{
+			{Source: "signature-matcher", PredicateType: "https://in-toto.io/attestation/release/v0.1", URL: "https://example.test/release"},
+			// The same statement the first record already carries, now verified.
+			{Source: "provenance-matcher", PredicateType: "https://slsa.dev/provenance/v1", URL: "https://example.test/provenance", Verified: true},
+		},
+	})
+
+	if len(pkg.Attestations) != 2 {
+		t.Fatalf("attestations = %d, want both distinct statements: %+v", len(pkg.Attestations), pkg.Attestations)
+	}
+	if !pkg.Attestations[0].Verified {
+		t.Fatal("a statement another component verified must end up verified")
+	}
+	if pkg.Attestations[1].PredicateType != "https://in-toto.io/attestation/release/v0.1" {
+		t.Fatalf("second attestation = %+v, want the signature statement", pkg.Attestations[1])
+	}
+}
+
+// Statements differing only by digest are different statements.
+func TestPackageMergeFromKeepsDistinctDigests(t *testing.T) {
+	pkg := &Package{
+		Coordinates:  Coordinates{PURL: "pkg:npm/react@18.2.0"},
+		Attestations: []PackageAttestation{{Source: "m", URL: "https://example.test/p", Digest: &Digest{Algorithm: DigestAlgorithmSHA256, Value: "aaa"}}},
+	}
+	pkg.MergeFrom(&Package{
+		Coordinates:  Coordinates{PURL: "pkg:npm/react@18.2.0"},
+		Attestations: []PackageAttestation{{Source: "m", URL: "https://example.test/p", Digest: &Digest{Algorithm: DigestAlgorithmSHA256, Value: "bbb"}}},
+	})
+
+	if len(pkg.Attestations) != 2 {
+		t.Fatalf("attestations = %d, want two: statements with different digests are different", len(pkg.Attestations))
+	}
+}

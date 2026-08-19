@@ -155,6 +155,31 @@ func TestPackageOriginNormalized(t *testing.T) {
 	}
 }
 
+// Hosts are case-insensitive. Two producers writing one host differently name
+// the same place, and must not reconcile to a disagreement.
+func TestPackageOriginHostCaseIsCanonical(t *testing.T) {
+	upper := RepositoryOrigin("https://GitHub.com/Owner/Repo", "aaaabbbbccccddddeeeeffff0000111122223333")
+	lower := RepositoryOrigin("https://github.com/Owner/Repo", "aaaabbbbccccddddeeeeffff0000111122223333")
+
+	if upper == nil || lower == nil {
+		t.Fatal("both spellings should be publishable")
+	}
+	if upper.Repository != "https://github.com/Owner/Repo" {
+		t.Fatalf("repository = %q, want a lowercased host and an untouched path", upper.Repository)
+	}
+	if settled := ReconcileOrigin(upper, lower); settled.Empty() {
+		t.Fatal("host casing alone must not read as a disagreement")
+	}
+
+	// The path is case-sensitive, so these are different locations.
+	if settled := ReconcileOrigin(
+		ArtifactOrigin("https://example.test/Pkg-1.0.0.tgz"),
+		ArtifactOrigin("https://example.test/pkg-1.0.0.tgz"),
+	); !settled.Empty() {
+		t.Fatalf("origin = %+v, want a disagreement: the paths differ", settled)
+	}
+}
+
 func TestPackageOriginEmpty(t *testing.T) {
 	var nilOrigin *PackageOrigin
 	if !nilOrigin.Empty() {

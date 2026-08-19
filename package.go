@@ -123,6 +123,52 @@ type PackageAttestation struct {
 	Verified bool `json:"verified,omitempty"`
 }
 
+// mergeAttestations folds incoming statements into p, keeping one record per
+// distinct statement. Several components can attest to one package -- a build
+// provenance statement from one, a publish signature from another -- so this
+// unions rather than keeping whichever arrived first, the way vulnerabilities
+// already do. When two records describe the same statement and either verified
+// it, the merged record is verified: verification is a fact one component
+// established, not an opinion.
+func (p *Package) mergeAttestations(incoming []PackageAttestation) {
+	if len(incoming) == 0 {
+		return
+	}
+	index := make(map[attestationKey]int, len(p.Attestations)+len(incoming))
+	for i, attestation := range p.Attestations {
+		index[attestation.key()] = i
+	}
+	for _, attestation := range incoming {
+		key := attestation.key()
+		existing, found := index[key]
+		if !found {
+			index[key] = len(p.Attestations)
+			p.Attestations = append(p.Attestations, attestation.Clone())
+			continue
+		}
+		if attestation.Verified {
+			p.Attestations[existing].Verified = true
+		}
+	}
+}
+
+// attestationKey identifies one statement for deduplication.
+type attestationKey struct {
+	source        string
+	predicateType string
+	url           string
+	digest        string
+}
+
+// key returns a's deduplication identity.
+func (a PackageAttestation) key() attestationKey {
+	key := attestationKey{source: a.Source, predicateType: a.PredicateType, url: a.URL}
+	if a.Digest != nil {
+		key.digest = string(a.Digest.Algorithm) + ":" + a.Digest.Value
+	}
+	return key
+}
+
 // Clone returns a deep copy.
 func (a PackageAttestation) Clone() PackageAttestation {
 	clone := a
@@ -404,12 +450,7 @@ func (p *Package) MergeFrom(src *Package) {
 	// Two records of one package that disagree about where it came from settle
 	// to no origin rather than to whichever was merged first.
 	p.Origin = ReconcileOrigin(p.Origin, src.Origin)
-	if len(p.Attestations) == 0 && len(src.Attestations) > 0 {
-		p.Attestations = make([]PackageAttestation, 0, len(src.Attestations))
-		for _, attestation := range src.Attestations {
-			p.Attestations = append(p.Attestations, attestation.Clone())
-		}
-	}
+	p.mergeAttestations(src.Attestations)
 	if len(p.CPEs) == 0 {
 		p.CPEs = cloneStrings(src.CPEs)
 	}
