@@ -1,6 +1,7 @@
 package sdk
 
 import (
+	"encoding/json"
 	"net/url"
 	"strings"
 )
@@ -131,11 +132,86 @@ func NormalizeOriginURL(raw string, repository bool) (string, bool) {
 	} else if parsed.RawQuery != "" || parsed.ForceQuery {
 		return "", false
 	}
+	// Canonicalize the escaped form, not parsed.Path: Path is already decoded,
+	// where "%2F" and "/" are indistinguishable, and re-encoding from it would
+	// turn an escaped slash into a path separator and change the location.
+	escaped := canonicalEscapes(parsed.EscapedPath())
+	decodedPath, err := url.PathUnescape(escaped)
+	if err != nil {
+		return "", false
+	}
+	parsed.Path = decodedPath
+	parsed.RawPath = escaped
 	normalized := parsed.String()
 	if normalized == "" {
 		return "", false
 	}
 	return normalized, true
+}
+
+// canonicalEscapes rewrites a path so two spellings of one location compare
+// equal. RFC 3986 says a percent-escaped unreserved character means the same as
+// the character itself, so "%7Euser" and "~user" name one path; without this
+// they would reconcile to a disagreement and lose a valid origin to formatting
+// alone. Reserved characters keep their escapes, since there the escape changes
+// what the path means, but their hex is written one way.
+func canonicalEscapes(path string) string {
+	if !strings.Contains(path, "%") {
+		return path
+	}
+	var out strings.Builder
+	out.Grow(len(path))
+	for i := 0; i < len(path); i++ {
+		if path[i] != '%' || i+2 >= len(path) {
+			out.WriteByte(path[i])
+			continue
+		}
+		decoded, ok := unhex(path[i+1], path[i+2])
+		if !ok {
+			out.WriteByte(path[i])
+			continue
+		}
+		if isUnreservedByte(decoded) {
+			out.WriteByte(decoded)
+		} else {
+			out.WriteString("%")
+			out.WriteString(strings.ToUpper(path[i+1 : i+3]))
+		}
+		i += 2
+	}
+	return out.String()
+}
+
+// unhex decodes one percent-escape pair.
+func unhex(high, low byte) (byte, bool) {
+	value := 0
+	for _, digit := range []byte{high, low} {
+		value <<= 4
+		switch {
+		case digit >= '0' && digit <= '9':
+			value |= int(digit - '0')
+		case digit >= 'a' && digit <= 'f':
+			value |= int(digit-'a') + 10
+		case digit >= 'A' && digit <= 'F':
+			value |= int(digit-'A') + 10
+		default:
+			return 0, false
+		}
+	}
+	return byte(value), true
+}
+
+// isUnreservedByte reports whether b is unreserved in RFC 3986, meaning its
+// escaped and unescaped spellings are equivalent.
+func isUnreservedByte(b byte) bool {
+	switch {
+	case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b >= '0' && b <= '9':
+		return true
+	case b == '-', b == '.', b == '_', b == '~':
+		return true
+	default:
+		return false
+	}
 }
 
 // Empty reports whether o names no publishable location. A disputed origin is
@@ -167,6 +243,46 @@ func (o *PackageOrigin) Normalized() *PackageOrigin {
 		normalized.Revision = pinned
 	}
 	return normalized
+}
+
+// originWire carries PackageOrigin's fields without its methods, so the JSON
+// hooks below can encode and decode without recursing.
+type originWire PackageOrigin
+
+// UnmarshalJSON applies the origin rule as a value arrives, so a location that
+// would be rejected on read cannot be stored, forwarded to another component,
+// or written back out. A record of a disagreement survives decoding: it is not
+// a location, but it is a fact worth keeping.
+func (o *PackageOrigin) UnmarshalJSON(data []byte) error {
+	var wire originWire
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	decoded := PackageOrigin(wire)
+	switch {
+	case decoded.Disputed:
+		*o = PackageOrigin{Disputed: true}
+	default:
+		normalized := decoded.Normalized()
+		if normalized == nil {
+			*o = PackageOrigin{}
+			return nil
+		}
+		*o = *normalized
+	}
+	return nil
+}
+
+// MarshalJSON applies the same rule on the way out, so a hand-built value that
+// never passed through the constructors cannot leave this process either.
+func (o PackageOrigin) MarshalJSON() ([]byte, error) {
+	if o.Disputed {
+		return json.Marshal(originWire{Disputed: true})
+	}
+	if normalized := o.Normalized(); normalized != nil {
+		return json.Marshal(originWire(*normalized))
+	}
+	return json.Marshal(originWire{})
 }
 
 // Clone returns a deep copy.

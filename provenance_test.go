@@ -278,3 +278,25 @@ func TestPackageMergeFromKeepsDistinctDigestSubjects(t *testing.T) {
 		t.Fatalf("attestations = %d, want two: one covers the artifact, one the source tree", len(pkg.Attestations))
 	}
 }
+
+// Two sources can carry different claims about one package: a hash of the
+// published artifact from one, a hash over the source tree from another.
+// Keeping only the first slice would lose provenance on merge order alone.
+func TestPackageMergeFromUnionsDigests(t *testing.T) {
+	artifact := Digest{Algorithm: DigestAlgorithmSHA256, Value: "aaa"}
+	sourceTree := Digest{Algorithm: DigestAlgorithmSHA256, Value: "aaa", Subject: DigestSubjectSourceTree}
+
+	pkg := &Package{Coordinates: Coordinates{PURL: "pkg:golang/example.test/mod@1.0.0"}, Digests: []Digest{artifact}}
+	pkg.MergeFrom(&Package{Coordinates: Coordinates{PURL: "pkg:golang/example.test/mod@1.0.0"}, Digests: []Digest{sourceTree, artifact}})
+
+	if len(pkg.Digests) != 2 {
+		t.Fatalf("digests = %+v, want both claims kept and the repeat dropped", pkg.Digests)
+	}
+	var subjects []DigestSubject
+	for _, digest := range pkg.Digests {
+		subjects = append(subjects, digest.Subject)
+	}
+	if subjects[0] != DigestSubjectArtifact || subjects[1] != DigestSubjectSourceTree {
+		t.Fatalf("subjects = %v, want the artifact claim then the source-tree claim", subjects)
+	}
+}

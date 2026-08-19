@@ -438,3 +438,96 @@ func TestPackageOriginWireRoundTrip(t *testing.T) {
 		t.Fatalf("an absent origin must not be serialized: %s (err %v)", raw, err)
 	}
 }
+
+// RFC 3986: an escaped unreserved character means the same as the character,
+// so two spellings of one path must not read as a disagreement. Reserved
+// characters keep their escapes, because there the escape changes the meaning.
+func TestPackageOriginPercentEncodingIsCanonical(t *testing.T) {
+	cases := []struct{ name, raw, want string }{
+		{name: "escaped tilde", raw: "https://example.test/pkg/%7Euser/a.tgz", want: "https://example.test/pkg/~user/a.tgz"},
+		{name: "escaped letter", raw: "https://example.test/%70kg/a.tgz", want: "https://example.test/pkg/a.tgz"},
+		{name: "lowercase hex is uppercased", raw: "https://example.test/pkg/a%2fb.tgz", want: "https://example.test/pkg/a%2Fb.tgz"},
+		{name: "a reserved escape keeps its meaning", raw: "https://example.test/pkg/a%2Fb.tgz", want: "https://example.test/pkg/a%2Fb.tgz"},
+		{name: "a space stays escaped", raw: "https://example.test/pkg/a%20b.tgz", want: "https://example.test/pkg/a%20b.tgz"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			origin := ArtifactOrigin(tc.raw)
+			if origin == nil {
+				t.Fatalf("origin = nil, want %q", tc.want)
+			}
+			if origin.ArtifactURL != tc.want {
+				t.Fatalf("artifact = %q, want %q", origin.ArtifactURL, tc.want)
+			}
+		})
+	}
+
+	// A malformed escape is not a location anything can fetch.
+	if origin := ArtifactOrigin("https://example.test/pkg/100%.tgz"); origin != nil {
+		t.Fatalf("origin = %+v, want nil for a malformed escape", origin)
+	}
+
+	if settled := ReconcileOrigin(
+		ArtifactOrigin("https://example.test/pkg/%7Euser/a.tgz"),
+		ArtifactOrigin("https://example.test/pkg/~user/a.tgz"),
+	); settled.Empty() {
+		t.Fatal("two spellings of one path must not read as a disagreement")
+	}
+	if settled := ReconcileOrigin(
+		ArtifactOrigin("https://example.test/pkg/a%2Fb.tgz"),
+		ArtifactOrigin("https://example.test/pkg/a/b.tgz"),
+	); !settled.Empty() {
+		t.Fatalf("origin = %+v, want a disagreement: an escaped slash is a different path", settled)
+	}
+}
+
+// A value that would be rejected on read must not be storable or forwardable.
+func TestPackageOriginNormalizesAcrossJSON(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want PackageOrigin
+	}{
+		{name: "credentialed artifact is dropped", raw: `{"artifact_url":"https://build:s3cret@nexus.corp/pkg.tgz"}`},
+		{name: "local path is dropped", raw: `{"repository":"file:///home/someone/repo"}`},
+		{name: "revision without a repository is dropped", raw: `{"revision":"9f8e7d6"}`},
+		{
+			name: "a publishable value survives",
+			raw:  `{"artifact_url":"https://registry.npmjs.org/react/-/react-18.2.0.tgz"}`,
+			want: PackageOrigin{ArtifactURL: "https://registry.npmjs.org/react/-/react-18.2.0.tgz"},
+		},
+		{
+			name: "host casing is canonicalized in transit",
+			raw:  `{"repository":"https://GitHub.com/Owner/Repo","revision":"aaaabbbbccccddddeeeeffff0000111122223333"}`,
+			want: PackageOrigin{Repository: "https://github.com/Owner/Repo", Revision: "aaaabbbbccccddddeeeeffff0000111122223333"},
+		},
+		{name: "a recorded disagreement survives", raw: `{"disputed":true}`, want: PackageOrigin{Disputed: true}},
+		{
+			name: "a disagreement outranks any value carried with it",
+			raw:  `{"disputed":true,"artifact_url":"https://registry.npmjs.org/react/-/react-18.2.0.tgz"}`,
+			want: PackageOrigin{Disputed: true},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var decoded PackageOrigin
+			if err := json.Unmarshal([]byte(tc.raw), &decoded); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if decoded != tc.want {
+				t.Fatalf("decoded = %+v, want %+v", decoded, tc.want)
+			}
+		})
+	}
+
+	// The same rule applies leaving the process, so a hand-built value cannot
+	// be written out either.
+	raw, err := json.Marshal(&PackageOrigin{ArtifactURL: "https://build:s3cret@nexus.corp/pkg.tgz"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "s3cret") {
+		t.Fatalf("marshaled %s, which carries a credential", raw)
+	}
+}
