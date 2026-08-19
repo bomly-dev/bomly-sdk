@@ -150,25 +150,48 @@ func (p *Package) mergeAttestations(incoming []PackageAttestation) {
 	}
 }
 
-// describesSame reports whether two records describe one statement. Their
-// issuers must be compatible: equal, or one of them unknown. Two records naming
-// different issuers are two statements -- different signers -- and folding them
-// together would report one signer's verification under the other's name.
+// describesSame reports whether two records can be folded into one. Verification
+// is a fact about a statement *and a signer*, so records fold only when they
+// agree on the issuer -- or when one of them claims nothing that could be
+// misattributed.
+//
+// A record with no issuer and no verification says only that the statement
+// exists, which any other record for it already says, so it folds into
+// anything. A record with no issuer that *was* verified is a real claim ("this
+// was verified, signer unrecorded") and stays separate from a record naming an
+// issuer: merging them would report that issuer as verified on the strength of
+// a verification that may have been of someone else's signature.
 func (a PackageAttestation) describesSame(other PackageAttestation) bool {
 	if a.key() != other.key() {
 		return false
 	}
-	return a.Issuer == "" || other.Issuer == "" || a.Issuer == other.Issuer
+	switch {
+	case a.Issuer == other.Issuer:
+		return true
+	case a.claimsNothing(), other.claimsNothing():
+		return true
+	default:
+		return false
+	}
 }
 
-// absorb folds a record describing the same statement into a. An unknown
-// issuer is filled from the other record, so a verified statement never ends up
-// without the identity that makes the verification meaningful.
+// claimsNothing reports whether a asserts anything beyond the statement's
+// existence.
+func (a PackageAttestation) claimsNothing() bool {
+	return a.Issuer == "" && !a.Verified
+}
+
+// absorb folds a record describing the same statement into a. Verification
+// never moves between issuers: it travels only when this record claims nothing,
+// in which case the other record replaces it wholesale.
 func (a *PackageAttestation) absorb(other PackageAttestation) {
-	if a.Issuer == "" {
-		a.Issuer = other.Issuer
-	}
-	if other.Verified {
+	switch {
+	case a.claimsNothing():
+		*a = other.Clone()
+	case other.claimsNothing():
+		// Nothing to take.
+	case other.Verified:
+		// Same issuer, so the verification is this issuer's.
 		a.Verified = true
 	}
 }

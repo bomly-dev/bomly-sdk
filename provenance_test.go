@@ -181,6 +181,61 @@ func TestPackageMergeFromKeepsVerificationWithItsIssuer(t *testing.T) {
 		}
 	})
 
+	// A verification recorded without a signer is its own claim. Attaching it
+	// to an issuer named by a different record would say that issuer's
+	// signature was checked, which nobody established.
+	t.Run("an issuerless verification is not attributed to a later issuer", func(t *testing.T) {
+		pkg := &Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{statement("", true)}}
+		pkg.MergeFrom(&Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{statement("issuer-a", false)}})
+
+		if len(pkg.Attestations) != 2 {
+			t.Fatalf("attestations = %+v, want the issuerless verification kept separate", pkg.Attestations)
+		}
+		for _, attestation := range pkg.Attestations {
+			if attestation.Issuer == "issuer-a" && attestation.Verified {
+				t.Fatal("issuer-a was reported verified on the strength of a verification that named no signer")
+			}
+		}
+	})
+
+	// The same, with the records arriving the other way round.
+	t.Run("merge order does not change the outcome", func(t *testing.T) {
+		pkg := &Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{statement("issuer-a", false)}}
+		pkg.MergeFrom(&Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{statement("", true)}})
+
+		if len(pkg.Attestations) != 2 {
+			t.Fatalf("attestations = %+v, want the issuerless verification kept separate", pkg.Attestations)
+		}
+		for _, attestation := range pkg.Attestations {
+			if attestation.Issuer == "issuer-a" && attestation.Verified {
+				t.Fatal("issuer-a was reported verified on the strength of a verification that named no signer")
+			}
+		}
+	})
+
+	// A record with no issuer and no verification asserts only that the
+	// statement exists, so it folds into one that says more.
+	t.Run("a record claiming nothing folds away", func(t *testing.T) {
+		for _, order := range []string{"weak first", "weak second"} {
+			t.Run(order, func(t *testing.T) {
+				weak, strong := statement("", false), statement("issuer-a", true)
+				first, second := weak, strong
+				if order == "weak second" {
+					first, second = strong, weak
+				}
+				pkg := &Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{first}}
+				pkg.MergeFrom(&Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{second}})
+
+				if len(pkg.Attestations) != 1 {
+					t.Fatalf("attestations = %+v, want one record", pkg.Attestations)
+				}
+				if !pkg.Attestations[0].Verified || pkg.Attestations[0].Issuer != "issuer-a" {
+					t.Fatalf("attestation = %+v, want verified and attributed to issuer-a", pkg.Attestations[0])
+				}
+			})
+		}
+	})
+
 	t.Run("an unknown issuer is filled from the verified record", func(t *testing.T) {
 		pkg := &Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{statement("", false)}}
 		pkg.MergeFrom(&Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{statement("issuer-b", true)}})
