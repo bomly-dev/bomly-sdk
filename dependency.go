@@ -94,7 +94,10 @@ type Dependency struct {
 	Copyright    string                 `json:"copyright,omitempty"`
 	FoundBy      string                 `json:"found_by,omitempty"`
 	ResolvedURL  string                 `json:"resolved_url,omitempty"`
-	Metadata     map[string]any         `json:"metadata,omitempty"`
+	// Origin is where this dependency was resolved from, as recorded by the
+	// detector that read the manifest. Read it through Origin.Normalized().
+	Origin   *PackageOrigin `json:"origin,omitempty"`
+	Metadata map[string]any `json:"metadata,omitempty"`
 
 	// Matched is true when the referenced package was enriched by a matcher.
 	Matched bool `json:"matched,omitempty"`
@@ -194,6 +197,7 @@ func (d *Dependency) Clone() *Dependency {
 			}
 		}
 	}
+	clone.Origin = d.Origin.Clone()
 	clone.Metadata = cloneAnyMap(d.Metadata)
 	return &clone
 }

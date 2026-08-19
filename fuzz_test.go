@@ -2,6 +2,8 @@ package sdk
 
 import (
 	"encoding/json"
+	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -146,4 +148,107 @@ func requireFuzzGraphValid(t *testing.T, graph *Graph) {
 		}
 		return true
 	})
+}
+
+// FuzzPackageOrigin drives the origin rule with arbitrary lockfile-derived
+// strings: detectors pass raw manifest fields straight through, so whatever a
+// repository can put in a lockfile reaches these constructors.
+func FuzzPackageOrigin(f *testing.F) {
+	f.Add("https://registry.npmjs.org/react/-/react-18.2.0.tgz", "")
+	f.Add("https://github.com/owner/repo.git", "9f8e7d6c5b4a3928176554433221100ffeeddcc0")
+	f.Add("https://github.com/example/helper?rev=main#abc123", "v1.2.3")
+	f.Add("https://user:s3cret@nexus.corp/repo/pkg.tgz", "main")
+	f.Add("git+ssh://git@github.com/owner/repo.git#9f8e7d6", "9f8e7d6")
+	f.Add("file:///home/someone/wheels/pkg.whl", "")
+	f.Add("/Users/someone/src/project", "")
+	f.Add("http://0#0", "0")
+	f.Add("http://0/0#\x02", "\x02")
+	f.Add("%./0", "%")
+	f.Add("https://", "")
+	f.Add("https://:8080/pkg.tgz", "")
+	f.Add("https://registry.example.test/", "")
+
+	f.Fuzz(func(t *testing.T, rawURL, revision string) {
+		artifact, repository := ArtifactOrigin(rawURL), RepositoryOrigin(rawURL, revision)
+		assertPublishableOrigin(t, artifact)
+		assertPublishableOrigin(t, repository)
+		// Reading back what was written must reach the same conclusion, and
+		// reconciling a record with itself must not change it.
+		assertPublishableOrigin(t, repository.Normalized())
+		// Normalizing an already-normalized origin must be a fixed point.
+		if once, twice := repository.Normalized(), repository.Normalized().Normalized(); !sameOrigin(once, twice) {
+			t.Fatalf("normalizing twice changed the origin: %+v then %+v", once, twice)
+		}
+		if settled, again := ReconcileOrigin(repository, repository), repository.Normalized(); !sameOrigin(settled, again) {
+			t.Fatalf("reconciling a record with itself changed it: %+v then %+v", again, settled)
+		}
+		// A disagreement is recorded rather than resolved, whatever the inputs.
+		normalized := artifact.Normalized()
+		if other := ArtifactOrigin("https://registry.example.test/other/pkg-1.0.0.tgz"); normalized != nil && normalized.ArtifactURL != other.ArtifactURL {
+			if settled := ReconcileOrigin(artifact, other); !settled.Empty() {
+				t.Fatalf("two different origins settled on %+v", settled)
+			}
+		}
+	})
+}
+
+// assertPublishableOrigin fails when an origin carries anything a published
+// document must never show.
+func assertPublishableOrigin(t *testing.T, origin *PackageOrigin) {
+	t.Helper()
+	normalized := origin.Normalized()
+	if normalized == nil {
+		return
+	}
+	if normalized.ArtifactURL != "" && normalized.Repository != "" {
+		t.Fatalf("origin names two locations at once: %+v", normalized)
+	}
+	if normalized.Revision != "" && normalized.Repository == "" {
+		t.Fatalf("revision %q recorded without a repository", normalized.Revision)
+	}
+	for _, raw := range []string{normalized.ArtifactURL, normalized.Repository} {
+		if raw == "" {
+			continue
+		}
+		parsed, err := url.Parse(raw)
+		if err != nil {
+			t.Fatalf("published URL %q does not parse: %v", raw, err)
+		}
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			t.Fatalf("published URL %q is not a web location", raw)
+		}
+		if parsed.Hostname() == "" {
+			t.Fatalf("published URL %q has no host", raw)
+		}
+		if parsed.User != nil {
+			t.Fatalf("published URL %q carries credentials", raw)
+		}
+		if parsed.Fragment != "" {
+			t.Fatalf("published URL %q carries a fragment", raw)
+		}
+		if strings.Trim(parsed.Path, "/") == "" {
+			t.Fatalf("published URL %q names a host root, not a package", raw)
+		}
+	}
+	if normalized.Repository != "" {
+		parsed, _ := url.Parse(normalized.Repository)
+		if parsed.RawQuery != "" || parsed.ForceQuery {
+			t.Fatalf("repository %q carries a query", normalized.Repository)
+		}
+	}
+	if !isValidOriginRevision(normalized.Revision) && normalized.Revision != "" {
+		t.Fatalf("revision %q would break a locator grammar", normalized.Revision)
+	}
+}
+
+// sameOrigin compares two origins that may be nil.
+func sameOrigin(left, right *PackageOrigin) bool {
+	switch {
+	case left == nil && right == nil:
+		return true
+	case left == nil || right == nil:
+		return false
+	default:
+		return *left == *right
+	}
 }
