@@ -300,3 +300,20 @@ func TestPackageMergeFromUnionsDigests(t *testing.T) {
 		t.Fatalf("subjects = %v, want the artifact claim then the source-tree claim", subjects)
 	}
 }
+
+// Plugin-supplied digest fields can contain anything, including whatever
+// separator a joined key would use, so the key holds the parts separately.
+func TestPackageMergeFromDistinguishesDigestsThatWouldCollide(t *testing.T) {
+	left := PackageAttestation{Source: "m", URL: "https://example.test/s", Digest: &Digest{Algorithm: DigestAlgorithmSHA256, Value: "a:b", Subject: "c"}}
+	right := PackageAttestation{Source: "m", URL: "https://example.test/s", Digest: &Digest{Algorithm: DigestAlgorithmSHA256, Value: "a", Subject: "b:c"}, Verified: true}
+
+	pkg := &Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{left}}
+	pkg.MergeFrom(&Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{right}})
+
+	if len(pkg.Attestations) != 2 {
+		t.Fatalf("attestations = %+v, want two: the digests differ", pkg.Attestations)
+	}
+	if pkg.Attestations[0].Verified {
+		t.Fatal("verification was promoted onto a statement with a different digest")
+	}
+}

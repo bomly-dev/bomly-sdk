@@ -222,19 +222,27 @@ func (a *PackageAttestation) absorb(other PackageAttestation) {
 // deliberately absent: it is compared separately, because an unknown issuer is
 // compatible with a known one while two known issuers are not.
 type attestationKey struct {
-	source        string
-	predicateType string
-	url           string
-	digest        string
+	source          string
+	predicateType   string
+	url             string
+	digestAlgorithm DigestAlgorithm
+	digestValue     string
+	digestSubject   DigestSubject
 }
 
 // key returns a's deduplication identity.
 func (a PackageAttestation) key() attestationKey {
 	key := attestationKey{source: a.Source, predicateType: a.PredicateType, url: a.URL}
 	if a.Digest != nil {
-		// Subject is part of the identity: the same bytes hashed over a
-		// source tree and over an artifact are different claims.
-		key.digest = string(a.Digest.Algorithm) + ":" + a.Digest.Value + ":" + string(a.Digest.Subject)
+		// The three parts stay separate rather than joined: plugin-supplied
+		// values can contain the separator, and joining lets two different
+		// digests produce one key.
+		//
+		// Subject is part of the identity: the same bytes hashed over a source
+		// tree and over an artifact are different claims.
+		key.digestAlgorithm = a.Digest.Algorithm
+		key.digestValue = a.Digest.Value
+		key.digestSubject = a.Digest.Subject
 	}
 	return key
 }
