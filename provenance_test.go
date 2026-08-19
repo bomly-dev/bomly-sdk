@@ -236,6 +236,20 @@ func TestPackageMergeFromKeepsVerificationWithItsIssuer(t *testing.T) {
 		}
 	})
 
+	// One issuer, two records: verification is additive, because both records
+	// speak about the same signer.
+	t.Run("one issuer verified in a later record", func(t *testing.T) {
+		pkg := &Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{statement("issuer-a", false)}}
+		pkg.MergeFrom(&Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{statement("issuer-a", true)}})
+
+		if len(pkg.Attestations) != 1 {
+			t.Fatalf("attestations = %+v, want one record for one issuer", pkg.Attestations)
+		}
+		if !pkg.Attestations[0].Verified || pkg.Attestations[0].Issuer != "issuer-a" {
+			t.Fatalf("attestation = %+v, want issuer-a verified", pkg.Attestations[0])
+		}
+	})
+
 	t.Run("an unknown issuer is filled from the verified record", func(t *testing.T) {
 		pkg := &Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{statement("", false)}}
 		pkg.MergeFrom(&Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{statement("issuer-b", true)}})
