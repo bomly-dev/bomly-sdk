@@ -191,7 +191,12 @@ func TestPackageOriginDefaultPortIsCanonical(t *testing.T) {
 		{name: "http default port", raw: "http://example.test:80/pkg-1.0.0.tgz", want: "http://example.test/pkg-1.0.0.tgz"},
 		{name: "a non-default port is part of the location", raw: "https://example.test:8443/pkg-1.0.0.tgz", want: "https://example.test:8443/pkg-1.0.0.tgz"},
 		{name: "the highest usable port", raw: "https://example.test:65535/pkg-1.0.0.tgz", want: "https://example.test:65535/pkg-1.0.0.tgz"},
+		{name: "a default port written with leading zeros", raw: "https://example.test:0443/pkg-1.0.0.tgz", want: "https://example.test/pkg-1.0.0.tgz"},
+		{name: "an http default port with leading zeros", raw: "http://example.test:080/pkg-1.0.0.tgz", want: "http://example.test/pkg-1.0.0.tgz"},
+		{name: "leading zeros on any port are normalized", raw: "https://example.test:08443/pkg-1.0.0.tgz", want: "https://example.test:8443/pkg-1.0.0.tgz"},
 		{name: "an IPv6 literal keeps its brackets", raw: "https://[2001:db8::1]:443/pkg-1.0.0.tgz", want: "https://[2001:db8::1]/pkg-1.0.0.tgz"},
+		{name: "an IPv6 literal keeps its brackets on a rewritten port", raw: "https://[2001:db8::1]:08443/pkg-1.0.0.tgz", want: "https://[2001:db8::1]:8443/pkg-1.0.0.tgz"},
+		{name: "an IPv4-mapped literal keeps its brackets", raw: "https://[::ffff:192.0.2.1]:0443/pkg-1.0.0.tgz", want: "https://[::ffff:192.0.2.1]/pkg-1.0.0.tgz"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -210,6 +215,18 @@ func TestPackageOriginDefaultPortIsCanonical(t *testing.T) {
 		ArtifactOrigin("https://example.test/pkg-1.0.0.tgz"),
 	); settled.Empty() {
 		t.Fatal("a default port alone must not read as a disagreement")
+	}
+	if settled := ReconcileOrigin(
+		ArtifactOrigin("https://example.test:0443/pkg-1.0.0.tgz"),
+		ArtifactOrigin("https://example.test/pkg-1.0.0.tgz"),
+	); settled.Empty() {
+		t.Fatal("a default port written with leading zeros must not read as a disagreement")
+	}
+	if settled := ReconcileOrigin(
+		ArtifactOrigin("https://example.test:08443/pkg-1.0.0.tgz"),
+		ArtifactOrigin("https://example.test:8443/pkg-1.0.0.tgz"),
+	); settled.Empty() {
+		t.Fatal("one port written two ways must not read as a disagreement")
 	}
 	if settled := ReconcileOrigin(
 		ArtifactOrigin("https://example.test:8443/pkg-1.0.0.tgz"),

@@ -119,13 +119,23 @@ func NormalizeOriginURL(raw string, repository bool) (string, bool) {
 		if err != nil || number < 1 || number > 65535 {
 			return "", false
 		}
-	}
-	if port := parsed.Port(); (parsed.Scheme == "https" && port == "443") || (parsed.Scheme == "http" && port == "80") {
+		// Rewrite the port from its number, so one port written two ways --
+		// Port() preserves leading zeros -- gives one location. A port that
+		// is the scheme's default is dropped, since naming it says nothing.
+		// Rebuild from the bare hostname, restoring brackets when the host
+		// was written as an IP literal. Keying off the original spelling
+		// rather than off the hostname's contents keeps this correct however
+		// url.Parse's host validation changes: an unbracketed literal would
+		// name a different host.
 		host := parsed.Hostname()
-		if strings.Contains(host, ":") {
-			host = "[" + host + "]" // an IPv6 literal keeps its brackets
+		if strings.HasPrefix(parsed.Host, "[") {
+			host = "[" + host + "]"
 		}
-		parsed.Host = host
+		if (parsed.Scheme == "https" && number == 443) || (parsed.Scheme == "http" && number == 80) {
+			parsed.Host = host
+		} else {
+			parsed.Host = host + ":" + strconv.Itoa(number)
+		}
 	}
 	parsed.Fragment = ""
 	parsed.RawFragment = ""
