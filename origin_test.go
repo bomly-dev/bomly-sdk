@@ -195,6 +195,8 @@ func TestPackageOriginDefaultPortIsCanonical(t *testing.T) {
 		{name: "an http default port with leading zeros", raw: "http://example.test:080/pkg-1.0.0.tgz", want: "http://example.test/pkg-1.0.0.tgz"},
 		{name: "leading zeros on any port are normalized", raw: "https://example.test:08443/pkg-1.0.0.tgz", want: "https://example.test:8443/pkg-1.0.0.tgz"},
 		{name: "an IPv6 literal keeps its brackets", raw: "https://[2001:db8::1]:443/pkg-1.0.0.tgz", want: "https://[2001:db8::1]/pkg-1.0.0.tgz"},
+		{name: "an IPv6 literal keeps its brackets on a rewritten port", raw: "https://[2001:db8::1]:08443/pkg-1.0.0.tgz", want: "https://[2001:db8::1]:8443/pkg-1.0.0.tgz"},
+		{name: "an IPv4-mapped literal keeps its brackets", raw: "https://[::ffff:192.0.2.1]:0443/pkg-1.0.0.tgz", want: "https://[::ffff:192.0.2.1]/pkg-1.0.0.tgz"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
