@@ -33,21 +33,15 @@ func RegistryPackagesForGraph(g *sdk.Graph, reg *sdk.PackageRegistry, target *sd
 		}
 		dep.PackageRef = purl
 
-		pkg, ok := reg.Get(purl)
-		if !ok {
-			pkg = reg.Add(sdk.PackageFromDependency(dep))
-		} else if pkg != nil {
-			// A package is enriched once, but every occurrence of it still
-			// gets a say about where it came from: two manifests resolving
-			// one package from different places disagree, and the package
-			// must not report whichever was walked first.
-			pkg.Origin = sdk.ReconcileOrigin(pkg.Origin, dep.Origin)
-		}
-
 		if _, alreadySeen := seen[purl]; alreadySeen {
 			continue
 		}
 		seen[purl] = struct{}{}
+
+		pkg, ok := reg.Get(purl)
+		if !ok {
+			pkg = reg.Add(sdk.PackageFromDependency(dep))
+		}
 		if pkg != nil {
 			out = append(out, pkg)
 		}

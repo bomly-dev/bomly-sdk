@@ -11,16 +11,23 @@ import (
 // are far shorter; anything longer is not a revision.
 const maxOriginRevisionLength = 128
 
-// PackageOrigin is where a package came from, as asserted by the component
-// that resolved it. A detector reads it from a lockfile's source fields; a
-// matcher may resolve one from package identity.
+// DependencyOrigin is where a dependency was resolved from, as asserted by the
+// manifest the detector read. It is distilled at detection time from the
+// manifest's structured source fields -- not derivable later from the raw
+// ResolvedURL, which merges several fields and loses their meaning. The name
+// follows the two standards that record this concept as a structured value:
+// Go modules' Origin (URL, ref, hash) and PEP 610's "Direct URL Origin".
 //
-// A package has one origin: either it was downloaded as an artifact or it was
-// resolved from a repository, never both. An empty origin means the component
-// had nothing publishable to say, which is the normal case for a package whose
-// lockfile records only a registry or index root. Consumers such as SBOM export
-// should publish nothing rather than guess.
-type PackageOrigin struct {
+// A dependency has one origin: either it was downloaded as an artifact or it
+// was resolved from a repository, never both. An empty origin means the
+// manifest had nothing publishable to say, which is the normal case for a
+// dependency whose lockfile records only a registry or index root. Consumers
+// such as SBOM export should publish nothing rather than guess.
+//
+// This is detection data. Registry-side enrichment that resolves a source
+// repository from package identity is a different, weaker claim and lives on
+// its own fields (for example PackageScorecard.Repository), never here.
+type DependencyOrigin struct {
 	// ArtifactURL is the exact file the package was downloaded from.
 	ArtifactURL string `json:"artifact_url,omitempty"`
 	// Repository is the source repository the package was resolved from.
@@ -28,39 +35,30 @@ type PackageOrigin struct {
 	// Revision is the revision pinned in Repository, when the lockfile
 	// recorded one. Never set without Repository.
 	Revision string `json:"revision,omitempty"`
-
-	// Disputed marks a package whose occurrences disagreed about where it came
-	// from -- one manifest resolving it from a private mirror and another from
-	// a public registry, say. A disputed origin reports no location at all:
-	// publishing whichever occurrence a merge happened to keep would make the
-	// answer depend on traversal order rather than on the project. The mark
-	// survives further merging so a later occurrence repeating one of the
-	// disputed values cannot revive it.
-	Disputed bool `json:"disputed,omitempty"`
 }
 
 // ArtifactOrigin records the exact artifact a package was resolved from.
 // Callers pass the lockfile field verbatim. It returns nil when the value is
 // not a publishable location, since a missing origin is correct output and a
 // wrong one is not.
-func ArtifactOrigin(rawURL string) *PackageOrigin {
+func ArtifactOrigin(rawURL string) *DependencyOrigin {
 	normalized, ok := NormalizeOriginURL(rawURL, false)
 	if !ok {
 		return nil
 	}
-	return &PackageOrigin{ArtifactURL: normalized}
+	return &DependencyOrigin{ArtifactURL: normalized}
 }
 
 // RepositoryOrigin records the source repository a package was resolved from,
 // plus the revision that was pinned. It returns nil when the URL is not a
 // publishable location; an unusable revision drops only the revision, keeping
 // the repository.
-func RepositoryOrigin(rawURL, revision string) *PackageOrigin {
+func RepositoryOrigin(rawURL, revision string) *DependencyOrigin {
 	normalized, ok := NormalizeOriginURL(rawURL, true)
 	if !ok {
 		return nil
 	}
-	origin := &PackageOrigin{Repository: normalized}
+	origin := &DependencyOrigin{Repository: normalized}
 	if pinned := strings.TrimSpace(revision); isValidOriginRevision(pinned) {
 		origin.Revision = pinned
 	}
@@ -233,11 +231,10 @@ func isUnreservedByte(b byte) bool {
 	}
 }
 
-// Empty reports whether o names no publishable location. A disputed origin is
-// empty -- the disagreement is recorded, but there is nothing to publish -- and
-// so is one whose values do not survive validation, so a caller that checks
-// Empty can read Normalized without a second nil check.
-func (o *PackageOrigin) Empty() bool {
+// Empty reports whether o names no publishable location -- including an origin
+// whose values do not survive validation, so a caller that checks Empty can
+// read Normalized without a second nil check.
+func (o *DependencyOrigin) Empty() bool {
 	return o.Normalized() == nil
 }
 
@@ -246,58 +243,51 @@ func (o *PackageOrigin) Empty() bool {
 // directly: it is what keeps a plugin-supplied or hand-built value from
 // reaching a published document unchecked. An artifact wins over a repository
 // in the case -- which the constructors never produce -- where both are set.
-func (o *PackageOrigin) Normalized() *PackageOrigin {
-	if o == nil || o.Disputed {
+func (o *DependencyOrigin) Normalized() *DependencyOrigin {
+	if o == nil {
 		return nil
 	}
 	if artifact, ok := NormalizeOriginURL(o.ArtifactURL, false); ok {
-		return &PackageOrigin{ArtifactURL: artifact}
+		return &DependencyOrigin{ArtifactURL: artifact}
 	}
 	repository, ok := NormalizeOriginURL(o.Repository, true)
 	if !ok {
 		return nil
 	}
-	normalized := &PackageOrigin{Repository: repository}
+	normalized := &DependencyOrigin{Repository: repository}
 	if pinned := strings.TrimSpace(o.Revision); isValidOriginRevision(pinned) {
 		normalized.Revision = pinned
 	}
 	return normalized
 }
 
-// originWire carries PackageOrigin's fields without its methods, so the JSON
+// originWire carries DependencyOrigin's fields without its methods, so the JSON
 // hooks below can encode and decode without recursing.
-type originWire PackageOrigin
+type originWire DependencyOrigin
 
 // UnmarshalJSON applies the origin rule as a value arrives, so a location that
 // would be rejected on read cannot be stored, forwarded to another component,
-// or written back out. A record of a disagreement survives decoding: it is not
-// a location, but it is a fact worth keeping.
-func (o *PackageOrigin) UnmarshalJSON(data []byte) error {
+// or written back out. A value that fails validation decodes to an empty
+// origin -- including a payload from an older build that still carries the
+// removed "disputed" field, whose remaining values stand on their own.
+func (o *DependencyOrigin) UnmarshalJSON(data []byte) error {
 	var wire originWire
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
 	}
-	decoded := PackageOrigin(wire)
-	switch {
-	case decoded.Disputed:
-		*o = PackageOrigin{Disputed: true}
-	default:
-		normalized := decoded.Normalized()
-		if normalized == nil {
-			*o = PackageOrigin{}
-			return nil
-		}
-		*o = *normalized
+	decoded := DependencyOrigin(wire)
+	normalized := decoded.Normalized()
+	if normalized == nil {
+		*o = DependencyOrigin{}
+		return nil
 	}
+	*o = *normalized
 	return nil
 }
 
 // MarshalJSON applies the same rule on the way out, so a hand-built value that
 // never passed through the constructors cannot leave this process either.
-func (o PackageOrigin) MarshalJSON() ([]byte, error) {
-	if o.Disputed {
-		return json.Marshal(originWire{Disputed: true})
-	}
+func (o DependencyOrigin) MarshalJSON() ([]byte, error) {
 	if normalized := o.Normalized(); normalized != nil {
 		return json.Marshal(originWire(*normalized))
 	}
@@ -305,42 +295,12 @@ func (o PackageOrigin) MarshalJSON() ([]byte, error) {
 }
 
 // Clone returns a deep copy.
-func (o *PackageOrigin) Clone() *PackageOrigin {
+func (o *DependencyOrigin) Clone() *DependencyOrigin {
 	if o == nil {
 		return nil
 	}
 	clone := *o
 	return &clone
-}
-
-// ReconcileOrigin settles the origins of two records of one package, which is
-// what happens when a package appears in several manifests or several times in
-// one dependency tree.
-//
-// Absence is not a disagreement: a record asserting nothing leaves an existing
-// origin standing, and one asserting something fills a gap. Two records
-// asserting different origins cancel, and stay cancelled -- the result is
-// marked disputed, so a third record repeating one of the disputed values
-// cannot revive it.
-func ReconcileOrigin(existing, incoming *PackageOrigin) *PackageOrigin {
-	current, candidate := existing.Normalized(), incoming.Normalized()
-	switch {
-	case disputed(existing), disputed(incoming):
-		return &PackageOrigin{Disputed: true}
-	case candidate == nil:
-		return current
-	case current == nil:
-		return candidate
-	case *current != *candidate:
-		return &PackageOrigin{Disputed: true}
-	default:
-		return current
-	}
-}
-
-// disputed reports whether an origin already records a disagreement.
-func disputed(o *PackageOrigin) bool {
-	return o != nil && o.Disputed
 }
 
 // isValidOriginRevision reports whether revision is safe to publish beside a
