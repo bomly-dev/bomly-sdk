@@ -6,6 +6,17 @@ import (
 	"testing"
 )
 
+// sameLocation reports whether two origins normalize to one location. With no
+// merge logic in the model, "two spellings of one place" is expressed as
+// canonical-form equality rather than as a reconciliation outcome.
+func sameLocation(left, right *DependencyOrigin) bool {
+	l, r := left.Normalized(), right.Normalized()
+	if l == nil || r == nil {
+		return l == r
+	}
+	return *l == *r
+}
+
 func TestArtifactOrigin(t *testing.T) {
 	cases := []struct {
 		name string
@@ -111,32 +122,31 @@ func TestRepositoryOrigin(t *testing.T) {
 
 // Origin can reach a consumer from a plugin or a hand-built graph that never
 // went through the constructors, so reading re-validates.
-func TestPackageOriginNormalized(t *testing.T) {
+func TestDependencyOriginNormalized(t *testing.T) {
 	cases := []struct {
 		name   string
-		origin *PackageOrigin
-		want   *PackageOrigin
+		origin *DependencyOrigin
+		want   *DependencyOrigin
 	}{
 		{name: "nil"},
-		{name: "empty", origin: &PackageOrigin{}},
-		{name: "credentialed artifact", origin: &PackageOrigin{ArtifactURL: "https://build:s3cret@nexus.corp/pkg.tgz"}},
-		{name: "local repository", origin: &PackageOrigin{Repository: "file:///home/someone/repo"}},
-		{name: "revision without a repository", origin: &PackageOrigin{Revision: "9f8e7d6"}},
-		{name: "disputed reports nothing", origin: &PackageOrigin{Disputed: true, ArtifactURL: "https://registry.npmjs.org/react/-/react-18.2.0.tgz"}},
+		{name: "empty", origin: &DependencyOrigin{}},
+		{name: "credentialed artifact", origin: &DependencyOrigin{ArtifactURL: "https://build:s3cret@nexus.corp/pkg.tgz"}},
+		{name: "local repository", origin: &DependencyOrigin{Repository: "file:///home/someone/repo"}},
+		{name: "revision without a repository", origin: &DependencyOrigin{Revision: "9f8e7d6"}},
 		{
 			name:   "artifact wins over repository",
-			origin: &PackageOrigin{ArtifactURL: "https://registry.npmjs.org/react/-/react-18.2.0.tgz", Repository: "https://github.com/facebook/react"},
-			want:   &PackageOrigin{ArtifactURL: "https://registry.npmjs.org/react/-/react-18.2.0.tgz"},
+			origin: &DependencyOrigin{ArtifactURL: "https://registry.npmjs.org/react/-/react-18.2.0.tgz", Repository: "https://github.com/facebook/react"},
+			want:   &DependencyOrigin{ArtifactURL: "https://registry.npmjs.org/react/-/react-18.2.0.tgz"},
 		},
 		{
 			name:   "query and fragment are stripped from a hand-built repository",
-			origin: &PackageOrigin{Repository: "https://github.com/owner/repo?rev=main#abc", Revision: "9f8e7d6"},
-			want:   &PackageOrigin{Repository: "https://github.com/owner/repo", Revision: "9f8e7d6"},
+			origin: &DependencyOrigin{Repository: "https://github.com/owner/repo?rev=main#abc", Revision: "9f8e7d6"},
+			want:   &DependencyOrigin{Repository: "https://github.com/owner/repo", Revision: "9f8e7d6"},
 		},
 		{
 			name:   "unusable revision is dropped, repository kept",
-			origin: &PackageOrigin{Repository: "https://github.com/owner/repo", Revision: "feature@login"},
-			want:   &PackageOrigin{Repository: "https://github.com/owner/repo"},
+			origin: &DependencyOrigin{Repository: "https://github.com/owner/repo", Revision: "feature@login"},
+			want:   &DependencyOrigin{Repository: "https://github.com/owner/repo"},
 		},
 	}
 
@@ -157,7 +167,7 @@ func TestPackageOriginNormalized(t *testing.T) {
 
 // Hosts are case-insensitive. Two producers writing one host differently name
 // the same place, and must not reconcile to a disagreement.
-func TestPackageOriginHostCaseIsCanonical(t *testing.T) {
+func TestDependencyOriginHostCaseIsCanonical(t *testing.T) {
 	upper := RepositoryOrigin("https://GitHub.com/Owner/Repo", "aaaabbbbccccddddeeeeffff0000111122223333")
 	lower := RepositoryOrigin("https://github.com/Owner/Repo", "aaaabbbbccccddddeeeeffff0000111122223333")
 
@@ -167,21 +177,21 @@ func TestPackageOriginHostCaseIsCanonical(t *testing.T) {
 	if upper.Repository != "https://github.com/Owner/Repo" {
 		t.Fatalf("repository = %q, want a lowercased host and an untouched path", upper.Repository)
 	}
-	if settled := ReconcileOrigin(upper, lower); settled.Empty() {
-		t.Fatal("host casing alone must not read as a disagreement")
+	if !sameLocation(upper, lower) {
+		t.Fatal("two spellings of one host must normalize to one location")
 	}
 
-	// The path is case-sensitive, so these are different locations.
-	if settled := ReconcileOrigin(
+	// The path is case-sensitive, so these stay different locations.
+	if sameLocation(
 		ArtifactOrigin("https://example.test/Pkg-1.0.0.tgz"),
 		ArtifactOrigin("https://example.test/pkg-1.0.0.tgz"),
-	); !settled.Empty() {
-		t.Fatalf("origin = %+v, want a disagreement: the paths differ", settled)
+	) {
+		t.Fatal("paths differing in case are different locations")
 	}
 }
 
 // An explicit default port names the same origin as no port at all.
-func TestPackageOriginDefaultPortIsCanonical(t *testing.T) {
+func TestDependencyOriginDefaultPortIsCanonical(t *testing.T) {
 	cases := []struct {
 		name string
 		raw  string
@@ -210,39 +220,38 @@ func TestPackageOriginDefaultPortIsCanonical(t *testing.T) {
 		})
 	}
 
-	if settled := ReconcileOrigin(
+	if !sameLocation(
 		ArtifactOrigin("https://example.test:443/pkg-1.0.0.tgz"),
 		ArtifactOrigin("https://example.test/pkg-1.0.0.tgz"),
-	); settled.Empty() {
-		t.Fatal("a default port alone must not read as a disagreement")
+	) {
+		t.Fatal("a default port must normalize away")
 	}
-	if settled := ReconcileOrigin(
+	if !sameLocation(
 		ArtifactOrigin("https://example.test:0443/pkg-1.0.0.tgz"),
 		ArtifactOrigin("https://example.test/pkg-1.0.0.tgz"),
-	); settled.Empty() {
-		t.Fatal("a default port written with leading zeros must not read as a disagreement")
+	) {
+		t.Fatal("a default port written with leading zeros must normalize away")
 	}
-	if settled := ReconcileOrigin(
+	if !sameLocation(
 		ArtifactOrigin("https://example.test:08443/pkg-1.0.0.tgz"),
 		ArtifactOrigin("https://example.test:8443/pkg-1.0.0.tgz"),
-	); settled.Empty() {
-		t.Fatal("one port written two ways must not read as a disagreement")
+	) {
+		t.Fatal("one port written two ways must normalize to one location")
 	}
-	if settled := ReconcileOrigin(
+	if sameLocation(
 		ArtifactOrigin("https://example.test:8443/pkg-1.0.0.tgz"),
 		ArtifactOrigin("https://example.test/pkg-1.0.0.tgz"),
-	); !settled.Empty() {
-		t.Fatalf("origin = %+v, want a disagreement: a non-default port is a different location", settled)
+	) {
+		t.Fatal("a non-default port is a different location")
 	}
 }
 
 // Empty and Normalized must answer one question, so a caller that guards on
 // Empty can read Normalized without a second nil check.
-func TestPackageOriginEmptyAgreesWithNormalized(t *testing.T) {
-	origins := []*PackageOrigin{
+func TestDependencyOriginEmptyAgreesWithNormalized(t *testing.T) {
+	origins := []*DependencyOrigin{
 		nil,
 		{},
-		{Disputed: true},
 		{ArtifactURL: "https://registry.npmjs.org/react/-/react-18.2.0.tgz"},
 		{ArtifactURL: "/Users/someone/pkg.tgz"},
 		{Repository: "file:///home/someone/repo"},
@@ -256,130 +265,17 @@ func TestPackageOriginEmptyAgreesWithNormalized(t *testing.T) {
 	}
 }
 
-func TestPackageOriginEmpty(t *testing.T) {
-	var nilOrigin *PackageOrigin
+func TestDependencyOriginEmpty(t *testing.T) {
+	var nilOrigin *DependencyOrigin
 	if !nilOrigin.Empty() {
 		t.Fatal("nil origin should be empty")
 	}
-	if !(&PackageOrigin{}).Empty() {
+	if !(&DependencyOrigin{}).Empty() {
 		t.Fatal("zero origin should be empty")
 	}
-	if !(&PackageOrigin{Disputed: true}).Empty() {
-		t.Fatal("a disputed origin names no location, so it is empty")
-	}
-	if (&PackageOrigin{ArtifactURL: "https://example.test/pkg.tgz"}).Empty() {
+	if (&DependencyOrigin{ArtifactURL: "https://example.test/pkg.tgz"}).Empty() {
 		t.Fatal("artifact origin should not be empty")
 	}
-}
-
-func TestReconcileOrigin(t *testing.T) {
-	const (
-		artifact = "https://registry.npmjs.org/react/-/react-18.2.0.tgz"
-		mirror   = "https://npm.corp/mirror/react/-/react-18.2.0.tgz"
-		repo     = "https://github.com/facebook/react"
-	)
-
-	cases := []struct {
-		name     string
-		existing *PackageOrigin
-		incoming *PackageOrigin
-		want     *PackageOrigin
-	}{
-		{name: "neither records anything"},
-		{name: "records agree", existing: ArtifactOrigin(artifact), incoming: ArtifactOrigin(artifact), want: &PackageOrigin{ArtifactURL: artifact}},
-		{name: "absence keeps an origin", existing: ArtifactOrigin(artifact), want: &PackageOrigin{ArtifactURL: artifact}},
-		{name: "absence fills a gap", incoming: ArtifactOrigin(artifact), want: &PackageOrigin{ArtifactURL: artifact}},
-		{name: "records disagree", existing: ArtifactOrigin(artifact), incoming: ArtifactOrigin(mirror), want: &PackageOrigin{Disputed: true}},
-		{name: "different kinds disagree", existing: ArtifactOrigin(artifact), incoming: RepositoryOrigin(repo, ""), want: &PackageOrigin{Disputed: true}},
-		{name: "different pins disagree", existing: RepositoryOrigin(repo, "aaaabbbbccccddddeeeeffff0000111122223333"), incoming: RepositoryOrigin(repo, ""), want: &PackageOrigin{Disputed: true}},
-		{name: "a disagreement is not lifted by absence", existing: &PackageOrigin{Disputed: true}, want: &PackageOrigin{Disputed: true}},
-		{name: "a disagreement is not lifted by agreement", existing: &PackageOrigin{Disputed: true}, incoming: ArtifactOrigin(artifact), want: &PackageOrigin{Disputed: true}},
-		{name: "a disputed record poisons a settled one", existing: ArtifactOrigin(artifact), incoming: &PackageOrigin{Disputed: true}, want: &PackageOrigin{Disputed: true}},
-		{name: "an unpublishable record is not a disagreement", existing: ArtifactOrigin(artifact), incoming: &PackageOrigin{ArtifactURL: "/Users/someone/pkg.tgz"}, want: &PackageOrigin{ArtifactURL: artifact}},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := ReconcileOrigin(tc.existing, tc.incoming)
-			switch {
-			case tc.want == nil && got != nil:
-				t.Fatalf("reconciled = %+v, want nil", got)
-			case tc.want != nil && got == nil:
-				t.Fatalf("reconciled = nil, want %+v", tc.want)
-			case tc.want != nil && *got != *tc.want:
-				t.Fatalf("reconciled = %+v, want %+v", got, tc.want)
-			}
-		})
-	}
-}
-
-// Three records claiming A, B, then A must not settle on A.
-func TestReconcileOriginDisagreementIsFinal(t *testing.T) {
-	const (
-		artifact = "https://registry.npmjs.org/react/-/react-18.2.0.tgz"
-		mirror   = "https://npm.corp/mirror/react/-/react-18.2.0.tgz"
-	)
-	settled := ReconcileOrigin(ArtifactOrigin(artifact), ArtifactOrigin(mirror))
-	settled = ReconcileOrigin(settled, ArtifactOrigin(artifact))
-
-	if !settled.Empty() {
-		t.Fatalf("origin = %+v, want none: the records never agreed", settled)
-	}
-	if !settled.Disputed {
-		t.Fatal("the disagreement must stay recorded, or a later merge revives a disputed value")
-	}
-}
-
-// A merged graph node carries the reconciled answer rather than whichever
-// record was added first.
-func TestMergeGraphReconcilesOrigin(t *testing.T) {
-	const (
-		artifact = "https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz"
-		mirror   = "https://npm.corp/mirror/lodash/-/lodash-4.17.21.tgz"
-	)
-	build := func(t *testing.T, url string) *Graph {
-		t.Helper()
-		g := New()
-		node := NewDependencyWithID("lodash@4.17.21", Dependency{
-			Coordinates: Coordinates{Name: "lodash", Version: "4.17.21", Ecosystem: EcosystemNPM},
-			Origin:      ArtifactOrigin(url),
-		})
-		if err := g.AddNode(node); err != nil {
-			t.Fatal(err)
-		}
-		return g
-	}
-
-	t.Run("disagreement settles to nothing", func(t *testing.T) {
-		merged := New()
-		if err := MergeGraph(merged, build(t, artifact)); err != nil {
-			t.Fatal(err)
-		}
-		if err := MergeGraph(merged, build(t, mirror)); err != nil {
-			t.Fatal(err)
-		}
-		node, ok := merged.Node("lodash@4.17.21")
-		if !ok {
-			t.Fatal("expected lodash in the merged graph")
-		}
-		if got := node.Origin.Normalized(); got != nil {
-			t.Fatalf("merged origin = %+v, want none", got)
-		}
-	})
-
-	t.Run("agreement survives", func(t *testing.T) {
-		merged := New()
-		if err := MergeGraph(merged, build(t, artifact)); err != nil {
-			t.Fatal(err)
-		}
-		if err := MergeGraph(merged, build(t, artifact)); err != nil {
-			t.Fatal(err)
-		}
-		node, _ := merged.Node("lodash@4.17.21")
-		if got := node.Origin.Normalized(); got == nil || got.ArtifactURL != artifact {
-			t.Fatalf("merged origin = %+v, want %q", got, artifact)
-		}
-	})
 }
 
 // Cloning a dependency must not leave the copies sharing origin state.
@@ -396,39 +292,9 @@ func TestDependencyCloneCopiesOrigin(t *testing.T) {
 	}
 }
 
-// Origin travels with the package a dependency refers to.
-func TestPackageFromDependencyCarriesOrigin(t *testing.T) {
-	dep := NewDependencyWithID("react@18.2.0", Dependency{
-		Coordinates: Coordinates{Name: "react", Version: "18.2.0", Ecosystem: EcosystemNPM, PURL: "pkg:npm/react@18.2.0"},
-		Origin:      ArtifactOrigin("https://registry.npmjs.org/react/-/react-18.2.0.tgz"),
-	})
-	pkg := PackageFromDependency(dep)
-	if pkg.Origin == nil || pkg.Origin.ArtifactURL != "https://registry.npmjs.org/react/-/react-18.2.0.tgz" {
-		t.Fatalf("package origin = %+v, want the dependency's", pkg.Origin)
-	}
-	pkg.Origin.ArtifactURL = "https://npm.corp/mirror/react/-/react-18.2.0.tgz"
-	if dep.Origin.ArtifactURL == pkg.Origin.ArtifactURL {
-		t.Fatal("package and dependency share origin state")
-	}
-}
-
-// Registry deduplication settles two records of one package the same way.
-func TestPackageMergeFromReconcilesOrigin(t *testing.T) {
-	const (
-		artifact = "https://registry.npmjs.org/react/-/react-18.2.0.tgz"
-		mirror   = "https://npm.corp/mirror/react/-/react-18.2.0.tgz"
-	)
-	pkg := &Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Origin: ArtifactOrigin(artifact)}
-	pkg.MergeFrom(&Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Origin: ArtifactOrigin(mirror)})
-
-	if got := pkg.Origin.Normalized(); got != nil {
-		t.Fatalf("merged origin = %+v, want none", got)
-	}
-}
-
 // The wire contract is additive: an origin-bearing payload round-trips, and a
 // payload from a build that predates the field still decodes.
-func TestPackageOriginWireRoundTrip(t *testing.T) {
+func TestDependencyOriginWireRoundTrip(t *testing.T) {
 	dep := NewDependencyWithID("react@18.2.0", Dependency{
 		Coordinates: Coordinates{Name: "react", Version: "18.2.0"},
 		Origin:      RepositoryOrigin("https://github.com/facebook/react", "b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7"),
@@ -460,7 +326,7 @@ func TestPackageOriginWireRoundTrip(t *testing.T) {
 // RFC 3986: an escaped unreserved character means the same as the character,
 // so two spellings of one path must not read as a disagreement. Reserved
 // characters keep their escapes, because there the escape changes the meaning.
-func TestPackageOriginPercentEncodingIsCanonical(t *testing.T) {
+func TestDependencyOriginPercentEncodingIsCanonical(t *testing.T) {
 	cases := []struct{ name, raw, want string }{
 		{name: "escaped tilde", raw: "https://example.test/pkg/%7Euser/a.tgz", want: "https://example.test/pkg/~user/a.tgz"},
 		{name: "escaped letter", raw: "https://example.test/%70kg/a.tgz", want: "https://example.test/pkg/a.tgz"},
@@ -496,26 +362,26 @@ func TestPackageOriginPercentEncodingIsCanonical(t *testing.T) {
 		t.Fatalf("origin = %+v, want nil for a malformed escape", origin)
 	}
 
-	if settled := ReconcileOrigin(
+	if !sameLocation(
 		ArtifactOrigin("https://example.test/pkg/%7Euser/a.tgz"),
 		ArtifactOrigin("https://example.test/pkg/~user/a.tgz"),
-	); settled.Empty() {
-		t.Fatal("two spellings of one path must not read as a disagreement")
+	) {
+		t.Fatal("two spellings of one path must normalize to one location")
 	}
-	if settled := ReconcileOrigin(
+	if sameLocation(
 		ArtifactOrigin("https://example.test/pkg/a%2Fb.tgz"),
 		ArtifactOrigin("https://example.test/pkg/a/b.tgz"),
-	); !settled.Empty() {
-		t.Fatalf("origin = %+v, want a disagreement: an escaped slash is a different path", settled)
+	) {
+		t.Fatal("an escaped slash is a different path")
 	}
 }
 
 // A value that would be rejected on read must not be storable or forwardable.
-func TestPackageOriginNormalizesAcrossJSON(t *testing.T) {
+func TestDependencyOriginNormalizesAcrossJSON(t *testing.T) {
 	cases := []struct {
 		name string
 		raw  string
-		want PackageOrigin
+		want DependencyOrigin
 	}{
 		{name: "credentialed artifact is dropped", raw: `{"artifact_url":"https://build:s3cret@nexus.corp/pkg.tgz"}`},
 		{name: "local path is dropped", raw: `{"repository":"file:///home/someone/repo"}`},
@@ -523,24 +389,18 @@ func TestPackageOriginNormalizesAcrossJSON(t *testing.T) {
 		{
 			name: "a publishable value survives",
 			raw:  `{"artifact_url":"https://registry.npmjs.org/react/-/react-18.2.0.tgz"}`,
-			want: PackageOrigin{ArtifactURL: "https://registry.npmjs.org/react/-/react-18.2.0.tgz"},
+			want: DependencyOrigin{ArtifactURL: "https://registry.npmjs.org/react/-/react-18.2.0.tgz"},
 		},
 		{
 			name: "host casing is canonicalized in transit",
 			raw:  `{"repository":"https://GitHub.com/Owner/Repo","revision":"aaaabbbbccccddddeeeeffff0000111122223333"}`,
-			want: PackageOrigin{Repository: "https://github.com/Owner/Repo", Revision: "aaaabbbbccccddddeeeeffff0000111122223333"},
-		},
-		{name: "a recorded disagreement survives", raw: `{"disputed":true}`, want: PackageOrigin{Disputed: true}},
-		{
-			name: "a disagreement outranks any value carried with it",
-			raw:  `{"disputed":true,"artifact_url":"https://registry.npmjs.org/react/-/react-18.2.0.tgz"}`,
-			want: PackageOrigin{Disputed: true},
+			want: DependencyOrigin{Repository: "https://github.com/Owner/Repo", Revision: "aaaabbbbccccddddeeeeffff0000111122223333"},
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var decoded PackageOrigin
+			var decoded DependencyOrigin
 			if err := json.Unmarshal([]byte(tc.raw), &decoded); err != nil {
 				t.Fatalf("decode: %v", err)
 			}
@@ -552,11 +412,69 @@ func TestPackageOriginNormalizesAcrossJSON(t *testing.T) {
 
 	// The same rule applies leaving the process, so a hand-built value cannot
 	// be written out either.
-	raw, err := json.Marshal(&PackageOrigin{ArtifactURL: "https://build:s3cret@nexus.corp/pkg.tgz"})
+	raw, err := json.Marshal(&DependencyOrigin{ArtifactURL: "https://build:s3cret@nexus.corp/pkg.tgz"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(raw), "s3cret") {
 		t.Fatalf("marshaled %s, which carries a credential", raw)
 	}
+}
+
+// Graph merging is a merger of both in the fill-gaps sense: an origin fills in
+// from whichever record has one, so it survives regardless of manifest order,
+// and on a genuine conflict the existing record's origin stays.
+func TestMergeGraphFillsOriginGaps(t *testing.T) {
+	const (
+		artifact = "https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz"
+		mirror   = "https://npm.corp/mirror/lodash/-/lodash-4.17.21.tgz"
+	)
+	build := func(t *testing.T, url string) *Graph {
+		t.Helper()
+		g := New()
+		node := NewDependencyWithID("lodash@4.17.21", Dependency{
+			Coordinates: Coordinates{Name: "lodash", Version: "4.17.21", Ecosystem: EcosystemNPM},
+		})
+		if url != "" {
+			node.Origin = ArtifactOrigin(url)
+		}
+		if err := g.AddNode(node); err != nil {
+			t.Fatal(err)
+		}
+		return g
+	}
+	originOf := func(t *testing.T, g *Graph) *DependencyOrigin {
+		t.Helper()
+		node, ok := g.Node("lodash@4.17.21")
+		if !ok {
+			t.Fatal("expected lodash in the merged graph")
+		}
+		return node.Origin.Normalized()
+	}
+
+	t.Run("a later record fills the gap", func(t *testing.T) {
+		merged := New()
+		if err := MergeGraph(merged, build(t, "")); err != nil {
+			t.Fatal(err)
+		}
+		if err := MergeGraph(merged, build(t, artifact)); err != nil {
+			t.Fatal(err)
+		}
+		if got := originOf(t, merged); got == nil || got.ArtifactURL != artifact {
+			t.Fatalf("merged origin = %+v, want %q regardless of manifest order", got, artifact)
+		}
+	})
+
+	t.Run("an existing origin stays on conflict", func(t *testing.T) {
+		merged := New()
+		if err := MergeGraph(merged, build(t, artifact)); err != nil {
+			t.Fatal(err)
+		}
+		if err := MergeGraph(merged, build(t, mirror)); err != nil {
+			t.Fatal(err)
+		}
+		if got := originOf(t, merged); got == nil || got.ArtifactURL != artifact {
+			t.Fatalf("merged origin = %+v, want the existing record's %q", got, artifact)
+		}
+	})
 }

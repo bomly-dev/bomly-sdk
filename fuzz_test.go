@@ -150,10 +150,10 @@ func requireFuzzGraphValid(t *testing.T, graph *Graph) {
 	})
 }
 
-// FuzzPackageOrigin drives the origin rule with arbitrary lockfile-derived
+// FuzzDependencyOrigin drives the origin rule with arbitrary lockfile-derived
 // strings: detectors pass raw manifest fields straight through, so whatever a
 // repository can put in a lockfile reaches these constructors.
-func FuzzPackageOrigin(f *testing.F) {
+func FuzzDependencyOrigin(f *testing.F) {
 	f.Add("https://registry.npmjs.org/react/-/react-18.2.0.tgz", "")
 	f.Add("https://github.com/owner/repo.git", "9f8e7d6c5b4a3928176554433221100ffeeddcc0")
 	f.Add("https://github.com/example/helper?rev=main#abc123", "v1.2.3")
@@ -172,29 +172,18 @@ func FuzzPackageOrigin(f *testing.F) {
 		artifact, repository := ArtifactOrigin(rawURL), RepositoryOrigin(rawURL, revision)
 		assertPublishableOrigin(t, artifact)
 		assertPublishableOrigin(t, repository)
-		// Reading back what was written must reach the same conclusion, and
-		// reconciling a record with itself must not change it.
+		// Reading back what was written must reach the same conclusion.
 		assertPublishableOrigin(t, repository.Normalized())
 		// Normalizing an already-normalized origin must be a fixed point.
 		if once, twice := repository.Normalized(), repository.Normalized().Normalized(); !sameOrigin(once, twice) {
 			t.Fatalf("normalizing twice changed the origin: %+v then %+v", once, twice)
-		}
-		if settled, again := ReconcileOrigin(repository, repository), repository.Normalized(); !sameOrigin(settled, again) {
-			t.Fatalf("reconciling a record with itself changed it: %+v then %+v", again, settled)
-		}
-		// A disagreement is recorded rather than resolved, whatever the inputs.
-		normalized := artifact.Normalized()
-		if other := ArtifactOrigin("https://registry.example.test/other/pkg-1.0.0.tgz"); normalized != nil && normalized.ArtifactURL != other.ArtifactURL {
-			if settled := ReconcileOrigin(artifact, other); !settled.Empty() {
-				t.Fatalf("two different origins settled on %+v", settled)
-			}
 		}
 	})
 }
 
 // assertPublishableOrigin fails when an origin carries anything a published
 // document must never show.
-func assertPublishableOrigin(t *testing.T, origin *PackageOrigin) {
+func assertPublishableOrigin(t *testing.T, origin *DependencyOrigin) {
 	t.Helper()
 	normalized := origin.Normalized()
 	if normalized == nil {
@@ -242,7 +231,7 @@ func assertPublishableOrigin(t *testing.T, origin *PackageOrigin) {
 }
 
 // sameOrigin compares two origins that may be nil.
-func sameOrigin(left, right *PackageOrigin) bool {
+func sameOrigin(left, right *DependencyOrigin) bool {
 	switch {
 	case left == nil && right == nil:
 		return true

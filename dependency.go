@@ -93,11 +93,17 @@ type Dependency struct {
 	Digests      []Digest               `json:"digests,omitempty"`
 	Copyright    string                 `json:"copyright,omitempty"`
 	FoundBy      string                 `json:"found_by,omitempty"`
-	ResolvedURL  string                 `json:"resolved_url,omitempty"`
-	// Origin is where this dependency was resolved from, as recorded by the
-	// detector that read the manifest. Read it through Origin.Normalized().
-	Origin   *PackageOrigin `json:"origin,omitempty"`
-	Metadata map[string]any `json:"metadata,omitempty"`
+	// ResolvedURL is the manifest's resolution field verbatim -- it may be a
+	// pseudo-URL, a registry or index root, or a local path, and is never
+	// published. It is raw evidence: Origin is the validated assertion
+	// distilled from it and from the manifest's other source fields.
+	ResolvedURL string `json:"resolved_url,omitempty"`
+	// Origin is where this dependency was resolved from, distilled by the
+	// detector from the manifest's structured source fields. Read it through
+	// Origin.Normalized(): ResolvedURL is the raw evidence, Origin the
+	// validated assertion, Normalized() the view consumers publish.
+	Origin   *DependencyOrigin `json:"origin,omitempty"`
+	Metadata map[string]any    `json:"metadata,omitempty"`
 
 	// Matched is true when the referenced package was enriched by a matcher.
 	Matched bool `json:"matched,omitempty"`
