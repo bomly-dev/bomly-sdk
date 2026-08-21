@@ -130,7 +130,7 @@ func TestDependencyOriginNormalized(t *testing.T) {
 	}{
 		{name: "nil"},
 		{name: "empty", origin: &DependencyOrigin{}},
-		{name: "credentialed artifact", origin: &DependencyOrigin{ArtifactURL: "https://build:s3cret@nexus.corp/pkg.tgz"}},
+		{name: "credentialed artifact", origin: &DependencyOrigin{ArtifactURL: "https://build:s3cret@nexus.corp/pkg.tgz"}}, //nolint:gosec // synthetic credential; rejecting it is the rule under test
 		{name: "local repository", origin: &DependencyOrigin{Repository: "file:///home/someone/repo"}},
 		{name: "revision without a repository", origin: &DependencyOrigin{Revision: "9f8e7d6"}},
 		{
@@ -383,7 +383,7 @@ func TestDependencyOriginNormalizesAcrossJSON(t *testing.T) {
 		raw  string
 		want DependencyOrigin
 	}{
-		{name: "credentialed artifact is dropped", raw: `{"artifact_url":"https://build:s3cret@nexus.corp/pkg.tgz"}`},
+		{name: "credentialed artifact is dropped", raw: `{"artifact_url":"https://build:s3cret@nexus.corp/pkg.tgz"}`}, //nolint:gosec // synthetic credential; rejecting it is the rule under test
 		{name: "local path is dropped", raw: `{"repository":"file:///home/someone/repo"}`},
 		{name: "revision without a repository is dropped", raw: `{"revision":"9f8e7d6"}`},
 		{
@@ -462,6 +462,25 @@ func TestMergeGraphFillsOriginGaps(t *testing.T) {
 		}
 		if got := originOf(t, merged); got == nil || got.ArtifactURL != artifact {
 			t.Fatalf("merged origin = %+v, want %q regardless of manifest order", got, artifact)
+		}
+	})
+
+	// A graph decoded from JSON holds a non-nil zero Origin when the recorded
+	// value was unpublishable, so a gap is "publishes nothing", not "nil".
+	t.Run("a decoded-empty origin is a gap", func(t *testing.T) {
+		merged := New()
+		unpublishable := build(t, "")
+		if node, ok := unpublishable.Node("lodash@4.17.21"); ok {
+			node.Origin = &DependencyOrigin{} // what UnmarshalJSON leaves behind
+		}
+		if err := MergeGraph(merged, unpublishable); err != nil {
+			t.Fatal(err)
+		}
+		if err := MergeGraph(merged, build(t, artifact)); err != nil {
+			t.Fatal(err)
+		}
+		if got := originOf(t, merged); got == nil || got.ArtifactURL != artifact {
+			t.Fatalf("merged origin = %+v, want %q: an empty origin must not block the fill", got, artifact)
 		}
 	})
 

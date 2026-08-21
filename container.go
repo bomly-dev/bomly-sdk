@@ -175,7 +175,7 @@ func addNodeIfMissing(g *Graph, node *Dependency) error {
 			// it survives regardless of manifest order. Where both records
 			// assert different origins -- rare -- the existing one stays,
 			// deterministically.
-			if existing.Origin == nil {
+			if existing.Origin.Empty() {
 				existing.Origin = clone.Origin
 			}
 		}

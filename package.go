@@ -334,9 +334,6 @@ func (p *Package) MergeFrom(src *Package) {
 		p.CPEs = cloneStrings(src.CPEs)
 	}
 	p.mergeDigests(src.Digests)
-	if len(p.Digests) == 0 && len(src.Digests) > 0 {
-		p.Digests = append([]Digest(nil), src.Digests...)
-	}
 	if len(p.Licenses) == 0 && len(src.Licenses) > 0 {
 		p.Licenses = append([]PackageLicense(nil), src.Licenses...)
 	}

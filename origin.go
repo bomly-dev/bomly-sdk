@@ -267,8 +267,9 @@ type originWire DependencyOrigin
 
 // UnmarshalJSON applies the origin rule as a value arrives, so a location that
 // would be rejected on read cannot be stored, forwarded to another component,
-// or written back out. A record of a disagreement survives decoding: it is not
-// a location, but it is a fact worth keeping.
+// or written back out. A value that fails validation decodes to an empty
+// origin -- including a payload from an older build that still carries the
+// removed "disputed" field, whose remaining values stand on their own.
 func (o *DependencyOrigin) UnmarshalJSON(data []byte) error {
 	var wire originWire
 	if err := json.Unmarshal(data, &wire); err != nil {

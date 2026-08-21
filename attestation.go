@@ -31,28 +31,6 @@ type PackageAttestation struct {
 	Verified bool `json:"verified,omitempty"`
 }
 
-// mergeDigests unions digests rather than keeping whichever record arrived
-// first. Two records can carry genuinely different claims about one package --
-// a hash of the published artifact from one source and a hash over the source
-// tree from another -- and Subject is what tells them apart, so dropping a
-// later slice would lose provenance on merge order alone.
-func (p *Package) mergeDigests(incoming []Digest) {
-	if len(incoming) == 0 {
-		return
-	}
-	seen := make(map[Digest]struct{}, len(p.Digests)+len(incoming))
-	for _, digest := range p.Digests {
-		seen[digest] = struct{}{}
-	}
-	for _, digest := range incoming {
-		if _, found := seen[digest]; found {
-			continue
-		}
-		seen[digest] = struct{}{}
-		p.Digests = append(p.Digests, digest)
-	}
-}
-
 // mergeAttestations folds incoming statements into p, keeping one record per
 // distinct statement. Several components can attest to one package -- a build
 // provenance statement from one, a publish signature from another -- so this
