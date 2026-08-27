@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	sdk "github.com/bomly-dev/bomly-sdk"
+	"github.com/bomly-dev/bomly-sdk/spdxkit"
 )
 
 // MissingLicensePackages returns the packages eligible for external license lookup.
@@ -23,7 +24,14 @@ func MissingLicensePackages(packages []*sdk.Package) []*sdk.Package {
 	return eligible
 }
 
-// NormalizeLicenseSet converts raw license strings into Bomly package licenses.
+// NormalizeLicenseSet converts raw license strings into Bomly package
+// licenses, classifying each value by validating it (ADR-0035 in bomly-cli's
+// dev-docs/adr, enforced at write time via spdxkit). Value keeps the raw
+// string verbatim — nothing is lost — while SPDXExpression is set only when
+// the value actually is SPDX: the canonical current spelling for a
+// license-list identifier (deprecated entries fold to their replacements),
+// the validated expression otherwise. Free text such as "non-standard"
+// leaves SPDXExpression empty instead of masquerading as an expression.
 func NormalizeLicenseSet(values []string, sourceType string) []sdk.PackageLicense {
 	out := make([]sdk.PackageLicense, 0, len(values))
 	seen := make(map[string]struct{}, len(values))
@@ -36,11 +44,19 @@ func NormalizeLicenseSet(values []string, sourceType string) []sdk.PackageLicens
 			continue
 		}
 		seen[normalized] = struct{}{}
-		out = append(out, sdk.PackageLicense{
-			Value:          normalized,
-			SPDXExpression: normalized,
-			Type:           sdk.LicenseType(sourceType),
-		})
+		license := sdk.PackageLicense{
+			Value: normalized,
+			Type:  sdk.LicenseType(sourceType),
+		}
+		switch spdxkit.Classify(normalized) {
+		case spdxkit.ClassIdentifier:
+			if canonical, ok := spdxkit.CanonicalIdentifier(normalized); ok {
+				license.SPDXExpression = canonical
+			}
+		case spdxkit.ClassExpression:
+			license.SPDXExpression = spdxkit.CanonicalExpression(normalized)
+		}
+		out = append(out, license)
 	}
 	return out
 }

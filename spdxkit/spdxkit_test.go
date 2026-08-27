@@ -1,0 +1,73 @@
+package spdxkit
+
+import "testing"
+
+func TestValid(t *testing.T) {
+	valid := []string{"MIT", "Apache-2.0", "MIT OR Apache-2.0", "GPL-2.0-only WITH Classpath-exception-2.0", "GPL-2.0"}
+	for _, expr := range valid {
+		if !Valid(expr) {
+			t.Errorf("Valid(%q) = false, want true", expr)
+		}
+	}
+	invalid := []string{"", "   ", "non-standard", "see LICENSE file", "((("}
+	for _, expr := range invalid {
+		if Valid(expr) {
+			t.Errorf("Valid(%q) = true, want false", expr)
+		}
+	}
+}
+
+func TestValidContainsParserPanic(t *testing.T) {
+	// "(((" dereferences a nil operator inside the upstream parser; the
+	// whole reason this package exists is that the panic never escapes.
+	if Valid("(((") {
+		t.Fatal(`Valid("(((") = true`)
+	}
+	valid, invalid := ValidateAll([]string{"MIT", "((("})
+	if valid {
+		t.Fatal("ValidateAll with a panicking member reported valid")
+	}
+	if len(invalid) != 2 {
+		// The parser gave up part-way through the batch, so no member can be
+		// reported as checked.
+		t.Fatalf("ValidateAll invalid = %v, want the entire batch", invalid)
+	}
+}
+
+func TestIdentifier(t *testing.T) {
+	if canonical, ok := Identifier("mit"); !ok || canonical != "MIT" {
+		t.Fatalf("Identifier(mit) = (%q, %v)", canonical, ok)
+	}
+	if canonical, ok := Identifier("GPL-2.0"); !ok || canonical != "GPL-2.0" {
+		t.Fatalf("Identifier(GPL-2.0) = (%q, %v) — deprecated entries remain list members", canonical, ok)
+	}
+	for _, notIdentifier := range []string{"", "MIT OR Apache-2.0", "GPL-2.0-only+", "non-standard", "(MIT)"} {
+		if _, ok := Identifier(notIdentifier); ok {
+			t.Errorf("Identifier(%q) succeeded, want rejection", notIdentifier)
+		}
+	}
+}
+
+func TestCompose(t *testing.T) {
+	if got := Compose([]string{"MIT", "Apache-2.0"}); got != "MIT AND Apache-2.0" {
+		t.Fatalf("Compose = %q", got)
+	}
+	if got := Compose([]string{"MIT OR ISC", "Apache-2.0"}); got != "(MIT OR ISC) AND Apache-2.0" {
+		t.Fatalf("Compose parenthesization = %q", got)
+	}
+	if got := Compose([]string{" ", ""}); got != "" {
+		t.Fatalf("Compose(blank) = %q", got)
+	}
+}
+
+func TestSatisfiesAndExtractContainPanics(t *testing.T) {
+	if ok, err := Satisfies("(((", []string{"MIT"}); ok || err != nil {
+		t.Fatalf("Satisfies(panic input) = (%v, %v)", ok, err)
+	}
+	if ok, err := Satisfies("MIT", []string{"MIT"}); !ok || err != nil {
+		t.Fatalf("Satisfies(MIT, [MIT]) = (%v, %v)", ok, err)
+	}
+	if licenses, err := Extract("((("); licenses != nil || err != nil {
+		t.Fatalf("Extract(panic input) = (%v, %v)", licenses, err)
+	}
+}
