@@ -32,3 +32,48 @@ jobs:
         run: |
           go mod tidy
           git diff --exit-code go.mod go.sum
+
+  # API-compatibility gate (ADR-0040 program, plan step 0.1): diff the exported
+  # Go API against the latest release tag with gorelease. Incompatible changes
+  # fail the job unless the PR carries the `api:break-approved` label, so a
+  # breaking change is always a reviewed, deliberate act — never an accident.
+  api-compat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The default shallow checkout has no tags; gorelease needs the
+          # latest release tag as its baseline.
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Resolve baseline tag
+        id: baseline
+        run: |
+          tag="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)"
+          if [[ -z "$tag" ]]; then
+            echo "no release tag found; skipping API diff" >&2
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: gorelease against baseline
+        if: steps.baseline.outputs.tag != ''
+        env:
+          BREAK_APPROVED: ${{ contains(github.event.pull_request.labels.*.name, 'api:break-approved') }}
+        run: |
+          set -o pipefail
+          status=0
+          report="$(go run golang.org/x/exp/cmd/gorelease@latest -base="${{ steps.baseline.outputs.tag }}" 2>&1)" || status=$?
+          echo "$report"
+          if grep -qi '^## incompatible changes' <<<"$report"; then
+            if [[ "$BREAK_APPROVED" == "true" ]]; then
+              echo "incompatible API changes present, approved via api:break-approved label" >&2
+              exit 0
+            fi
+            echo "incompatible API changes against ${{ steps.baseline.outputs.tag }}; add the api:break-approved label if this break is deliberate" >&2
+            exit 1
+          fi
+          if [[ "$status" -ne 0 ]]; then
+            echo "gorelease failed without reporting incompatible changes; treating as an operational error" >&2
+            exit "$status"
+          fi
