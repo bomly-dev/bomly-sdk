@@ -13,7 +13,9 @@ shared helper subpackages (`system`, `filecache`, `logkit`, `detectorkit`,
 ## This module is the source of truth
 
 The standing placement rule (recorded as
-[ADR-0040 in bomly-cli](https://github.com/bomly-dev/bomly-cli/blob/main/dev-docs/adr/0040-the-sdk-is-the-default-home-for-behavior.md)):
+[ADR-0040 in bomly-cli](https://github.com/bomly-dev/bomly-cli/blob/main/dev-docs/adr/0040-the-sdk-is-the-default-home-for-behavior.md),
+landing via [bomly-dev/bomly-cli#411](https://github.com/bomly-dev/bomly-cli/pull/411) —
+the link resolves once that PR merges):
 behavior about shared domain objects — identity, coordinates, PURLs,
 licenses, SBOM assertions, graph and merge semantics, validation gates —
 lands **here first**, and the CLI and plugins consume it. When a bug is
@@ -43,7 +45,9 @@ Two axes, with different rules (see `README.md` for the full policy):
 - **Wire (`bomly.plugin.v1`)** — strictly additive, forever. Payloads are
   JSON over gRPC, so struct JSON tags *are* the wire schema. New fields must
   be optional and tagged `omitempty` (`TestWireV1NewFieldsAreOmitEmpty`
-  enforces this); frozen fixtures must keep decoding
+  guards this for the payloads and fields it enumerates — extend its
+  enumeration when adding wire surface; a field outside it is not covered);
+  frozen fixtures must keep decoding
   (`TestWireV1FixturesDecode` — never "fix" a fixture); fields and RPCs are
   never removed, renamed, or repurposed within v1. A breaking change ships
   as `bomly.plugin.v2` negotiated alongside v1.
@@ -74,7 +78,8 @@ branch.
 ```sh
 go test ./...    # all tests must pass before work is done
 go vet ./...
-gofmt -l .       # CI gates on formatting and go.mod tidiness
+gofmt -l .          # CI gates on formatting
+go mod tidy -diff   # CI gates on go.mod/go.sum tidiness
 ```
 
 The `conformance` package is the reusable plugin-contract suite; changes to
