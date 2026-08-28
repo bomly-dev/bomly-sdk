@@ -4,9 +4,16 @@ import (
 	"strings"
 
 	"github.com/anchore/packageurl-go"
+
+	"github.com/bomly-dev/bomly-sdk/purlkit"
 )
 
 // ParsePackageURL parses a package URL string.
+//
+// Deprecated: use purlkit.Parse, which returns a structured PURL with
+// qualifiers and subpath and reports errors instead of returning nil. This
+// function is kept only because its signature exposes the third-party
+// packageurl type; it is removed in the next coordinated breaking release.
 func ParsePackageURL(value string) *packageurl.PackageURL {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -20,16 +27,9 @@ func ParsePackageURL(value string) *packageurl.PackageURL {
 }
 
 // CanonicalizePackageURL normalizes a package URL string when possible.
+// It delegates to purlkit, the single home for package-URL behavior.
 func CanonicalizePackageURL(value string) string {
-	parsed := ParsePackageURL(value)
-	if parsed == nil {
-		return ""
-	}
-	normalizePackageURLParts(parsed)
-	if err := parsed.Normalize(); err != nil {
-		return ""
-	}
-	return parsed.ToString()
+	return purlkit.Canonicalize(value)
 }
 
 // BuildPackageURL builds and normalizes a package URL from its parts.
@@ -41,27 +41,11 @@ func BuildPackageURL(purlType, namespace, name, version string) string {
 	if purlType == "" || name == "" {
 		return ""
 	}
-	purl := packageurl.NewPackageURL(purlType, namespace, name, version, nil, "")
-	if purl == nil {
-		return ""
-	}
-	normalizePackageURLParts(purl)
-	if err := purl.Normalize(); err != nil {
+	built, err := purlkit.Build(purlkit.PURL{Type: purlType, Namespace: namespace, Name: name, Version: version})
+	if err != nil {
 		return buildPackageURLFallback(purlType, namespace, name, version)
 	}
-	return purl.ToString()
-}
-
-func normalizePackageURLParts(purl *packageurl.PackageURL) {
-	if purl == nil {
-		return
-	}
-	if strings.EqualFold(strings.TrimSpace(purl.Type), "npm") {
-		namespace := strings.TrimSpace(purl.Namespace)
-		if namespace != "" && !strings.HasPrefix(namespace, "@") && !strings.HasPrefix(strings.ToLower(namespace), "%40") {
-			purl.Namespace = "@" + namespace
-		}
-	}
+	return built
 }
 
 func buildPackageURLFallback(purlType, namespace, name, version string) string {
@@ -99,6 +83,16 @@ func buildPackageURLFallback(purlType, namespace, name, version string) string {
 // non-spec pkg:erlang rather than guessing a registry the package may not be
 // published to.
 func PackageURLTypeForValues(values ...any) string {
+	converted := make([]string, 0, len(values))
+	for _, value := range values {
+		converted = append(converted, packageURLTypeValue(value))
+	}
+	return purlkit.TypeForValues(converted...)
+}
+
+// legacyPackageURLTypeSwitch is retained only by its parity test, which pins
+// that the purlkit table matches the historical mapping row for row.
+func legacyPackageURLTypeSwitch(values ...any) string {
 	for _, value := range values {
 		normalized := strings.ToLower(strings.TrimSpace(packageURLTypeValue(value)))
 		switch normalized {
@@ -228,18 +222,10 @@ func CanonicalPackageURLFromDependency(dep *Dependency) string {
 	return dep.CanonicalPURL()
 }
 
-// PackageURLBase strips version and qualifiers from a package URL.
+// PackageURLBase strips version, qualifiers, and subpath from a package URL.
+// It delegates to purlkit.Base, which works on the parsed structure — the
+// previous string surgery mishandled subpath-carrying and version-less
+// package URLs.
 func PackageURLBase(value string) string {
-	value = CanonicalizePackageURL(value)
-	if value == "" {
-		return ""
-	}
-	if q := strings.Index(value, "?"); q >= 0 {
-		value = value[:q]
-	}
-	at := strings.LastIndex(value, "@")
-	if at <= 0 {
-		return value
-	}
-	return value[:at]
+	return purlkit.Base(value)
 }
