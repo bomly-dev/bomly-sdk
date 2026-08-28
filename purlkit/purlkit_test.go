@@ -156,3 +156,10 @@ func TestBuildRejectsBlankQualifierKeys(t *testing.T) {
 		t.Fatalf("blank qualifier key error %v does not match ErrInvalidPURL", err)
 	}
 }
+
+func TestBuildBoundsOversizedRendering(t *testing.T) {
+	_, err := Build(PURL{Type: "npm", Name: strings.Repeat("a", maxInputSize)})
+	if !errors.Is(err, ErrInvalidPURL) {
+		t.Fatalf("oversized Build error %v does not match ErrInvalidPURL", err)
+	}
+}

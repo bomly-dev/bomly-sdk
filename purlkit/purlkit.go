@@ -45,7 +45,7 @@ type PURL struct {
 // parsing it again yields the same value. Parse never panics.
 func Parse(value string) (PURL, error) {
 	value = strings.TrimSpace(value)
-	if value == "" || len(value) > maxInputSize {
+	if value == "" {
 		return PURL{}, ErrInvalidPURL
 	}
 	out, _, err := stabilize(value)
@@ -62,6 +62,14 @@ func Parse(value string) (PURL, error) {
 func stabilize(value string) (PURL, string, error) {
 	const maxCanonicalizationRounds = 4
 	for range maxCanonicalizationRounds {
+		// The bound lives here so Parse and Build enforce it identically: a
+		// Build whose rendered form exceeds it must fail now, not return an
+		// output the public Parse would later reject — that would break the
+		// documented fixed-point property and allow repeated parsing of
+		// arbitrarily large structured input.
+		if len(value) > maxInputSize {
+			return PURL{}, "", ErrInvalidPURL
+		}
 		parsed, err := packageurl.FromString(value)
 		if err != nil {
 			return PURL{}, "", fmt.Errorf("%w: %v", ErrInvalidPURL, err)
