@@ -94,8 +94,8 @@ func TestOversizedInputsAreBounded(t *testing.T) {
 		t.Fatal("oversized expression validated")
 	}
 	valid, invalid := ValidateAll([]string{"MIT", oversized})
-	if valid || len(invalid) != 1 || invalid[0] != oversized {
-		t.Fatalf("ValidateAll(mixed oversized) = (%v, %d invalid)", valid, len(invalid))
+	if valid || len(invalid) != 2 {
+		t.Fatalf("ValidateAll(mixed oversized) = (%v, %d invalid), want unchecked batch", valid, len(invalid))
 	}
 	if _, ok := Identifier(oversized); ok {
 		t.Fatal("oversized identifier resolved")
@@ -129,6 +129,9 @@ func TestAggregateBatchesAreBounded(t *testing.T) {
 	}
 	if ok, _ := Satisfies("MIT", big); ok {
 		t.Fatal("Satisfies accepted an over-count allowed set")
+	}
+	if ok, _ := Satisfies("MIT", fat); ok {
+		t.Fatal("Satisfies accepted an over-bytes allowed set")
 	}
 }
 

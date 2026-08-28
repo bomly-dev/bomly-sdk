@@ -49,28 +49,21 @@ func ValidateAll(values []string) (valid bool, invalid []string) {
 	if len(values) == 0 {
 		return true, nil
 	}
-	// An over-count aggregate cannot be checked at all: like a parser
-	// panic, no member of it can be reported as validated.
-	if len(values) > maxBatchMembers {
+	// Reject byte and count limits before any structural scan. Like a parser
+	// panic, an unchecked batch cannot report any member as validated.
+	if !batchWithinByteBounds(values) {
 		return false, append([]string(nil), values...)
 	}
-	// Out-of-bounds members are invalid without consulting the parser; the
-	// remaining members are still checked so the invalid list stays exact.
+	// Structurally out-of-bounds members are invalid without consulting the
+	// parser; the remaining members are still checked so the invalid list stays
+	// exact.
 	bounded := make([]string, 0, len(values))
-	boundedTotal := 0
 	for _, value := range values {
 		if !withinParserBounds(value) {
 			invalid = append(invalid, value)
 			continue
 		}
 		bounded = append(bounded, value)
-		boundedTotal += len(value)
-	}
-	// Many individually small members are still one aggregate parser
-	// invocation; when their total exceeds the bound the remainder is
-	// wholly unchecked, so every member is reported invalid.
-	if boundedTotal > maxInputSize {
-		return false, append([]string(nil), values...)
 	}
 	if len(bounded) == 0 {
 		return false, invalid
@@ -116,6 +109,20 @@ func withinParserBounds(value string) bool {
 	structureTokens := strings.Count(value, "(") + strings.Count(value, ")") +
 		strings.Count(value, "AND") + strings.Count(value, "OR")
 	return structureTokens <= maxParserStructureTokens
+}
+
+func batchWithinByteBounds(values []string) bool {
+	if len(values) > maxBatchMembers {
+		return false
+	}
+	total := 0
+	for _, value := range values {
+		if len(value) > maxInputSize-total {
+			return false
+		}
+		total += len(value)
+	}
+	return true
 }
 
 // Identifier returns the canonical spelling of a value that is exactly one
@@ -175,19 +182,19 @@ func Compose(values []string) string {
 // An unparseable expression satisfies nothing and returns the parser's error,
 // or false with no error when the parser could not run at all.
 func Satisfies(expression string, allowed []string) (ok bool, err error) {
-	if !withinParserBounds(expression) || len(allowed) > maxBatchMembers ||
+	// Preflight every byte limit before structurally scanning either the
+	// expression or an allowed member.
+	if len(expression) > maxInputSize || !batchWithinByteBounds(allowed) {
+		return false, nil
+	}
+	if !withinParserBounds(expression) ||
 		strings.Count(expression, "AND")+strings.Count(expression, "OR") > maxSatisfiesOperators {
 		return false, nil
 	}
-	total := 0
 	for _, member := range allowed {
-		total += len(member)
 		if !withinParserBounds(member) {
 			return false, nil
 		}
-	}
-	if total > maxInputSize {
-		return false, nil
 	}
 	defer func() {
 		if recover() != nil {
