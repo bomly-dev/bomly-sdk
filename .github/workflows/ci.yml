@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+    # labeled/unlabeled are included so applying or removing the
+    # api:break-approved escape hatch re-evaluates the api-compat gate.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 permissions:
   contents: read
@@ -32,3 +35,64 @@ jobs:
         run: |
           go mod tidy
           git diff --exit-code go.mod go.sum
+
+  # API-compatibility gate (ADR-0040 program, plan step 0.1): diff the exported
+  # Go API against the latest release tag with gorelease. Incompatible changes
+  # fail the job unless the PR carries the `api:break-approved` label, so a
+  # breaking change is always a reviewed, deliberate act — never an accident.
+  # Pull requests only: a push run on main has no PR labels, so a just-merged
+  # approved break would fail there until the next tag moves the baseline.
+  api-compat:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The default shallow checkout has no tags; gorelease needs the
+          # latest release tag as its baseline. The job only reads local Git
+          # metadata, so the token is not persisted.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Resolve baseline tag
+        id: baseline
+        run: |
+          # Latest stable tag reachable from HEAD: --merged keeps tags from
+          # other histories out, and the strict pattern excludes prereleases.
+          tag="$(git tag --merged HEAD --sort=-v:refname | sed -nE '/^v[0-9]+\.[0-9]+\.[0-9]+$/p' | head -n 1)"
+          if [[ -z "$tag" ]]; then
+            echo "no release tag found; skipping API diff" >&2
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: gorelease against baseline
+        if: steps.baseline.outputs.tag != ''
+        env:
+          BREAK_APPROVED: ${{ contains(github.event.pull_request.labels.*.name, 'api:break-approved') }}
+        run: |
+          set -o pipefail
+          status=0
+          # Pinned per the repository's dependency convention; bump the
+          # golang.org/x/exp pseudo-version deliberately, like any dependency.
+          report="$(go run golang.org/x/exp/cmd/gorelease@v0.0.0-20260824195058-e88cd73687aa -base="${{ steps.baseline.outputs.tag }}" 2>&1)" || status=$?
+          echo "$report"
+          # Operational failures are rejected before the approval label is
+          # consulted: the escape hatch accepts a clean incompatible-changes
+          # report, never a run that also reported version errors.
+          if grep -qiE '^#+ errors in (base|release) version' <<<"$report"; then
+            echo "gorelease reported version errors; failing regardless of approval" >&2
+            exit 1
+          fi
+          if grep -qi '^## incompatible changes' <<<"$report"; then
+            if [[ "$BREAK_APPROVED" == "true" ]]; then
+              echo "incompatible API changes present, approved via api:break-approved label" >&2
+              exit 0
+            fi
+            echo "incompatible API changes against ${{ steps.baseline.outputs.tag }}; add the api:break-approved label if this break is deliberate" >&2
+            exit 1
+          fi
+          if [[ "$status" -ne 0 ]]; then
+            echo "gorelease failed without reporting incompatible changes; treating as an operational error" >&2
+            exit "$status"
+          fi
