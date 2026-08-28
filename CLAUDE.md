@@ -73,7 +73,11 @@ branch.
 - Standard library plus the existing pinned dependencies only; discuss
   before adding any dependency.
 - Kits are adapters around established libraries, not replacement
-  implementations. Delegate grammar parsing, validation, normalization,
+  implementations: go-spdx owns what an SPDX expression means, validates
+  as, and normalizes to; packageurl-go owns PURL parsing and rendering.
+  When review proposes sharpening a hand-written heuristic, replace it
+  with library delegation instead — and keep unavoidable resource bounds
+  dumb (bytes and counts), frozen once pinned. Delegate grammar parsing, validation, normalization,
   canonical rendering, and semantic algorithms to the owning dependency.
   Custom kit code is limited to Bomly policy and mappings, safety containment
   and work limits, consumer adapters, and verified gaps in the dependency. Do
