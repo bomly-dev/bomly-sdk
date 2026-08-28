@@ -1,6 +1,10 @@
 package purlkit
 
-import "testing"
+import (
+	"errors"
+	"strings"
+	"testing"
+)
 
 func TestParseAndStringRoundTrip(t *testing.T) {
 	cases := []struct {
@@ -123,5 +127,25 @@ func TestCanonicalizeMatchesLegacyBehavior(t *testing.T) {
 	}
 	if got := Canonicalize("  pkg:npm/a@1  "); got != "pkg:npm/a@1" {
 		t.Fatalf("Canonicalize trimmed = %q", got)
+	}
+}
+
+func TestParseErrorsMatchSentinel(t *testing.T) {
+	// Every failure shape matches ErrInvalidPURL, including errors surfaced
+	// by the underlying parser — callers classify with errors.Is alone.
+	for _, input := range []string{"", "not-a-purl", "pkg:", "pkg:npm", "http://example.com"} {
+		if _, err := Parse(input); !errors.Is(err, ErrInvalidPURL) {
+			t.Errorf("Parse(%q) error %v does not match ErrInvalidPURL", input, err)
+		}
+	}
+	if _, err := Build(PURL{}); !errors.Is(err, ErrInvalidPURL) {
+		t.Errorf("Build(zero) error %v does not match ErrInvalidPURL", err)
+	}
+}
+
+func TestParseBoundsOversizedInput(t *testing.T) {
+	oversized := "pkg:npm/" + strings.Repeat("a", maxInputSize)
+	if _, err := Parse(oversized); !errors.Is(err, ErrInvalidPURL) {
+		t.Fatalf("oversized input error %v does not match ErrInvalidPURL", err)
 	}
 }

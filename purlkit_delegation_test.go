@@ -2,6 +2,8 @@ package sdk
 
 import (
 	"testing"
+
+	"github.com/bomly-dev/bomly-sdk/purlkit"
 )
 
 // TestPackageURLTypeForValuesMatchesLegacySwitch pins that the purlkit table
@@ -51,5 +53,48 @@ func TestBuildPackageURLKeepsLegacyHygiene(t *testing.T) {
 				t.Fatalf("BuildPackageURL = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestCanonicalEcosystemCoversTheFullVocabulary walks the SDK's complete
+// package-manager vocabulary and fails when purlkit's table cannot resolve a
+// manager the SDK declares — the drift guard Codex asked for: a new manager
+// or ecosystem cannot be forgotten in the kit silently. "multiple" is the
+// one documented refusal (it names a set of managers, not an ecosystem).
+func TestCanonicalEcosystemCoversTheFullVocabulary(t *testing.T) {
+	refused := map[string]string{
+		PackageManagerMultiple.Name(): "names a set of managers, not an ecosystem",
+	}
+	for _, manager := range AllPackageManagers() {
+		name := manager.Name()
+		if _, isRefused := refused[name]; isRefused {
+			if _, ok := purlkit.CanonicalEcosystem(name); ok {
+				t.Errorf("manager %q resolved but is documented as refused", name)
+			}
+			continue
+		}
+		canonical, ok := purlkit.CanonicalEcosystem(name)
+		if !ok {
+			t.Errorf("manager %q is not recognized by purlkit.CanonicalEcosystem", name)
+			continue
+		}
+		if ecosystem := manager.Ecosystem(); ecosystem != EcosystemUnknown && canonical != string(ecosystem) {
+			t.Errorf("manager %q → %q, but the SDK says its ecosystem is %q", name, canonical, ecosystem)
+		}
+	}
+	for _, ecosystem := range []Ecosystem{
+		EcosystemNPM, EcosystemMaven, EcosystemGo, EcosystemPython, EcosystemALPM,
+		EcosystemAPK, EcosystemCPP, EcosystemConda, EcosystemDart, EcosystemDPKG,
+		EcosystemElixir, EcosystemErlang, EcosystemGitHub, EcosystemHaskell,
+		EcosystemHomebrew, EcosystemLua, EcosystemDotNet, EcosystemNix,
+		EcosystemOCaml, EcosystemPHP, EcosystemPortage, EcosystemProlog,
+		EcosystemR, EcosystemRPM, EcosystemRuby, EcosystemRust, EcosystemScala,
+		EcosystemSBOM, EcosystemSnap, EcosystemSwift, EcosystemTerraform,
+		EcosystemWordPress, EcosystemOther,
+	} {
+		canonical, ok := purlkit.CanonicalEcosystem(string(ecosystem))
+		if !ok || canonical != string(ecosystem) {
+			t.Errorf("ecosystem %q does not resolve to itself: (%q, %v)", ecosystem, canonical, ok)
+		}
 	}
 }

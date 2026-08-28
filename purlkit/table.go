@@ -132,14 +132,18 @@ func EcosystemForType(purlType string) (ecosystem string, ok bool) {
 
 // canonicalEcosystems folds ecosystem, package-manager, and tool aliases to
 // the canonical Bomly ecosystem token. One table, replacing the divergent
-// per-purpose copies that grew in the root package; a row's absence is as
-// deliberate as its presence — "hex" is refused because the Hex registry
-// serves both Elixir and Erlang.
+// per-purpose copies that grew in the root package. Every canonical
+// ecosystem token maps to itself and every package-manager name maps to its
+// ecosystem — the root-side parity test walks the full SDK vocabulary so a
+// new ecosystem or manager cannot be forgotten here silently. A row's
+// absence is as deliberate as its presence: "hex" is refused because the
+// Hex registry serves both Elixir and Erlang, and "multiple" is refused
+// because it names a set of managers, not an ecosystem.
 var canonicalEcosystems = map[string]string{
 	"npm": "npm", "pnpm": "npm", "yarn": "npm", "bun": "npm",
 	"go": "go", "gomod": "go", "golang": "go",
 	"python": "python", "pip": "python", "pipenv": "python", "poetry": "python",
-	"uv": "python", "setup.py": "python", "pypi": "python",
+	"uv": "python", "pdm": "python", "setup.py": "python", "setuppy": "python", "pypi": "python",
 	"rust": "rust", "cargo": "rust",
 	"maven": "maven", "gradle": "maven",
 	"dotnet": "dotnet", "nuget": "dotnet",
@@ -149,13 +153,19 @@ var canonicalEcosystems = map[string]string{
 	"elixir": "elixir", "mix": "elixir",
 	"erlang": "erlang", "rebar": "erlang", "otp": "erlang",
 	"scala": "scala", "sbt": "scala",
-	"php": "php", "composer": "php", "packagist": "php",
-	"ruby": "ruby", "gem": "ruby", "bundler": "ruby", "rubygems": "ruby",
+	"php": "php", "composer": "php", "packagist": "php", "pear": "php",
+	"ruby": "ruby", "gem": "ruby", "bundler": "ruby", "rubygems": "ruby", "gemspec": "ruby",
 	"haskell": "haskell", "cabal": "haskell", "stack": "haskell", "hackage": "haskell",
 	"r": "r", "r-package": "r", "cran": "r",
 	"ocaml": "ocaml", "opam": "ocaml",
 	"dpkg": "dpkg", "deb": "dpkg",
 	"github-actions": "github-actions", "githubactions": "github-actions",
+	"lua": "lua", "luarocks": "lua",
+	"prolog": "prolog", "swipl-pack": "prolog",
+	"alpm": "alpm", "apk": "apk", "conda": "conda", "homebrew": "homebrew",
+	"nix": "nix", "portage": "portage", "rpm": "rpm", "sbom": "sbom",
+	"snap": "snap", "terraform": "terraform", "wordpress": "wordpress",
+	"other": "other",
 }
 
 // CanonicalEcosystem folds the first recognizable value to its canonical
