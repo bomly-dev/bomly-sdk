@@ -7,7 +7,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/anchore/packageurl-go"
+	"github.com/package-url/packageurl-go"
 )
 
 // ErrInvalidPURL reports a package URL that cannot be built or parsed. Every

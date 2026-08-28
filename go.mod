@@ -6,6 +6,7 @@ require (
 	github.com/anchore/packageurl-go v0.2.0
 	github.com/github/go-spdx/v2 v2.7.0
 	github.com/hashicorp/go-plugin v1.8.0
+	github.com/package-url/packageurl-go v0.1.7
 	go.uber.org/zap v1.28.0
 	golang.org/x/net v0.57.0
 	google.golang.org/grpc v1.83.0

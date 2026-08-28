@@ -18,6 +18,7 @@ func TestParseAndStringRoundTrip(t *testing.T) {
 		{"subpath", "pkg:golang/github.com/google/go-github@v17.0.0#api", "pkg:golang/github.com/google/go-github@v17.0.0#api"},
 		{"subpath no version", "pkg:golang/example.com/mod#sub/dir", "pkg:golang/example.com/mod#sub/dir"},
 		{"type lowercased", "pkg:NPM/left-pad@1.0.0", "pkg:npm/left-pad@1.0.0"},
+		{"npm legacy case preserved", "pkg:npm/%40Scope/LegacyName@1.0.0", "pkg:npm/%40Scope/LegacyName@1.0.0"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
