@@ -118,11 +118,19 @@ func TestCanonicalExpression(t *testing.T) {
 		"GPL-2.0":                 "GPL-2.0-only",
 		"(GPL-2.0 OR MIT)":        "(GPL-2.0-only OR MIT)",
 		"GPL-2.0+ AND Apache-2.0": "GPL-2.0-or-later AND Apache-2.0",
-		"MIT":                     "MIT",
-		"non-standard":            "non-standard",
-		"use GPL-2.0 here":        "use GPL-2.0 here",
-		"(((":                     "(((",
-		"":                        "",
+		// The list lookup accepts case variants, so a validated expression
+		// can carry a lowercase deprecated token; it canonicalizes too.
+		"gpl-2.0 OR MIT": "GPL-2.0-only OR MIT",
+		// The parser accepts only spaces between tokens, so a tab-separated
+		// value fails the validity gate and passes through untouched — it
+		// can never publish as an SPDXExpression in the first place. The
+		// tokenizer still treats tabs as boundaries as defense in depth.
+		"GPL-2.0\tOR\tMIT": "GPL-2.0\tOR\tMIT",
+		"MIT":              "MIT",
+		"non-standard":     "non-standard",
+		"use GPL-2.0 here": "use GPL-2.0 here",
+		"(((":              "(((",
+		"":                 "",
 		// WITH requires an exception identifier, so this is not a valid
 		// expression — the validity gate keeps it untouched.
 		"GPL-2.0-only WITH GPL-2.0": "GPL-2.0-only WITH GPL-2.0",
