@@ -19,6 +19,16 @@ const maxInputSize = 1 << 20
 // the batch is bounded by count and by total bytes, not only per member.
 const maxBatchMembers = 1024
 
+// maxParserStructureTokens bounds recursive parser work without interpreting
+// SPDX syntax ourselves. Counting delimiter and operator spellings is
+// deliberately conservative; go-spdx remains the authority on validity.
+const maxParserStructureTokens = 1024
+
+// maxSatisfiesOperators bounds the expansion performed inside go-spdx's
+// Satisfies implementation. A conservative count is preferable to mirroring
+// the library's expression tree and distributive-expansion algorithm here.
+const maxSatisfiesOperators = 16
+
 // Valid reports whether a value within the package's safety limits parses as
 // an SPDX license expression.
 // Unparseable values — free text such as "non-standard", or malformed
@@ -28,8 +38,8 @@ func Valid(expression string) bool {
 	if expression == "" {
 		return false
 	}
-	valid, _ := ValidateAll([]string{expression})
-	return valid
+	_, ok := normalizeExpression(expression)
+	return ok
 }
 
 // ValidateAll reports whether every value within the package's aggregate and
@@ -49,7 +59,7 @@ func ValidateAll(values []string) (valid bool, invalid []string) {
 	bounded := make([]string, 0, len(values))
 	boundedTotal := 0
 	for _, value := range values {
-		if len(value) > maxInputSize || !expressionWithinParseLimits(value) {
+		if !withinParserBounds(value) {
 			invalid = append(invalid, value)
 			continue
 		}
@@ -80,6 +90,32 @@ func validateBounded(values []string) (valid bool, invalid []string) {
 		}
 	}()
 	return spdxexp.ValidateLicenses(values)
+}
+
+func normalizeExpression(value string) (normalized string, ok bool) {
+	if !withinParserBounds(value) {
+		return "", false
+	}
+	defer func() {
+		if recover() != nil {
+			normalized, ok = "", false
+		}
+	}()
+	normalizedValues, invalid := spdxexp.ValidateAndNormalizeLicensesWithOptions(
+		[]string{value}, spdxexp.ValidateLicensesOptions{})
+	if len(invalid) != 0 || len(normalizedValues) != 1 {
+		return "", false
+	}
+	return normalizedValues[0], true
+}
+
+func withinParserBounds(value string) bool {
+	if len(value) > maxInputSize {
+		return false
+	}
+	structureTokens := strings.Count(value, "(") + strings.Count(value, ")") +
+		strings.Count(value, "AND") + strings.Count(value, "OR")
+	return structureTokens <= maxParserStructureTokens
 }
 
 // Identifier returns the canonical spelling of a value that is exactly one
@@ -116,8 +152,9 @@ func Identifier(value string) (string, bool) {
 // with AND, and a compound member is parenthesized to keep its own operators
 // from binding across the join.
 //
-// Callers must validate the members first: composing free text produces an
-// expression that does not parse.
+// Each member is normalized through go-spdx to decide whether parentheses are
+// required. Invalid members remain byte-for-byte after trimming, so composing
+// free text still produces an expression that does not parse.
 func Compose(values []string) string {
 	parts := make([]string, 0, len(values))
 	for _, value := range values {
@@ -125,7 +162,8 @@ func Compose(values []string) string {
 		if value == "" {
 			continue
 		}
-		if hasCompoundOperator(value) {
+		if normalized, ok := normalizeExpression(value); ok &&
+			(strings.Contains(normalized, " AND ") || strings.Contains(normalized, " OR ")) {
 			value = "(" + value + ")"
 		}
 		parts = append(parts, value)
@@ -133,27 +171,18 @@ func Compose(values []string) string {
 	return strings.Join(parts, " AND ")
 }
 
-func hasCompoundOperator(expression string) bool {
-	for _, segment := range splitExpression(expression) {
-		if !segment.separator && (segment.text == "AND" || segment.text == "OR") {
-			return true
-		}
-	}
-	return false
-}
-
 // Satisfies reports whether an expression is satisfied by an allowed set.
 // An unparseable expression satisfies nothing and returns the parser's error,
 // or false with no error when the parser could not run at all.
 func Satisfies(expression string, allowed []string) (ok bool, err error) {
-	if len(expression) > maxInputSize || len(allowed) > maxBatchMembers ||
-		!expressionWithinParseLimits(expression) || !satisfiesWithinExpansionLimit(expression) {
+	if !withinParserBounds(expression) || len(allowed) > maxBatchMembers ||
+		strings.Count(expression, "AND")+strings.Count(expression, "OR") > maxSatisfiesOperators {
 		return false, nil
 	}
 	total := 0
 	for _, member := range allowed {
 		total += len(member)
-		if !expressionWithinParseLimits(member) {
+		if !withinParserBounds(member) {
 			return false, nil
 		}
 	}
@@ -176,7 +205,7 @@ func Satisfies(expression string, allowed []string) (ok bool, err error) {
 // unparseable expression returns the parser's error; an expression rejected
 // by a safety limit or parser panic yields nothing and no error.
 func Extract(expression string) (licenses []string, err error) {
-	if len(expression) > maxInputSize || !expressionWithinParseLimits(expression) {
+	if !withinParserBounds(expression) {
 		return nil, nil
 	}
 	defer func() {

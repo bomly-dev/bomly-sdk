@@ -68,193 +68,64 @@ func CanonicalIdentifier(value string) (canonical string, ok bool) {
 	return canonical, true
 }
 
-// CanonicalExpression replaces deprecated SPDX identifiers inside a license
-// expression with their current names, preserving expression structure.
-// Non-SPDX free-text values pass through unchanged — the whole input must
-// validate as an SPDX expression before any token is rewritten, so free
-// text that happens to contain a deprecated identifier ("use GPL-2.0
-// here") is never corrupted. This relocates the token-wise rewriter the
-// CLI's SBOM codec carried.
+// CanonicalExpression returns go-spdx's normalized rendering of a license
+// expression with deprecated identifiers replaced by their current names.
+// Valid input may therefore lose redundant parentheses or spacing. Non-SPDX
+// free-text values pass through unchanged — the whole input must validate
+// before any identifier is rewritten, so text that happens to contain a
+// deprecated identifier ("use GPL-2.0 here") is never corrupted.
 func CanonicalExpression(expression string) string {
-	// Bound the original before tokenizing: Valid trims before checking its
-	// own bound, so a huge whitespace padding around a tiny identifier
-	// would otherwise pass validation and still be tokenized.
+	// Bound the original before normalization: callers may deliberately want
+	// invalid or free-text input returned byte-for-byte.
 	if len(expression) > maxInputSize {
 		return expression
 	}
-	if strings.TrimSpace(expression) == "" {
+	normalized, ok := normalizeExpression(expression)
+	if !ok {
 		return expression
 	}
-	if !Valid(expression) {
-		return expression
-	}
-	segments := splitExpression(expression)
-	// Fast path: apply every replacement at once. An expression-valued
-	// replacement can be invalid in context — a deprecated with-exception
-	// entry as the left operand of WITH rewrites into two consecutive
-	// exception applications — so the rewrite only stands if it still
-	// validates.
-	replaced := false
-	for i, segment := range segments {
-		if segment.separator {
-			continue
-		}
-		if replacement, ok := Replacement(segment.text); ok {
-			segments[i].text = replacementInContext(segments, i, replacement)
-			replaced = true
-		}
-	}
+	rewritten, replaced := rewriteNormalizedExpression(normalized)
 	if !replaced {
-		return expression
+		return normalized
 	}
-	if rewritten := joinSegments(segments); Valid(rewritten) {
-		return rewritten
+	if canonical, ok := normalizeExpression(rewritten); ok {
+		return canonical
 	}
-	// Context-sensitive fallback: identifier-to-identifier replacements are
-	// safe in every operand position. An expression-valued replacement is
-	// also safe unless the original operand is itself followed by WITH,
-	// which would create two exception applications. Apply that distinction
-	// in one pass and validate once, keeping work linear in the input size.
-	segments = splitExpression(expression)
-	for i, segment := range segments {
-		if segment.separator {
-			continue
-		}
-		replacement, ok := Replacement(segment.text)
-		if !ok {
-			continue
-		}
-		if _, isIdentifier := Identifier(replacement); !isIdentifier && nextTokenIsWith(segments, i) {
-			continue
-		}
-		segments[i].text = replacementInContext(segments, i, replacement)
-	}
-	if rewritten := joinSegments(segments); Valid(rewritten) {
-		return rewritten
-	}
-
-	// Keep a future expression-valued replacement with an unanticipated
-	// grammar interaction from sacrificing the always-safe identifier
-	// replacements. This final candidate is still built and parsed once.
-	segments = splitExpression(expression)
-	for i, segment := range segments {
-		if segment.separator {
-			continue
-		}
-		replacement, ok := Replacement(segment.text)
-		if !ok {
-			continue
-		}
-		if _, isIdentifier := Identifier(replacement); isIdentifier {
-			segments[i].text = replacementInContext(segments, i, replacement)
-		}
-	}
-	if rewritten := joinSegments(segments); Valid(rewritten) {
-		return rewritten
-	}
-	return expression
+	return normalized
 }
 
-func nextTokenIsWith(segments []expressionSegment, current int) bool {
-	for i := current + 1; i < len(segments); i++ {
-		if !segments[i].separator {
-			return segments[i].text == "WITH"
-		}
-	}
-	return false
-}
-
-func replacementInContext(segments []expressionSegment, current int, replacement string) string {
-	// In the permissive upstream grammar, '+' can be the only boundary
-	// between a license and its following operator ("GPL-2.0+ANDMIT"). A
-	// replacement ending in "-or-later" removes that boundary, so preserve
-	// the tokenization with one inserted space.
-	if strings.HasSuffix(segments[current].text, "+") && current+1 < len(segments) &&
-		!segments[current+1].separator && isExpressionOperator(segments[current+1].text) {
-		return replacement + " "
-	}
-	return replacement
-}
-
-func isExpressionOperator(token string) bool {
-	return token == "AND" || token == "OR" || token == "WITH"
-}
-
-// expressionSegment is one run of an expression: either a token or the
-// separator bytes between tokens, preserved verbatim.
-type expressionSegment struct {
-	separator bool
-	text      string
-}
-
-func splitExpression(expression string) []expressionSegment {
-	var segments []expressionSegment
-	token := strings.Builder{}
-	separator := strings.Builder{}
-	flushToken := func() {
-		if token.Len() == 0 {
-			return
-		}
-		segments = appendTokenRun(segments, token.String())
-		token.Reset()
-	}
-	flushSeparator := func() {
-		if separator.Len() == 0 {
-			return
-		}
-		segments = append(segments, expressionSegment{separator: true, text: separator.String()})
-		separator.Reset()
-	}
-	for _, r := range expression {
-		// Treat every common whitespace rune as a token boundary. The current
-		// parser accepts spaces only, but keeping the tokenizer wider prevents
-		// a future parser relaxation from letting a token escape replacement.
-		// Consecutive separator runes coalesce into one segment so long
-		// whitespace runs cost one allocation, not one per rune.
-		if r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '(' || r == ')' {
-			flushToken()
-			separator.WriteRune(r)
-			continue
-		}
-		flushSeparator()
-		token.WriteRune(r)
-	}
-	flushToken()
-	flushSeparator()
-	return segments
-}
-
-func appendTokenRun(segments []expressionSegment, run string) []expressionSegment {
-	for run != "" {
-		matchedOperator := false
-		for _, operator := range []string{"WITH", "AND", "OR"} {
-			if strings.HasPrefix(run, operator) {
-				segments = append(segments, expressionSegment{text: operator})
-				run = run[len(operator):]
-				matchedOperator = true
-				break
-			}
-		}
-		if matchedOperator {
-			continue
-		}
-		// A plus is part of the preceding license token, but it also ends
-		// that token, allowing an operator to follow without whitespace.
-		end := strings.IndexByte(run, '+')
-		if end < 0 {
-			return append(segments, expressionSegment{text: run})
-		}
-		end++
-		segments = append(segments, expressionSegment{text: run[:end]})
-		run = run[end:]
-	}
-	return segments
-}
-
-func joinSegments(segments []expressionSegment) string {
+// rewriteNormalizedExpression replaces whole identifiers in go-spdx's
+// canonical rendering. It is intentionally not a general SPDX tokenizer:
+// go-spdx has already validated and normalized operators, whitespace, and
+// parentheses before this adapter runs.
+func rewriteNormalizedExpression(expression string) (rewritten string, replaced bool) {
 	var b strings.Builder
-	for _, segment := range segments {
-		b.WriteString(segment.text)
+	b.Grow(len(expression))
+	for start := 0; start < len(expression); {
+		if expression[start] == ' ' || expression[start] == '(' || expression[start] == ')' {
+			b.WriteByte(expression[start])
+			start++
+			continue
+		}
+		end := start
+		for end < len(expression) && expression[end] != ' ' && expression[end] != '(' && expression[end] != ')' {
+			end++
+		}
+		token := expression[start:end]
+		replacement, ok := replacements[token]
+		// Replacing an atomic deprecated with-exception identifier on the
+		// left of WITH would create two exception applications. The original
+		// normalized token is already valid, so retain it in that context.
+		if ok && strings.Contains(replacement, " ") && strings.HasPrefix(expression[end:], " WITH ") {
+			ok = false
+		}
+		if ok {
+			b.WriteString(replacement)
+			replaced = true
+		} else {
+			b.WriteString(token)
+		}
+		start = end
 	}
-	return b.String()
+	return b.String(), replaced
 }

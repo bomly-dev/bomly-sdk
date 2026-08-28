@@ -133,11 +133,12 @@ func TestAggregateBatchesAreBounded(t *testing.T) {
 }
 
 func TestExpressionStructureIsBounded(t *testing.T) {
-	deep := strings.Repeat("(", maxExpressionNesting+1) + "MIT" + strings.Repeat(")", maxExpressionNesting+1)
+	parenPairs := maxParserStructureTokens/2 + 1
+	deep := strings.Repeat("(", parenPairs) + "MIT" + strings.Repeat(")", parenPairs)
 	if Valid(deep) {
 		t.Fatal("over-nested expression validated")
 	}
-	manyOperators := strings.TrimSuffix(strings.Repeat("MIT AND ", maxExpressionOperators+2), " AND ")
+	manyOperators := strings.TrimSuffix(strings.Repeat("MIT AND ", maxParserStructureTokens+2), " AND ")
 	if Valid(manyOperators) {
 		t.Fatal("expression with too many recursive operators validated")
 	}
@@ -148,17 +149,11 @@ func TestExpressionStructureIsBounded(t *testing.T) {
 
 func TestSatisfiesBoundsCombinatorialExpansion(t *testing.T) {
 	safe := strings.TrimSuffix(strings.Repeat("(MIT OR Apache-2.0) AND ", 4), " AND ")
-	if !satisfiesWithinExpansionLimit(safe) {
-		t.Fatal("small expression exceeded the expansion bound")
-	}
 	if ok, err := Satisfies(safe, []string{"MIT", "Apache-2.0"}); !ok || err != nil {
 		t.Fatalf("Satisfies(small expansion) = (%v, %v)", ok, err)
 	}
 
 	exponential := strings.TrimSuffix(strings.Repeat("(MIT OR Apache-2.0) AND ", 13), " AND ")
-	if satisfiesWithinExpansionLimit(exponential) {
-		t.Fatal("exponential expression passed the expansion bound")
-	}
 	if ok, err := Satisfies(exponential, []string{"MIT", "Apache-2.0"}); ok || err != nil {
 		t.Fatalf("Satisfies(exponential) = (%v, %v), want safe rejection", ok, err)
 	}

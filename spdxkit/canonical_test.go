@@ -117,20 +117,19 @@ func TestCanonicalIdentifier(t *testing.T) {
 func TestCanonicalExpression(t *testing.T) {
 	cases := map[string]string{
 		"GPL-2.0":                 "GPL-2.0-only",
-		"(GPL-2.0 OR MIT)":        "(GPL-2.0-only OR MIT)",
+		"(GPL-2.0 OR MIT)":        "GPL-2.0-only OR MIT",
 		"GPL-2.0+ AND Apache-2.0": "GPL-2.0-or-later AND Apache-2.0",
 		// The upstream parser permits an operator to be glued to its right
 		// operand, and a plus suffix can delimit an operator on its left.
-		"MIT ORGPL-2.0":              "MIT ORGPL-2.0-only",
-		"GPL-2.0+ANDMIT":             "GPL-2.0-or-later ANDMIT",
-		"GPL-2.0+WITHLLVM-exception": "GPL-2.0-or-later WITHLLVM-exception",
+		"MIT ORGPL-2.0":              "MIT OR GPL-2.0-only",
+		"GPL-2.0+ANDMIT":             "GPL-2.0-or-later AND MIT",
+		"GPL-2.0+WITHLLVM-exception": "GPL-2.0-or-later WITH LLVM-exception",
 		// The list lookup accepts case variants, so a validated expression
 		// can carry a lowercase deprecated token; it canonicalizes too.
-		"gpl-2.0 OR MIT": "GPL-2.0-only OR MIT",
+		"  gpl-2.0 OR mit  ": "GPL-2.0-only OR MIT",
 		// The parser accepts only spaces between tokens, so a tab-separated
 		// value fails the validity gate and passes through untouched — it
-		// can never publish as an SPDXExpression in the first place. The
-		// tokenizer still treats tabs as boundaries as defense in depth.
+		// can never publish as an SPDXExpression in the first place.
 		"GPL-2.0\tOR\tMIT": "GPL-2.0\tOR\tMIT",
 		"MIT":              "MIT",
 		"non-standard":     "non-standard",
@@ -146,7 +145,7 @@ func TestCanonicalExpression(t *testing.T) {
 		"GPL-2.0-with-classpath-exception WITH LLVM-exception": "GPL-2.0-with-classpath-exception WITH LLVM-exception",
 		// A context-sensitive replacement must not cost the independent
 		// ones: the nested WITH stays, the standalone GPL-2.0 still folds.
-		"GPL-2.0 AND (GPL-2.0-with-classpath-exception WITH LLVM-exception)": "GPL-2.0-only AND (GPL-2.0-with-classpath-exception WITH LLVM-exception)",
+		"GPL-2.0 AND (GPL-2.0-with-classpath-exception WITH LLVM-exception)": "GPL-2.0-only AND GPL-2.0-with-classpath-exception WITH LLVM-exception",
 	}
 	for input, want := range cases {
 		if got := CanonicalExpression(input); got != want {
@@ -155,16 +154,16 @@ func TestCanonicalExpression(t *testing.T) {
 	}
 }
 
-func TestCanonicalExpressionBoundsAndLinearFallback(t *testing.T) {
+func TestCanonicalExpressionBoundsAndContextSensitiveReplacement(t *testing.T) {
 	// A huge whitespace padding around a tiny identifier must be rejected
 	// before tokenization, not turned into per-rune allocations.
 	padded := strings.Repeat(" ", maxInputSize) + "GPL-2.0"
 	if got := CanonicalExpression(padded); got != padded {
 		t.Fatal("oversized padded input was rewritten")
 	}
-	// A context-sensitive token followed by many independent deprecated
-	// tokens stays linear without imposing a semantic work cap: every safe
-	// token still canonicalizes, even when the unsafe one comes first.
+	// A context-sensitive token does not cost the independent deprecated
+	// tokens: every safe token still canonicalizes when the unsafe one comes
+	// first in go-spdx's normalized expression.
 	many := "(GPL-2.0-with-classpath-exception WITH LLVM-exception) AND " + strings.Repeat("GPL-2.0 AND ", 39) + "GPL-2.0"
 	got := CanonicalExpression(many)
 	if !Valid(got) {

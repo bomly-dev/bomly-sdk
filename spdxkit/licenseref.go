@@ -3,8 +3,7 @@ package spdxkit
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"unicode"
-	"unicode/utf8"
+	"strings"
 )
 
 // licenseRefPrefix marks Bomly-minted license references. The charset of the
@@ -48,50 +47,10 @@ func (e ExtractedText) Valid() bool {
 // the hash input only, so texts differing merely in whitespace share a
 // reference.
 func MintLicenseRef(text string) ExtractedText {
-	digest := normalizedTextDigest(text)
+	normalized := strings.Join(strings.Fields(text), " ")
+	digest := sha256.Sum256([]byte(normalized))
 	return ExtractedText{
 		RefID: licenseRefPrefix + hex.EncodeToString(digest[:16]),
 		Text:  text,
 	}
-}
-
-func normalizedTextDigest(text string) [sha256.Size]byte {
-	h := sha256.New()
-	var buffer [4096]byte
-	writeString := func(value string) {
-		for value != "" {
-			n := copy(buffer[:], value)
-			_, _ = h.Write(buffer[:n])
-			value = value[n:]
-		}
-	}
-	fieldStart := -1
-	wroteField := false
-	flushField := func(end int) {
-		if fieldStart < 0 {
-			return
-		}
-		if wroteField {
-			buffer[0] = ' '
-			_, _ = h.Write(buffer[:1])
-		}
-		writeString(text[fieldStart:end])
-		wroteField = true
-		fieldStart = -1
-	}
-
-	for offset := 0; offset < len(text); {
-		r, size := utf8.DecodeRuneInString(text[offset:])
-		if unicode.IsSpace(r) {
-			flushField(offset)
-		} else if fieldStart < 0 {
-			fieldStart = offset
-		}
-		offset += size
-	}
-	flushField(len(text))
-
-	var digest [sha256.Size]byte
-	copy(digest[:], h.Sum(nil))
-	return digest
 }
