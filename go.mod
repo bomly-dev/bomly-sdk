@@ -4,6 +4,7 @@ go 1.27.0
 
 require (
 	github.com/anchore/packageurl-go v0.2.0
+	github.com/github/go-spdx/v2 v2.7.0
 	github.com/hashicorp/go-plugin v1.8.0
 	go.uber.org/zap v1.28.0
 	golang.org/x/net v0.57.0

@@ -1,0 +1,209 @@
+package spdxkit
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/github/go-spdx/v2/spdxexp/spdxlicenses"
+)
+
+func TestReplacementRows(t *testing.T) {
+	// Every row of the audited map, pinned: relocated from the CLI, not
+	// re-derived — the upstream list marks deprecation but does not encode
+	// replacements.
+	cases := map[string]string{
+		"AGPL-1.0":                         "AGPL-1.0-only",
+		"AGPL-3.0":                         "AGPL-3.0-only",
+		"GFDL-1.1":                         "GFDL-1.1-only",
+		"GFDL-1.2":                         "GFDL-1.2-only",
+		"GFDL-1.3":                         "GFDL-1.3-only",
+		"GPL-1.0":                          "GPL-1.0-only",
+		"GPL-1.0+":                         "GPL-1.0-or-later",
+		"GPL-2.0":                          "GPL-2.0-only",
+		"GPL-2.0+":                         "GPL-2.0-or-later",
+		"GPL-3.0":                          "GPL-3.0-only",
+		"GPL-3.0+":                         "GPL-3.0-or-later",
+		"LGPL-2.0":                         "LGPL-2.0-only",
+		"LGPL-2.0+":                        "LGPL-2.0-or-later",
+		"LGPL-2.1":                         "LGPL-2.1-only",
+		"LGPL-2.1+":                        "LGPL-2.1-or-later",
+		"LGPL-3.0":                         "LGPL-3.0-only",
+		"LGPL-3.0+":                        "LGPL-3.0-or-later",
+		"GPL-2.0-with-classpath-exception": "GPL-2.0-only WITH Classpath-exception-2.0",
+	}
+	for input, want := range cases {
+		got, ok := Replacement(input)
+		if !ok || got != want {
+			t.Errorf("Replacement(%q) = (%q, %v), want (%q, true)", input, got, ok, want)
+		}
+	}
+	if _, ok := Replacement("MIT"); ok {
+		t.Fatal("Replacement(MIT) succeeded — active identifiers have no replacement")
+	}
+	if _, ok := Replacement(""); ok {
+		t.Fatal("Replacement(empty) succeeded")
+	}
+}
+
+func TestReplacementKeysAreUpstreamDeprecated(t *testing.T) {
+	// Validity direction: every audited key must be an entry the upstream
+	// list itself marks deprecated, so the map cannot drift into renaming
+	// active licenses.
+	for key := range replacements {
+		if ok, _ := spdxlicenses.IsDeprecatedLicense(key); !ok {
+			t.Errorf("replacement key %q is not deprecated upstream", key)
+		}
+	}
+}
+
+func TestUpstreamDeprecationsAreTriaged(t *testing.T) {
+	// Every upstream deprecated entry is either mapped or deliberately
+	// passed through. This pinned pass-through list makes an upstream list
+	// update surface as a reviewed test change, not silence: a new upstream
+	// deprecation fails here until it is triaged into one bucket.
+	passThrough := map[string]struct{}{
+		// Renames that are not unambiguous one-to-one replacements, or
+		// entries whose replacement choice has not been audited; they pass
+		// through untouched by decision.
+		"BSD-2-Clause-FreeBSD":            {},
+		"BSD-2-Clause-NetBSD":             {},
+		"bzip2-1.0.5":                     {},
+		"eCos-2.0":                        {},
+		"GPL-2.0-with-autoconf-exception": {},
+		"GPL-2.0-with-bison-exception":    {},
+		"GPL-2.0-with-font-exception":     {},
+		"GPL-2.0-with-GCC-exception":      {},
+		"GPL-3.0-with-autoconf-exception": {},
+		"GPL-3.0-with-GCC-exception":      {},
+		"Net-SNMP":                        {},
+		"Nunit":                           {},
+		"StandardML-NJ":                   {},
+		"wxWindows":                       {},
+	}
+	// The pass-through list must not carry stale rows: an entry that is not
+	// actually deprecated upstream falsely documents an active license as
+	// deprecated — which is exactly the misreading a reviewer drew from
+	// earlier stale entries here.
+	for entry := range passThrough {
+		if ok, _ := spdxlicenses.IsDeprecatedLicense(entry); !ok {
+			t.Errorf("pass-through entry %q is not deprecated upstream — stale row", entry)
+		}
+	}
+	for _, deprecated := range spdxlicenses.GetDeprecated() {
+		if _, mapped := replacements[deprecated]; mapped {
+			continue
+		}
+		if _, listed := passThrough[deprecated]; listed {
+			continue
+		}
+		t.Errorf("upstream deprecated %q is neither mapped nor triaged as pass-through", deprecated)
+	}
+}
+
+func TestCanonicalIdentifier(t *testing.T) {
+	if got, ok := CanonicalIdentifier("GPL-2.0"); !ok || got != "GPL-2.0-only" {
+		t.Fatalf("CanonicalIdentifier(GPL-2.0) = (%q, %v)", got, ok)
+	}
+	if got, ok := CanonicalIdentifier("GPL-2.0+"); !ok || got != "GPL-2.0-or-later" {
+		t.Fatalf("CanonicalIdentifier(GPL-2.0+) = (%q, %v)", got, ok)
+	}
+	if got, ok := CanonicalIdentifier("mit"); !ok || got != "MIT" {
+		t.Fatalf("CanonicalIdentifier(mit) = (%q, %v)", got, ok)
+	}
+	if got, ok := CanonicalIdentifier("GPL-2.0-with-classpath-exception"); !ok || got != "GPL-2.0-only WITH Classpath-exception-2.0" {
+		t.Fatalf("CanonicalIdentifier(classpath) = (%q, %v) — replacements may be expressions", got, ok)
+	}
+	if _, ok := CanonicalIdentifier("non-standard"); ok {
+		t.Fatal("CanonicalIdentifier(non-standard) succeeded")
+	}
+}
+
+func TestCanonicalExpression(t *testing.T) {
+	cases := map[string]string{
+		"GPL-2.0":                 "GPL-2.0-only",
+		"(GPL-2.0 OR MIT)":        "GPL-2.0-only OR MIT",
+		"GPL-2.0+ AND Apache-2.0": "GPL-2.0-or-later AND Apache-2.0",
+		// The upstream parser permits an operator to be glued to its right
+		// operand, and a plus suffix can delimit an operator on its left.
+		"MIT ORGPL-2.0":              "MIT OR GPL-2.0-only",
+		"GPL-2.0+ANDMIT":             "GPL-2.0-or-later AND MIT",
+		"GPL-2.0+WITHLLVM-exception": "GPL-2.0-or-later WITH LLVM-exception",
+		// The list lookup accepts case variants, so a validated expression
+		// can carry a lowercase deprecated token; it canonicalizes too.
+		"  gpl-2.0 OR mit  ": "GPL-2.0-only OR MIT",
+		// The parser accepts only spaces between tokens, so a tab-separated
+		// value fails the validity gate and passes through untouched — it
+		// can never publish as an SPDXExpression in the first place.
+		"GPL-2.0\tOR\tMIT": "GPL-2.0\tOR\tMIT",
+		"MIT":              "MIT",
+		"non-standard":     "non-standard",
+		"use GPL-2.0 here": "use GPL-2.0 here",
+		"(((":              "(((",
+		"":                 "",
+		// WITH requires an exception identifier, so this is not a valid
+		// expression — the validity gate keeps it untouched.
+		"GPL-2.0-only WITH GPL-2.0": "GPL-2.0-only WITH GPL-2.0",
+		// An expression-valued replacement as the left operand of WITH
+		// would rewrite into two consecutive exception applications; the
+		// post-rewrite validity check keeps the valid original instead.
+		"GPL-2.0-with-classpath-exception WITH LLVM-exception": "GPL-2.0-with-classpath-exception WITH LLVM-exception",
+		// A context-sensitive replacement must not cost the independent
+		// ones: the nested WITH stays, the standalone GPL-2.0 still folds.
+		"GPL-2.0 AND (GPL-2.0-with-classpath-exception WITH LLVM-exception)": "GPL-2.0-only AND GPL-2.0-with-classpath-exception WITH LLVM-exception",
+	}
+	for input, want := range cases {
+		if got := CanonicalExpression(input); got != want {
+			t.Errorf("CanonicalExpression(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestCanonicalExpressionBoundsAndContextSensitiveReplacement(t *testing.T) {
+	// A huge whitespace padding around a tiny identifier must be rejected
+	// before tokenization, not turned into per-rune allocations.
+	padded := strings.Repeat(" ", maxInputSize) + "GPL-2.0"
+	if got := CanonicalExpression(padded); got != padded {
+		t.Fatal("oversized padded input was rewritten")
+	}
+	// A context-sensitive token does not cost the independent deprecated
+	// tokens: every safe token still canonicalizes when the unsafe one comes
+	// first in go-spdx's normalized expression.
+	many := "(GPL-2.0-with-classpath-exception WITH LLVM-exception) AND " + strings.Repeat("GPL-2.0 AND ", 39) + "GPL-2.0"
+	got := CanonicalExpression(many)
+	if !Valid(got) {
+		t.Fatalf("fallback produced an invalid expression: %q", got)
+	}
+	if count := strings.Count(got, "GPL-2.0-only"); count != 40 {
+		t.Fatalf("fallback folded %d independent tokens, want 40", count)
+	}
+	if !strings.Contains(got, "GPL-2.0-with-classpath-exception WITH LLVM-exception") {
+		t.Fatal("context-sensitive operand was rewritten")
+	}
+}
+
+func TestReplacementTargetsAreActive(t *testing.T) {
+	// CanonicalIdentifier promises the current spelling, so every
+	// replacement target must be active in the vendored list — a target the
+	// list marks deprecated would re-emit a deprecated identifier from an
+	// API promising the opposite. Expression-valued targets are checked by
+	// component: the license half must be active and the exception half a
+	// known exception.
+	for source, target := range replacements {
+		if !strings.Contains(target, " ") {
+			if active, _ := spdxlicenses.IsActiveLicense(target); !active {
+				t.Errorf("replacement %q -> %q: target is not an active license", source, target)
+			}
+			continue
+		}
+		for _, token := range strings.Fields(target) {
+			if token == "WITH" || token == "AND" || token == "OR" {
+				continue
+			}
+			active, _ := spdxlicenses.IsActiveLicense(token)
+			exception, _ := spdxlicenses.IsException(token)
+			if !active && !exception {
+				t.Errorf("replacement %q -> %q: component %q is neither an active license nor an exception", source, target, token)
+			}
+		}
+	}
+}

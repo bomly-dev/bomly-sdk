@@ -30,6 +30,14 @@ var boundedImports = []struct {
 			"purl.go": "deprecated ParsePackageURL keeps the type in its signature",
 		},
 	},
+	{
+		// The SPDX expression parser panics on some untrusted inputs;
+		// spdxkit contains those panics, so no other package may reach the
+		// parser directly.
+		module:  "github.com/github/go-spdx",
+		kitDir:  "spdxkit",
+		allowed: map[string]string{},
+	},
 }
 
 // TestThirdPartyParsersAreConfinedToTheirKits fails when a bounded library
