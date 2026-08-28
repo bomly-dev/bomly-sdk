@@ -61,6 +61,29 @@ func TestNormalizePackageIdentityGoPath(t *testing.T) {
 	normAssertAppliedMetadata(t, pkg.Metadata, []string{"name", "version"})
 }
 
+func TestNormalizePackageIdentityUsesCanonicalEcosystemAliases(t *testing.T) {
+	tests := []struct {
+		name    string
+		manager PackageManager
+		input   string
+		want    string
+	}{
+		{name: "bun uses npm rules", manager: PackageManagerBun, input: "PACKage", want: "package"},
+		{name: "pdm uses python rules", manager: PackageManagerPDM, input: "Requests_Toolbelt", want: "requests-toolbelt"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pkg := &Dependency{Coordinates: Coordinates{PackageManager: tc.manager, Name: tc.input}}
+
+			NormalizeDependencyIdentity(pkg)
+
+			if pkg.Name != tc.want {
+				normReturnNameMismatch(t, pkg.Name, tc.want)
+			}
+		})
+	}
+}
+
 func normAssertAppliedMetadata(t *testing.T, metadata map[string]any, want []string) {
 	t.Helper()
 	if metadata == nil {
