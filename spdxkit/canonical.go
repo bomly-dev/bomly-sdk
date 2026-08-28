@@ -82,38 +82,66 @@ func CanonicalExpression(expression string) string {
 	if !Valid(expression) {
 		return expression
 	}
-	rewritten := canonicalizeTokens(expression)
-	if rewritten == expression {
+	segments := splitExpression(expression)
+	// Fast path: apply every replacement at once. An expression-valued
+	// replacement can be invalid in context — a deprecated with-exception
+	// entry as the left operand of WITH rewrites into two consecutive
+	// exception applications — so the rewrite only stands if it still
+	// validates.
+	replaced := false
+	for i, segment := range segments {
+		if segment.separator {
+			continue
+		}
+		if replacement, ok := Replacement(segment.text); ok {
+			segments[i].text = replacement
+			replaced = true
+		}
+	}
+	if !replaced {
 		return expression
 	}
-	// An expression-valued replacement can be invalid in context: a
-	// deprecated with-exception entry as the left operand of WITH would
-	// rewrite into two consecutive exception applications. A canonical
-	// expression must still be an expression, so a rewrite that no longer
-	// validates is discarded in favor of the valid original.
-	if !Valid(rewritten) {
-		return expression
+	if rewritten := joinSegments(segments); Valid(rewritten) {
+		return rewritten
 	}
-	return rewritten
+	// Per-token fallback: a context-sensitive replacement must not cost the
+	// independent ones, so each replacement is accepted individually and
+	// only while the whole expression keeps validating. The result is valid
+	// by construction — it starts from the valid original and every
+	// accepted step re-validated.
+	segments = splitExpression(expression)
+	for i, segment := range segments {
+		if segment.separator {
+			continue
+		}
+		replacement, ok := Replacement(segment.text)
+		if !ok {
+			continue
+		}
+		original := segments[i].text
+		segments[i].text = replacement
+		if !Valid(joinSegments(segments)) {
+			segments[i].text = original
+		}
+	}
+	return joinSegments(segments)
 }
 
-func canonicalizeTokens(expression string) string {
-	var b strings.Builder
-	b.Grow(len(expression))
+// expressionSegment is one run of an expression: either a token or the
+// separator bytes between tokens, preserved verbatim.
+type expressionSegment struct {
+	separator bool
+	text      string
+}
+
+func splitExpression(expression string) []expressionSegment {
+	var segments []expressionSegment
 	token := strings.Builder{}
-	flush := func() {
+	flushToken := func() {
 		if token.Len() == 0 {
 			return
 		}
-		t := token.String()
-		// Replacement, not a direct map index: the SPDX list lookup accepts
-		// case variants, so a validated expression can carry "gpl-2.0" and
-		// the case folding Replacement already does must apply here too.
-		if replacement, ok := Replacement(t); ok {
-			b.WriteString(replacement)
-		} else {
-			b.WriteString(t)
-		}
+		segments = append(segments, expressionSegment{text: token.String()})
 		token.Reset()
 	}
 	for _, r := range expression {
@@ -121,12 +149,20 @@ func canonicalizeTokens(expression string) string {
 		// boundary — a validated expression may use tabs or newlines
 		// between tokens, and an unflushed token would escape replacement.
 		if r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '(' || r == ')' {
-			flush()
-			b.WriteRune(r)
+			flushToken()
+			segments = append(segments, expressionSegment{separator: true, text: string(r)})
 			continue
 		}
 		token.WriteRune(r)
 	}
-	flush()
+	flushToken()
+	return segments
+}
+
+func joinSegments(segments []expressionSegment) string {
+	var b strings.Builder
+	for _, segment := range segments {
+		b.WriteString(segment.text)
+	}
 	return b.String()
 }

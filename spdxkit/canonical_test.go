@@ -138,6 +138,9 @@ func TestCanonicalExpression(t *testing.T) {
 		// would rewrite into two consecutive exception applications; the
 		// post-rewrite validity check keeps the valid original instead.
 		"GPL-2.0-with-classpath-exception WITH LLVM-exception": "GPL-2.0-with-classpath-exception WITH LLVM-exception",
+		// A context-sensitive replacement must not cost the independent
+		// ones: the nested WITH stays, the standalone GPL-2.0 still folds.
+		"GPL-2.0 AND (GPL-2.0-with-classpath-exception WITH LLVM-exception)": "GPL-2.0-only AND (GPL-2.0-with-classpath-exception WITH LLVM-exception)",
 	}
 	for input, want := range cases {
 		if got := CanonicalExpression(input); got != want {
