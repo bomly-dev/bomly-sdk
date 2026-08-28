@@ -103,3 +103,33 @@ func TestOversizedInputsAreBounded(t *testing.T) {
 		t.Fatalf("Classify(oversized) = %v, want free text", got)
 	}
 }
+
+func TestAggregateBatchesAreBounded(t *testing.T) {
+	// Many individually small members are still one aggregate parser
+	// invocation; an over-limit batch is wholly unchecked, like a panic.
+	big := make([]string, maxBatchMembers+1)
+	for i := range big {
+		big[i] = "MIT"
+	}
+	valid, invalid := ValidateAll(big)
+	if valid || len(invalid) != len(big) {
+		t.Fatalf("over-count batch = (%v, %d invalid), want whole batch invalid", valid, len(invalid))
+	}
+	fat := []string{strings.Repeat("a", maxInputSize/2), strings.Repeat("b", maxInputSize/2+1)}
+	valid, invalid = ValidateAll(fat)
+	if valid || len(invalid) != 2 {
+		t.Fatalf("over-bytes batch = (%v, %d invalid), want whole batch invalid", valid, len(invalid))
+	}
+	if ok, _ := Satisfies("MIT", big); ok {
+		t.Fatal("Satisfies accepted an over-count allowed set")
+	}
+}
+
+func TestParserErrorsCarryOperationContext(t *testing.T) {
+	if _, err := Satisfies("MIT AND", []string{"MIT"}); err != nil && !strings.Contains(err.Error(), "spdxkit") {
+		t.Fatalf("Satisfies error lacks operation context: %v", err)
+	}
+	if _, err := Extract("MIT AND"); err != nil && !strings.Contains(err.Error(), "spdxkit") {
+		t.Fatalf("Extract error lacks operation context: %v", err)
+	}
+}

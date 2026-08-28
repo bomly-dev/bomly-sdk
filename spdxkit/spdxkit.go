@@ -1,6 +1,7 @@
 package spdxkit
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/github/go-spdx/v2/spdxexp"
@@ -12,6 +13,11 @@ import (
 // committed lockfiles and registry APIs and the parser's cost grows with
 // input size).
 const maxInputSize = 1 << 20
+
+// maxBatchMembers bounds how many expressions one batch may carry: many
+// individually small members are still one aggregate parser invocation, so
+// the batch is bounded by count and by total bytes, not only per member.
+const maxBatchMembers = 1024
 
 // Valid reports whether a value parses as an SPDX license expression.
 // Unparseable values — free text such as "non-standard", or malformed
@@ -31,15 +37,28 @@ func ValidateAll(values []string) (valid bool, invalid []string) {
 	if len(values) == 0 {
 		return true, nil
 	}
+	// An over-count aggregate cannot be checked at all: like a parser
+	// panic, no member of it can be reported as validated.
+	if len(values) > maxBatchMembers {
+		return false, append([]string(nil), values...)
+	}
 	// Oversized members are invalid without consulting the parser; the
 	// remaining members are still checked so the invalid list stays exact.
 	bounded := make([]string, 0, len(values))
+	boundedTotal := 0
 	for _, value := range values {
 		if len(value) > maxInputSize {
 			invalid = append(invalid, value)
 			continue
 		}
 		bounded = append(bounded, value)
+		boundedTotal += len(value)
+	}
+	// Many individually small members are still one aggregate parser
+	// invocation; when their total exceeds the bound the remainder is
+	// wholly unchecked, so every member is reported invalid.
+	if boundedTotal > maxInputSize {
+		return false, append(invalid, bounded...)
 	}
 	if len(bounded) == 0 {
 		return false, invalid
@@ -116,20 +135,26 @@ func Compose(values []string) string {
 // An unparseable expression satisfies nothing and returns the parser's error,
 // or false with no error when the parser could not run at all.
 func Satisfies(expression string, allowed []string) (ok bool, err error) {
-	if len(expression) > maxInputSize {
+	if len(expression) > maxInputSize || len(allowed) > maxBatchMembers {
 		return false, nil
 	}
+	total := 0
 	for _, member := range allowed {
-		if len(member) > maxInputSize {
-			return false, nil
-		}
+		total += len(member)
+	}
+	if total > maxInputSize {
+		return false, nil
 	}
 	defer func() {
 		if recover() != nil {
 			ok, err = false, nil
 		}
 	}()
-	return spdxexp.Satisfies(expression, allowed)
+	ok, err = spdxexp.Satisfies(expression, allowed)
+	if err != nil {
+		return ok, fmt.Errorf("spdxkit: satisfies: %w", err)
+	}
+	return ok, nil
 }
 
 // Extract returns the individual license identifiers an expression uses.
@@ -143,5 +168,9 @@ func Extract(expression string) (licenses []string, err error) {
 			licenses, err = nil, nil
 		}
 	}()
-	return spdxexp.ExtractLicenses(expression)
+	licenses, err = spdxexp.ExtractLicenses(expression)
+	if err != nil {
+		return licenses, fmt.Errorf("spdxkit: extract licenses: %w", err)
+	}
+	return licenses, nil
 }
