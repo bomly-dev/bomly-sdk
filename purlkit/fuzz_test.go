@@ -72,3 +72,28 @@ func FuzzSplitEcosystemName(f *testing.F) {
 		}
 	})
 }
+
+func FuzzBuild(f *testing.F) {
+	f.Add("A", " / 00", "0", "")
+	f.Add("npm", "scope", "pkg", "1.0.0")
+	f.Add("golang", "github.com/google", "uuid", "v1.6.0")
+	f.Add("", "", "", "")
+	f.Fuzz(func(t *testing.T, purlType, namespace, name, version string) {
+		if len(purlType)+len(namespace)+len(name)+len(version) > maxFuzzInputSize {
+			t.Skip("input exceeds fuzz bound")
+		}
+		built, err := Build(PURL{Type: purlType, Namespace: namespace, Name: name, Version: version})
+		if err != nil {
+			return
+		}
+		// Build output must be a Parse fixed point: the canonical identity a
+		// caller stores must not canonicalize to a different key later.
+		reparsed, err := Parse(built)
+		if err != nil {
+			t.Fatalf("Build output %q does not reparse: %v", built, err)
+		}
+		if again := reparsed.String(); again != built {
+			t.Fatalf("Build output is not stable: %q reparses to %q", built, again)
+		}
+	})
+}
