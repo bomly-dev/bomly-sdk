@@ -162,15 +162,28 @@ func Identifier(value string) (string, bool) {
 // Each member is normalized through go-spdx to decide whether parentheses are
 // required. Invalid members remain byte-for-byte after trimming, so composing
 // free text still produces an expression that does not parse.
+//
+// The batch carries the same aggregate bounds as ValidateAll and Satisfies —
+// each member normalization is one parser invocation. An over-count or
+// over-bytes batch still composes, but parenthesization falls back to the
+// whitespace heuristic instead of invoking the parser per member.
 func Compose(values []string) string {
+	bounded := batchWithinByteBounds(values)
 	parts := make([]string, 0, len(values))
 	for _, value := range values {
 		value = strings.TrimSpace(value)
 		if value == "" {
 			continue
 		}
-		if normalized, ok := normalizeExpression(value); ok &&
-			(strings.Contains(normalized, " AND ") || strings.Contains(normalized, " OR ")) {
+		needsParens := false
+		if bounded {
+			if normalized, ok := normalizeExpression(value); ok {
+				needsParens = strings.Contains(normalized, " AND ") || strings.Contains(normalized, " OR ")
+			}
+		} else {
+			needsParens = strings.ContainsAny(value, " \t")
+		}
+		if needsParens {
 			value = "(" + value + ")"
 		}
 		parts = append(parts, value)

@@ -170,3 +170,21 @@ func TestParserErrorsCarryOperationContext(t *testing.T) {
 		t.Fatalf("Extract error lacks operation context: %v", err)
 	}
 }
+
+func TestComposeBoundsAggregateBatches(t *testing.T) {
+	// Over the batch bounds, Compose still composes but must not invoke the
+	// parser per member: parenthesization falls back to the whitespace
+	// heuristic, so a compound member keeps its parentheses either way.
+	big := make([]string, maxBatchMembers+1)
+	for i := range big {
+		big[i] = "MIT OR ISC"
+	}
+	got := Compose(big[:2])
+	if got != "(MIT OR ISC) AND (MIT OR ISC)" {
+		t.Fatalf("bounded compose = %q", got)
+	}
+	over := Compose(big)
+	if !strings.HasPrefix(over, "(MIT OR ISC) AND (MIT OR ISC)") {
+		t.Fatalf("over-count compose lost parenthesization: %q", over[:60])
+	}
+}
