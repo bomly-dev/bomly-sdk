@@ -145,7 +145,11 @@ func operatorDelimited(value string, start, end int) bool {
 
 func isOperatorDelimiter(b byte) bool {
 	switch b {
-	case ' ', '\t', '\n', '\r', '(', ')':
+	// '+' is the or-later suffix, a parser-accepted token boundary in
+	// compact form (GPL-2.0+ANDMIT). It cannot appear inside an idstring —
+	// the grammar allows letters, digits, '.', and '-' only — so treating
+	// it as a delimiter never misreads LicenseRef content as operators.
+	case ' ', '\t', '\n', '\r', '(', ')', '+':
 		return true
 	}
 	return false

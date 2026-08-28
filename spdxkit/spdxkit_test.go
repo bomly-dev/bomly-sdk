@@ -211,3 +211,23 @@ func TestComposeOverLimitKeepsCompactCompoundParens(t *testing.T) {
 		t.Fatalf("compact compound operand lost its parentheses: %q", over[:50])
 	}
 }
+
+func TestOperatorBoundCountsPlusAdjacentOperators(t *testing.T) {
+	// '+' is a parser-accepted token boundary in compact form, so a long
+	// GPL-2.0+ANDGPL-2.0+AND... chain must hit the work caps instead of
+	// sending tens of thousands of operators into the parser.
+	chain := strings.Repeat("GPL-2.0+AND", maxParserStructureTokens+2) + "GPL-2.0+"
+	if Valid(chain) {
+		t.Fatal("over-limit compact plus-chain validated")
+	}
+	satisfiesChain := strings.Repeat("GPL-2.0+AND", maxSatisfiesOperators+2) + "GPL-2.0+"
+	if ok, err := Satisfies(satisfiesChain, []string{"GPL-2.0+"}); ok || err != nil {
+		t.Fatalf("Satisfies(compact plus-chain) = (%v, %v), want capped rejection", ok, err)
+	}
+	// The idstring exclusion still holds: '+' does not appear inside
+	// LicenseRef idstrings, so the atomic-reference behavior is unchanged.
+	ref := "LicenseRef-" + strings.Repeat("OR", maxSatisfiesOperators+4)
+	if ok, err := Satisfies(ref, []string{ref}); !ok || err != nil {
+		t.Fatalf("Satisfies(ref, [ref]) = (%v, %v) after delimiter change", ok, err)
+	}
+}
