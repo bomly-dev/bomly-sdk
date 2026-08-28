@@ -26,8 +26,9 @@ func MissingLicensePackages(packages []*sdk.Package) []*sdk.Package {
 
 // NormalizeLicenseSet converts raw license strings into Bomly package
 // licenses, classifying each value by validating it (ADR-0035 in bomly-cli's
-// dev-docs/adr, enforced at write time via spdxkit). Value keeps the raw
-// string verbatim — nothing is lost — while SPDXExpression is set only when
+// dev-docs/adr, enforced at write time via spdxkit). Value preserves the
+// input after whitespace trimming — nothing else is altered — while
+// SPDXExpression is set only when
 // the value actually is SPDX: the canonical current spelling for a
 // license-list identifier (deprecated entries fold to their replacements),
 // the validated expression otherwise. Free text such as "non-standard"

@@ -14,25 +14,26 @@ const licenseRefPrefix = "LicenseRef-bomly-"
 // names, ready for SPDX hasExtractedLicensingInfos and the CycloneDX
 // equivalent (bomly-cli issue #410).
 type ExtractedText struct {
-	// RefID is the minted reference, e.g. "LicenseRef-bomly-3b2a90c1e4d5f607".
+	// RefID is the minted reference: the prefix plus 32 hex characters.
 	RefID string
 	// Text is the original license text, unmodified.
 	Text string
 }
 
 // MintLicenseRef deterministically mints a license reference for a free-text
-// license value: the SHA-256 of the whitespace-normalized text, truncated,
-// hex-encoded, under the bomly LicenseRef prefix. The same text always mints
-// the same reference on every run and machine — hashing keeps minting
-// collision-free across components without coordination, and the output uses
-// only characters the SPDX idstring grammar allows. The stored Text keeps
-// the original value untouched; normalization applies to the hash input
-// only, so texts differing merely in whitespace share a reference.
+// license value: the SHA-256 of the whitespace-normalized text, truncated to
+// 128 bits, hex-encoded, under the bomly LicenseRef prefix. The same text
+// always mints the same reference on every run and machine — hashing keeps
+// minting collision-resistant across components without coordination, and
+// the output uses only characters the SPDX idstring grammar allows. The
+// stored Text keeps the original value untouched; normalization applies to
+// the hash input only, so texts differing merely in whitespace share a
+// reference.
 func MintLicenseRef(text string) ExtractedText {
 	normalized := strings.Join(strings.Fields(text), " ")
 	digest := sha256.Sum256([]byte(normalized))
 	return ExtractedText{
-		RefID: licenseRefPrefix + hex.EncodeToString(digest[:8]),
+		RefID: licenseRefPrefix + hex.EncodeToString(digest[:16]),
 		Text:  text,
 	}
 }
