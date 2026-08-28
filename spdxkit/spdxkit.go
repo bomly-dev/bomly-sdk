@@ -7,6 +7,12 @@ import (
 	"github.com/github/go-spdx/v2/spdxexp/spdxlicenses"
 )
 
+// maxInputSize bounds untrusted input before parsing (the repository's fuzz
+// convention, enforced in production because license strings arrive from
+// committed lockfiles and registry APIs and the parser's cost grows with
+// input size).
+const maxInputSize = 1 << 20
+
 // Valid reports whether a value parses as an SPDX license expression.
 // Unparseable values — free text such as "non-standard", or malformed
 // grouping — report false rather than failing the caller.
@@ -25,6 +31,26 @@ func ValidateAll(values []string) (valid bool, invalid []string) {
 	if len(values) == 0 {
 		return true, nil
 	}
+	// Oversized members are invalid without consulting the parser; the
+	// remaining members are still checked so the invalid list stays exact.
+	bounded := make([]string, 0, len(values))
+	for _, value := range values {
+		if len(value) > maxInputSize {
+			invalid = append(invalid, value)
+			continue
+		}
+		bounded = append(bounded, value)
+	}
+	if len(bounded) == 0 {
+		return false, invalid
+	}
+	oversized := invalid
+	valid, invalid = validateBounded(bounded)
+	invalid = append(oversized, invalid...)
+	return valid && len(oversized) == 0, invalid
+}
+
+func validateBounded(values []string) (valid bool, invalid []string) {
 	defer func() {
 		if recover() != nil {
 			// The parser gave up part-way through the batch, so no member can
@@ -46,7 +72,7 @@ func ValidateAll(values []string) (valid bool, invalid []string) {
 // replacements.
 func Identifier(value string) (string, bool) {
 	value = strings.TrimSpace(value)
-	if value == "" {
+	if value == "" || len(value) > maxInputSize {
 		return "", false
 	}
 	if strings.ContainsAny(value, " \t\n\r()+") {
@@ -87,6 +113,14 @@ func Compose(values []string) string {
 // An unparseable expression satisfies nothing and returns the parser's error,
 // or false with no error when the parser could not run at all.
 func Satisfies(expression string, allowed []string) (ok bool, err error) {
+	if len(expression) > maxInputSize {
+		return false, nil
+	}
+	for _, member := range allowed {
+		if len(member) > maxInputSize {
+			return false, nil
+		}
+	}
 	defer func() {
 		if recover() != nil {
 			ok, err = false, nil
@@ -98,6 +132,9 @@ func Satisfies(expression string, allowed []string) (ok bool, err error) {
 // Extract returns the individual license identifiers an expression uses.
 // An unparseable expression yields nothing.
 func Extract(expression string) (licenses []string, err error) {
+	if len(expression) > maxInputSize {
+		return nil, nil
+	}
 	defer func() {
 		if recover() != nil {
 			licenses, err = nil, nil

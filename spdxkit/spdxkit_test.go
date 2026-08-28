@@ -1,6 +1,9 @@
 package spdxkit
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValid(t *testing.T) {
 	valid := []string{"MIT", "Apache-2.0", "MIT OR Apache-2.0", "GPL-2.0-only WITH Classpath-exception-2.0", "GPL-2.0"}
@@ -69,5 +72,28 @@ func TestSatisfiesAndExtractContainPanics(t *testing.T) {
 	}
 	if licenses, err := Extract("((("); licenses != nil || err != nil {
 		t.Fatalf("Extract(panic input) = (%v, %v)", licenses, err)
+	}
+}
+
+func TestOversizedInputsAreBounded(t *testing.T) {
+	oversized := strings.Repeat("a", maxInputSize+1)
+	if Valid(oversized) {
+		t.Fatal("oversized expression validated")
+	}
+	valid, invalid := ValidateAll([]string{"MIT", oversized})
+	if valid || len(invalid) != 1 || invalid[0] != oversized {
+		t.Fatalf("ValidateAll(mixed oversized) = (%v, %d invalid)", valid, len(invalid))
+	}
+	if _, ok := Identifier(oversized); ok {
+		t.Fatal("oversized identifier resolved")
+	}
+	if ok, _ := Satisfies(oversized, []string{"MIT"}); ok {
+		t.Fatal("oversized expression satisfied")
+	}
+	if licenses, _ := Extract(oversized); licenses != nil {
+		t.Fatal("oversized expression extracted")
+	}
+	if got := Classify(oversized); got != ClassFreeText {
+		t.Fatalf("Classify(oversized) = %v, want free text", got)
 	}
 }

@@ -112,13 +112,17 @@ func TestCanonicalIdentifier(t *testing.T) {
 
 func TestCanonicalExpression(t *testing.T) {
 	cases := map[string]string{
-		"GPL-2.0":                   "GPL-2.0-only",
-		"(GPL-2.0 OR MIT)":          "(GPL-2.0-only OR MIT)",
-		"GPL-2.0+ AND Apache-2.0":   "GPL-2.0-or-later AND Apache-2.0",
-		"MIT":                       "MIT",
-		"non-standard":              "non-standard",
-		"":                          "",
-		"GPL-2.0-only WITH GPL-2.0": "GPL-2.0-only WITH GPL-2.0-only",
+		"GPL-2.0":                 "GPL-2.0-only",
+		"(GPL-2.0 OR MIT)":        "(GPL-2.0-only OR MIT)",
+		"GPL-2.0+ AND Apache-2.0": "GPL-2.0-or-later AND Apache-2.0",
+		"MIT":                     "MIT",
+		"non-standard":            "non-standard",
+		"use GPL-2.0 here":        "use GPL-2.0 here",
+		"(((":                     "(((",
+		"":                        "",
+		// WITH requires an exception identifier, so this is not a valid
+		// expression — the validity gate keeps it untouched.
+		"GPL-2.0-only WITH GPL-2.0": "GPL-2.0-only WITH GPL-2.0",
 	}
 	for input, want := range cases {
 		if got := CanonicalExpression(input); got != want {

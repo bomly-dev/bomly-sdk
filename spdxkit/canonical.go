@@ -70,10 +70,16 @@ func CanonicalIdentifier(value string) (canonical string, ok bool) {
 
 // CanonicalExpression replaces deprecated SPDX identifiers inside a license
 // expression with their current names, preserving expression structure.
-// Non-SPDX free-text values pass through unchanged. This relocates the
-// token-wise rewriter the CLI's SBOM codec carried.
+// Non-SPDX free-text values pass through unchanged — the whole input must
+// validate as an SPDX expression before any token is rewritten, so free
+// text that happens to contain a deprecated identifier ("use GPL-2.0
+// here") is never corrupted. This relocates the token-wise rewriter the
+// CLI's SBOM codec carried.
 func CanonicalExpression(expression string) string {
 	if strings.TrimSpace(expression) == "" {
+		return expression
+	}
+	if !Valid(expression) {
 		return expression
 	}
 	var b strings.Builder
