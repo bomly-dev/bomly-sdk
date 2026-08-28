@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+    # labeled/unlabeled are included so applying or removing the
+    # api:break-approved escape hatch re-evaluates the api-compat gate.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 permissions:
   contents: read
@@ -37,7 +40,10 @@ jobs:
   # Go API against the latest release tag with gorelease. Incompatible changes
   # fail the job unless the PR carries the `api:break-approved` label, so a
   # breaking change is always a reviewed, deliberate act — never an accident.
+  # Pull requests only: a push run on main has no PR labels, so a just-merged
+  # approved break would fail there until the next tag moves the baseline.
   api-compat:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -63,7 +69,9 @@ jobs:
         run: |
           set -o pipefail
           status=0
-          report="$(go run golang.org/x/exp/cmd/gorelease@latest -base="${{ steps.baseline.outputs.tag }}" 2>&1)" || status=$?
+          # Pinned per the repository's dependency convention; bump the
+          # golang.org/x/exp pseudo-version deliberately, like any dependency.
+          report="$(go run golang.org/x/exp/cmd/gorelease@v0.0.0-20260824195058-e88cd73687aa -base="${{ steps.baseline.outputs.tag }}" 2>&1)" || status=$?
           echo "$report"
           if grep -qi '^## incompatible changes' <<<"$report"; then
             if [[ "$BREAK_APPROVED" == "true" ]]; then
