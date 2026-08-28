@@ -75,15 +75,19 @@ func TestUpstreamDeprecationsAreTriaged(t *testing.T) {
 		"GPL-2.0-with-GCC-exception":      {},
 		"GPL-3.0-with-autoconf-exception": {},
 		"GPL-3.0-with-GCC-exception":      {},
-		"LGPL-2.0-or-later":               {},
-		"LGPL-2.1-or-later":               {},
-		"LGPL-3.0-or-later":               {},
 		"Net-SNMP":                        {},
 		"Nunit":                           {},
 		"StandardML-NJ":                   {},
 		"wxWindows":                       {},
-		"AGPL-1.0-or-later":               {},
-		"AGPL-1.0-only":                   {},
+	}
+	// The pass-through list must not carry stale rows: an entry that is not
+	// actually deprecated upstream falsely documents an active license as
+	// deprecated — which is exactly the misreading a reviewer drew from
+	// earlier stale entries here.
+	for entry := range passThrough {
+		if ok, _ := spdxlicenses.IsDeprecatedLicense(entry); !ok {
+			t.Errorf("pass-through entry %q is not deprecated upstream — stale row", entry)
+		}
 	}
 	for _, deprecated := range spdxlicenses.GetDeprecated() {
 		if _, mapped := replacements[deprecated]; mapped {
@@ -174,5 +178,32 @@ func TestCanonicalExpressionBoundsAndContextSensitiveReplacement(t *testing.T) {
 	}
 	if !strings.Contains(got, "GPL-2.0-with-classpath-exception WITH LLVM-exception") {
 		t.Fatal("context-sensitive operand was rewritten")
+	}
+}
+
+func TestReplacementTargetsAreActive(t *testing.T) {
+	// CanonicalIdentifier promises the current spelling, so every
+	// replacement target must be active in the vendored list — a target the
+	// list marks deprecated would re-emit a deprecated identifier from an
+	// API promising the opposite. Expression-valued targets are checked by
+	// component: the license half must be active and the exception half a
+	// known exception.
+	for source, target := range replacements {
+		if !strings.Contains(target, " ") {
+			if active, _ := spdxlicenses.IsActiveLicense(target); !active {
+				t.Errorf("replacement %q -> %q: target is not an active license", source, target)
+			}
+			continue
+		}
+		for _, token := range strings.Fields(target) {
+			if token == "WITH" || token == "AND" || token == "OR" {
+				continue
+			}
+			active, _ := spdxlicenses.IsActiveLicense(token)
+			exception, _ := spdxlicenses.IsException(token)
+			if !active && !exception {
+				t.Errorf("replacement %q -> %q: component %q is neither an active license nor an exception", source, target, token)
+			}
+		}
 	}
 }
