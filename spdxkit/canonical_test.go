@@ -134,6 +134,10 @@ func TestCanonicalExpression(t *testing.T) {
 		// WITH requires an exception identifier, so this is not a valid
 		// expression — the validity gate keeps it untouched.
 		"GPL-2.0-only WITH GPL-2.0": "GPL-2.0-only WITH GPL-2.0",
+		// An expression-valued replacement as the left operand of WITH
+		// would rewrite into two consecutive exception applications; the
+		// post-rewrite validity check keeps the valid original instead.
+		"GPL-2.0-with-classpath-exception WITH LLVM-exception": "GPL-2.0-with-classpath-exception WITH LLVM-exception",
 	}
 	for input, want := range cases {
 		if got := CanonicalExpression(input); got != want {

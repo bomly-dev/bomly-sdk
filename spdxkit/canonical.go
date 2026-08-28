@@ -82,6 +82,22 @@ func CanonicalExpression(expression string) string {
 	if !Valid(expression) {
 		return expression
 	}
+	rewritten := canonicalizeTokens(expression)
+	if rewritten == expression {
+		return expression
+	}
+	// An expression-valued replacement can be invalid in context: a
+	// deprecated with-exception entry as the left operand of WITH would
+	// rewrite into two consecutive exception applications. A canonical
+	// expression must still be an expression, so a rewrite that no longer
+	// validates is discarded in favor of the valid original.
+	if !Valid(rewritten) {
+		return expression
+	}
+	return rewritten
+}
+
+func canonicalizeTokens(expression string) string {
 	var b strings.Builder
 	b.Grow(len(expression))
 	token := strings.Builder{}
