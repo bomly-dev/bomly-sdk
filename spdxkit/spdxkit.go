@@ -107,8 +107,48 @@ func withinParserBounds(value string) bool {
 		return false
 	}
 	structureTokens := strings.Count(value, "(") + strings.Count(value, ")") +
-		strings.Count(value, "AND") + strings.Count(value, "OR")
+		countOperatorMentions(value)
 	return structureTokens <= maxParserStructureTokens
+}
+
+// countOperatorMentions counts AND/OR occurrences that can act as expression
+// operators: an occurrence embedded in identifier characters on both sides —
+// "OR" inside LicenseRef-OROROR — is idstring content, not an operator, and
+// counting it would falsely reject a short valid expression. An occurrence
+// adjacent to a delimiter on either side is counted; that over-approximates
+// real operators (a bound may over-count, it must never under-count) without
+// inferring grammar from arbitrary substrings.
+func countOperatorMentions(value string) int {
+	count := 0
+	for _, operator := range []string{"AND", "OR"} {
+		for offset := 0; ; {
+			relative := strings.Index(value[offset:], operator)
+			if relative < 0 {
+				break
+			}
+			at := offset + relative
+			after := at + len(operator)
+			if operatorDelimited(value, at, after) {
+				count++
+			}
+			offset = at + 1
+		}
+	}
+	return count
+}
+
+func operatorDelimited(value string, start, end int) bool {
+	beforeDelimited := start == 0 || isOperatorDelimiter(value[start-1])
+	afterDelimited := end >= len(value) || isOperatorDelimiter(value[end])
+	return beforeDelimited || afterDelimited
+}
+
+func isOperatorDelimiter(b byte) bool {
+	switch b {
+	case ' ', '\t', '\n', '\r', '(', ')':
+		return true
+	}
+	return false
 }
 
 func batchWithinByteBounds(values []string) bool {
@@ -181,7 +221,11 @@ func Compose(values []string) string {
 				needsParens = strings.Contains(normalized, " AND ") || strings.Contains(normalized, " OR ")
 			}
 		} else {
-			needsParens = strings.ContainsAny(value, " \t")
+			// Whitespace or parentheses: a compact compound operand such as
+			// (MIT)ORApache-2.0 carries no whitespace, and wrapping an
+			// already-parenthesized atom in one more layer stays valid,
+			// while a missing layer would rebind the composed expression.
+			needsParens = strings.ContainsAny(value, " \t()")
 		}
 		if needsParens {
 			value = "(" + value + ")"
@@ -201,7 +245,7 @@ func Satisfies(expression string, allowed []string) (ok bool, err error) {
 		return false, nil
 	}
 	if !withinParserBounds(expression) ||
-		strings.Count(expression, "AND")+strings.Count(expression, "OR") > maxSatisfiesOperators {
+		countOperatorMentions(expression) > maxSatisfiesOperators {
 		return false, nil
 	}
 	for _, member := range allowed {

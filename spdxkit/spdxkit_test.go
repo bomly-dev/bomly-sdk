@@ -188,3 +188,26 @@ func TestComposeBoundsAggregateBatches(t *testing.T) {
 		t.Fatalf("over-count compose lost parenthesization: %q", over[:60])
 	}
 }
+
+func TestOperatorBoundIgnoresIdstringContent(t *testing.T) {
+	// OR inside a LicenseRef idstring is content, not an operator; a valid
+	// atomic reference must not be rejected by the operator bound.
+	ref := "LicenseRef-" + strings.Repeat("OR", maxSatisfiesOperators+4)
+	if !Valid(ref) {
+		t.Fatalf("atomic reference %q is not valid SPDX", ref)
+	}
+	if ok, err := Satisfies(ref, []string{ref}); !ok || err != nil {
+		t.Fatalf("Satisfies(ref, [ref]) = (%v, %v), want satisfied", ok, err)
+	}
+}
+
+func TestComposeOverLimitKeepsCompactCompoundParens(t *testing.T) {
+	big := make([]string, maxBatchMembers+1)
+	for i := range big {
+		big[i] = "(MIT)ORApache-2.0"
+	}
+	over := Compose(big)
+	if !strings.HasPrefix(over, "((MIT)ORApache-2.0) AND ") {
+		t.Fatalf("compact compound operand lost its parentheses: %q", over[:50])
+	}
+}
