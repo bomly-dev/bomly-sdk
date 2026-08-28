@@ -210,6 +210,20 @@ func TestComposeOverLimitKeepsCompactCompoundParens(t *testing.T) {
 	if !strings.HasPrefix(over, "((MIT)ORApache-2.0) AND ") {
 		t.Fatalf("compact compound operand lost its parentheses: %q", over[:50])
 	}
+	// The plus-delimited compact form carries no whitespace or parens; the
+	// operator-mention rule must still parenthesize it, or AND precedence
+	// rebinds the package assertion.
+	plusCompact := "GPL-2.0+ORApache-2.0"
+	if !Valid(plusCompact) {
+		t.Fatalf("plus-compact fixture %q is not valid SPDX", plusCompact)
+	}
+	for i := range big {
+		big[i] = plusCompact
+	}
+	over = Compose(big)
+	if !strings.HasPrefix(over, "(GPL-2.0+ORApache-2.0) AND ") {
+		t.Fatalf("plus-delimited compact operand lost its parentheses: %q", over[:50])
+	}
 }
 
 func TestOperatorBoundCountsPlusAdjacentOperators(t *testing.T) {

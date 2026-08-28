@@ -235,11 +235,15 @@ func Compose(values []string) string {
 				needsParens = strings.Contains(normalized, " AND ") || strings.Contains(normalized, " OR ")
 			}
 		} else {
-			// Whitespace or parentheses: a compact compound operand such as
-			// (MIT)ORApache-2.0 carries no whitespace, and wrapping an
-			// already-parenthesized atom in one more layer stays valid,
-			// while a missing layer would rebind the composed expression.
-			needsParens = strings.ContainsAny(value, " \t()")
+			// The over-limit fallback must not parse, but it must not rebind
+			// either: an unparenthesized compound operand would change the
+			// package assertion under AND precedence. It reuses the one
+			// delimiter rule the work bounds converged on — whitespace,
+			// parentheses, or a delimiter-adjacent operator mention (which
+			// covers compact forms such as (MIT)ORApache-2.0 and
+			// GPL-2.0+ORApache-2.0) — and over-parenthesizing an atom is
+			// harmless while a missing layer is not.
+			needsParens = strings.ContainsAny(value, " \t()") || countOperatorMentions(value) > 0
 		}
 		if needsParens {
 			value = "(" + value + ")"
