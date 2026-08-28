@@ -48,33 +48,39 @@ func Parse(value string) (PURL, error) {
 	if value == "" || len(value) > maxInputSize {
 		return PURL{}, ErrInvalidPURL
 	}
-	// The underlying library is not idempotent on every input: rendering can
-	// expose percent-encoded bytes that the next parse decodes differently
-	// (e.g. an encoded leading space in a namespace segment). A canonical
-	// form must be stable, so parse-and-render is iterated until the
-	// rendering stops changing; input that will not stabilize within a few
-	// rounds is rejected rather than given an unstable identity.
+	out, _, err := stabilize(value)
+	return out, err
+}
+
+// stabilize iterates parse-and-render until the rendering stops changing.
+// The underlying library is not idempotent on every input: rendering can
+// expose percent-encoded bytes that the next parse decodes differently
+// (e.g. an encoded leading space in a namespace segment). A canonical form
+// must be stable, so input that will not stabilize within a few rounds is
+// rejected rather than given an unstable identity. Both entry points share
+// this core: Parse feeds it raw strings, Build feeds it its own rendering.
+func stabilize(value string) (PURL, string, error) {
 	const maxCanonicalizationRounds = 4
 	for range maxCanonicalizationRounds {
 		parsed, err := packageurl.FromString(value)
 		if err != nil {
-			return PURL{}, fmt.Errorf("%w: %v", ErrInvalidPURL, err)
+			return PURL{}, "", fmt.Errorf("%w: %v", ErrInvalidPURL, err)
 		}
 		restoreNPMScope(&parsed)
 		if err := parsed.Normalize(); err != nil {
-			return PURL{}, fmt.Errorf("%w: %v", ErrInvalidPURL, err)
+			return PURL{}, "", fmt.Errorf("%w: %v", ErrInvalidPURL, err)
 		}
 		out := fromPackageURL(parsed)
-		rendered, err := Build(out)
+		rendered, err := renderOnce(out)
 		if err != nil {
-			return PURL{}, err
+			return PURL{}, "", err
 		}
 		if rendered == value {
-			return out, nil
+			return out, rendered, nil
 		}
 		value = rendered
 	}
-	return PURL{}, ErrInvalidPURL
+	return PURL{}, "", ErrInvalidPURL
 }
 
 // String renders the canonical string form, or "" when the value does not
@@ -89,8 +95,25 @@ func (p PURL) String() string {
 
 // Build normalizes the parts and renders the canonical string form. Type and
 // name are required; qualifiers and subpath are preserved, which the legacy
-// root builder cannot do.
+// root builder cannot do. The output is a Parse fixed point: structured
+// parts can carry the same renderer-unstable bytes as raw strings, so the
+// single-pass rendering is stabilized before it is returned, and parts that
+// will not stabilize are rejected rather than given an unstable identity.
 func Build(p PURL) (string, error) {
+	rendered, err := renderOnce(p)
+	if err != nil {
+		return "", err
+	}
+	_, stable, err := stabilize(rendered)
+	if err != nil {
+		return "", err
+	}
+	return stable, nil
+}
+
+// renderOnce validates the parts and performs a single normalize-and-render
+// pass — the non-idempotent primitive that stabilize iterates.
+func renderOnce(p PURL) (string, error) {
 	purlType := strings.TrimSpace(strings.ToLower(p.Type))
 	name := strings.TrimSpace(p.Name)
 	if purlType == "" || name == "" {
