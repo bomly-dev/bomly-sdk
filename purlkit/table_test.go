@@ -107,3 +107,19 @@ func TestCanonicalEcosystem(t *testing.T) {
 		t.Fatalf("CanonicalEcosystem(nothing, cargo) = (%q, %v), want (rust, true)", got, ok)
 	}
 }
+
+func TestTypeForValuesManagerOnlyCoordinates(t *testing.T) {
+	// pnpm and yarn graphs carry only a manager token; the verbatim
+	// fallback used to mint non-spec types (pkg:pnpm, pkg:gradle) for them.
+	cases := map[string]string{
+		"pnpm": "npm", "yarn": "npm", "bun": "npm",
+		"gradle": "maven",
+		"pdm":    "pypi", "setuppy": "pypi", "setup.py": "pypi",
+		"gemspec": "gem",
+	}
+	for input, want := range cases {
+		if got := TypeForValues(input); got != want {
+			t.Errorf("TypeForValues(%q) = %q, want %q", input, got, want)
+		}
+	}
+}

@@ -66,8 +66,17 @@ func TypeForValues(values ...string) string {
 			return "gem"
 		case "php", "composer":
 			return "composer"
-		case "python", "pypi", "pip", "pipenv", "poetry", "uv":
+		case "python", "pypi", "pip", "pipenv", "poetry", "uv", "pdm", "setuppy", "setup.py":
 			return "pypi"
+		case "pnpm", "yarn", "bun":
+			// Package-manager-only coordinates are a real shape — pnpm and
+			// yarn graphs carry no ecosystem token — and the verbatim
+			// fallback used to mint non-spec types (pkg:pnpm) for them.
+			return "npm"
+		case "gradle":
+			return "maven"
+		case "gemspec":
+			return "gem"
 		}
 	}
 	for _, value := range values {

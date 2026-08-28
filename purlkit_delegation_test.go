@@ -12,6 +12,16 @@ import (
 // legacyPackageURLTypeSwitch is the frozen pre-delegation implementation; it
 // exists only for this parity check.
 func TestPackageURLTypeForValuesMatchesLegacySwitch(t *testing.T) {
+	// Deliberate corrections over the legacy switch: manager-only
+	// coordinates (pnpm and yarn graphs carry no ecosystem token) used to
+	// fall through to the verbatim fallback and mint non-spec purl types
+	// such as pkg:pnpm. Each delta is a chosen row, not an accident.
+	chosenDeltas := map[string]string{
+		"pnpm": "npm", "yarn": "npm", "bun": "npm",
+		"gradle": "maven",
+		"pdm":    "pypi", "setuppy": "pypi", "setup.py": "pypi",
+		"gemspec": "gem",
+	}
 	tokens := []string{
 		"", "nuget", "dotnet", "cargo", "rust", "pub", "dart", "cocoapods",
 		"swift", "swiftpm", "github-actions", "githubactions", "conan", "cpp",
@@ -26,9 +36,19 @@ func TestPackageURLTypeForValuesMatchesLegacySwitch(t *testing.T) {
 		for _, second := range tokens {
 			got := PackageURLTypeForValues(first, second)
 			want := legacyPackageURLTypeSwitch(first, second)
+			_, firstDelta := chosenDeltas[first]
+			_, secondDelta := chosenDeltas[second]
+			if firstDelta || secondDelta {
+				continue // asserted separately below
+			}
 			if got != want {
 				t.Errorf("PackageURLTypeForValues(%q, %q) = %q, legacy = %q", first, second, got, want)
 			}
+		}
+	}
+	for token, want := range chosenDeltas {
+		if got := PackageURLTypeForValues(token); got != want {
+			t.Errorf("PackageURLTypeForValues(%q) = %q, want chosen delta %q", token, got, want)
 		}
 	}
 }
