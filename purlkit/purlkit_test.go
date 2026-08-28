@@ -149,3 +149,10 @@ func TestParseBoundsOversizedInput(t *testing.T) {
 		t.Fatalf("oversized input error %v does not match ErrInvalidPURL", err)
 	}
 }
+
+func TestBuildRejectsBlankQualifierKeys(t *testing.T) {
+	_, err := Build(PURL{Type: "npm", Name: "pkg", Qualifiers: []Qualifier{{Key: "  ", Value: "x"}}})
+	if !errors.Is(err, ErrInvalidPURL) {
+		t.Fatalf("blank qualifier key error %v does not match ErrInvalidPURL", err)
+	}
+}

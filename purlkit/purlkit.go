@@ -96,6 +96,14 @@ func Build(p PURL) (string, error) {
 	if purlType == "" || name == "" {
 		return "", ErrInvalidPURL
 	}
+	for _, qualifier := range p.Qualifiers {
+		// A blank key is malformed input, not an absent qualifier; dropping
+		// it silently would let untrusted data bypass the validation
+		// boundary while looking identical to a qualifier-free package.
+		if strings.TrimSpace(qualifier.Key) == "" {
+			return "", fmt.Errorf("%w: qualifier with blank key", ErrInvalidPURL)
+		}
+	}
 	built := packageurl.NewPackageURL(purlType, strings.TrimSpace(p.Namespace), name,
 		strings.TrimSpace(p.Version), toLibQualifiers(p.Qualifiers), strings.TrimSpace(p.Subpath))
 	if built == nil {
@@ -183,11 +191,7 @@ func toLibQualifiers(qualifiers []Qualifier) packageurl.Qualifiers {
 	}
 	out := make(packageurl.Qualifiers, 0, len(qualifiers))
 	for _, q := range qualifiers {
-		key := strings.TrimSpace(strings.ToLower(q.Key))
-		if key == "" {
-			continue
-		}
-		out = append(out, packageurl.Qualifier{Key: key, Value: q.Value})
+		out = append(out, packageurl.Qualifier{Key: strings.TrimSpace(strings.ToLower(q.Key)), Value: q.Value})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
 	return out
