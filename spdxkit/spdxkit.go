@@ -155,6 +155,16 @@ func isOperatorDelimiter(b byte) bool {
 	return false
 }
 
+// BatchWithinBounds reports whether a batch of license values fits the
+// package's aggregate parsing limits (member count and total bytes). Callers
+// that invoke classification or validation once per member — rather than
+// through the batch APIs, which enforce this themselves — gate on it first,
+// so a large set of individually short values cannot drive unbounded parser
+// work.
+func BatchWithinBounds(values []string) bool {
+	return batchWithinByteBounds(values)
+}
+
 func batchWithinByteBounds(values []string) bool {
 	if len(values) > maxBatchMembers {
 		return false

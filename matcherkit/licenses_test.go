@@ -50,3 +50,22 @@ func TestNormalizeLicenseSetNeverPanicsOnHostileInput(t *testing.T) {
 		t.Fatalf("hostile input handled wrong: %+v", licenses)
 	}
 }
+
+func TestNormalizeLicenseSetBoundsClassificationBatches(t *testing.T) {
+	// Over spdxkit's aggregate limits, classification is skipped — one
+	// parser invocation per value would otherwise be unbounded — but no
+	// value is dropped and none masquerades as SPDX.
+	big := make([]string, 0, 1030)
+	for i := 0; i < 1030; i++ {
+		big = append(big, "MIT-"+string(rune('a'+i%26))+string(rune('a'+(i/26)%26))+string(rune('a'+(i/676)%26)))
+	}
+	licenses := NormalizeLicenseSet(big, "declared")
+	if len(licenses) == 0 {
+		t.Fatal("over-limit batch dropped values")
+	}
+	for _, license := range licenses {
+		if license.SPDXExpression != "" {
+			t.Fatalf("over-limit batch classified %q as %q", license.Value, license.SPDXExpression)
+		}
+	}
+}

@@ -34,6 +34,11 @@ func MissingLicensePackages(packages []*sdk.Package) []*sdk.Package {
 // the validated expression otherwise. Free text such as "non-standard"
 // leaves SPDXExpression empty instead of masquerading as an expression.
 func NormalizeLicenseSet(values []string, sourceType string) []sdk.PackageLicense {
+	// Classification is one parser invocation per value, so the batch is
+	// gated by spdxkit's aggregate limits. Over the limit nothing is
+	// dropped and nothing masquerades: every value keeps its trimmed Value
+	// and stays unclassified free text (SPDXExpression empty).
+	classify := spdxkit.BatchWithinBounds(values)
 	out := make([]sdk.PackageLicense, 0, len(values))
 	seen := make(map[string]struct{}, len(values))
 	for _, value := range values {
@@ -48,6 +53,10 @@ func NormalizeLicenseSet(values []string, sourceType string) []sdk.PackageLicens
 		license := sdk.PackageLicense{
 			Value: normalized,
 			Type:  sdk.LicenseType(sourceType),
+		}
+		if !classify {
+			out = append(out, license)
+			continue
 		}
 		switch spdxkit.Classify(normalized) {
 		case spdxkit.ClassIdentifier:
