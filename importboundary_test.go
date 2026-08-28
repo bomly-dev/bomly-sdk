@@ -17,12 +17,19 @@ import (
 // import elsewhere reintroduces the divergence the kit exists to end.
 var boundedImports = []struct {
 	module  string
-	kitDir  string
+	kitDir  string            // empty means only explicitly allowed files may import it
 	allowed map[string]string // file (module-relative) -> reason
 }{
 	{
+		module:  "github.com/package-url/packageurl-go",
+		kitDir:  "purlkit",
+		allowed: map[string]string{},
+	},
+	{
+		// This fork remains only because the deprecated ParsePackageURL
+		// signature exposes its concrete type. Remove both together in the
+		// next coordinated minor release.
 		module: "github.com/anchore/packageurl-go",
-		kitDir: "purlkit",
 		allowed: map[string]string{
 			// ParsePackageURL exposes the packageurl type in its signature;
 			// the import goes when that deprecated function is removed in
@@ -79,10 +86,14 @@ func TestThirdPartyParsersAreConfinedToTheirKits(t *testing.T) {
 				if value != bound.module && !strings.HasPrefix(value, bound.module+"/") {
 					continue
 				}
-				if strings.HasPrefix(rel, bound.kitDir+string(filepath.Separator)) {
+				if bound.kitDir != "" && strings.HasPrefix(rel, bound.kitDir+string(filepath.Separator)) {
 					continue
 				}
 				if _, ok := bound.allowed[rel]; ok {
+					continue
+				}
+				if bound.kitDir == "" {
+					t.Errorf("%s imports legacy module %s outside its explicit compatibility allowlist", rel, value)
 					continue
 				}
 				t.Errorf("%s imports %s directly; that behavior belongs to %s/ (ADR-0038)", rel, value, bound.kitDir)
