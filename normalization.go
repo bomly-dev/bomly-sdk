@@ -3,6 +3,8 @@ package sdk
 import (
 	"strings"
 	"unicode"
+
+	"github.com/bomly-dev/bomly-sdk/purlkit"
 )
 
 const (
@@ -129,37 +131,15 @@ func normEffectiveEcosystem(pkg *Dependency) Ecosystem {
 	if pkg == nil {
 		return EcosystemUnknown
 	}
-	for _, candidate := range []string{string(pkg.Ecosystem), pkg.PackageManager.Name(), string(pkg.Type)} {
-		switch strings.ToLower(strings.TrimSpace(candidate)) {
-		case string(EcosystemNPM), "pnpm", "yarn":
-			return EcosystemNPM
-		case string(EcosystemPython), "pip", "pipenv", "poetry", "uv", "setup.py", "pypi":
-			return EcosystemPython
-		case string(EcosystemRust), "cargo":
-			return EcosystemRust
-		case string(EcosystemGo), "gomod", "golang":
-			return EcosystemGo
-		case string(EcosystemMaven), "gradle":
-			return EcosystemMaven
-		case string(EcosystemDotNet), "nuget":
-			return EcosystemDotNet
-		case string(EcosystemDart), "pub":
-			return EcosystemDart
-		case string(EcosystemSwift), "cocoapods", "swiftpm":
-			return EcosystemSwift
-		case string(EcosystemCPP), "conan":
-			return EcosystemCPP
-		case string(EcosystemElixir), "mix", "hex":
-			return EcosystemElixir
-		case string(EcosystemScala), "sbt":
-			return EcosystemScala
-		case string(EcosystemPHP), "composer":
-			return EcosystemPHP
-		case string(EcosystemRuby), "gem", "bundler", "rubygems":
-			return EcosystemRuby
-		}
+	canonical, ok := purlkit.CanonicalEcosystem(
+		string(pkg.Ecosystem),
+		pkg.PackageManager.Name(),
+		string(pkg.Type),
+	)
+	if !ok {
+		return EcosystemUnknown
 	}
-	return EcosystemUnknown
+	return Ecosystem(canonical)
 }
 
 func normSplitScopedNPMName(name string) (string, string, bool) {
