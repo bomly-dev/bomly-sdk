@@ -37,3 +37,17 @@ func TestMintLicenseRefDistinctTexts(t *testing.T) {
 		t.Fatal("distinct texts minted the same reference")
 	}
 }
+
+func TestExtractedTextValid(t *testing.T) {
+	minted := MintLicenseRef("see LICENSE file")
+	if !minted.Valid() {
+		t.Fatal("freshly minted value reports invalid")
+	}
+	tampered := ExtractedText{RefID: minted.RefID, Text: "different text"}
+	if tampered.Valid() {
+		t.Fatal("tampered value reports valid — Text is authoritative")
+	}
+	if (ExtractedText{RefID: "LicenseRef-bomly-not-a-hash", Text: "see LICENSE file"}).Valid() {
+		t.Fatal("hand-authored reference reports valid")
+	}
+}
