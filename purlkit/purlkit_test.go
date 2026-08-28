@@ -32,6 +32,38 @@ func TestParseAndStringRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPathBoundaryPolicyNeedsNoReparseLoop(t *testing.T) {
+	parsed, err := Parse("pkg:A/ / 00/0")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if parsed.Namespace != "00" {
+		t.Fatalf("Parse namespace = %q, want %q", parsed.Namespace, "00")
+	}
+	if got := parsed.String(); got != "pkg:a/00/0" {
+		t.Fatalf("Parse string = %q, want %q", got, "pkg:a/00/0")
+	}
+
+	built, err := Build(PURL{Type: "A", Namespace: " / 00/ ", Name: "0"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if built != "pkg:a/00/0" {
+		t.Fatalf("Build = %q, want %q", built, "pkg:a/00/0")
+	}
+
+	parsed, err = Parse("pkg:A/0# / 0")
+	if err != nil {
+		t.Fatalf("Parse subpath: %v", err)
+	}
+	if parsed.Subpath != "0" {
+		t.Fatalf("Parse subpath = %q, want %q", parsed.Subpath, "0")
+	}
+	if got := parsed.String(); got != "pkg:a/0#0" {
+		t.Fatalf("Parse subpath string = %q, want %q", got, "pkg:a/0#0")
+	}
+}
+
 func TestParseRejectsInvalid(t *testing.T) {
 	for _, input := range []string{"", "   ", "not-a-purl", "pkg:", "pkg:npm", "http://example.com"} {
 		if _, err := Parse(input); err == nil {
