@@ -1,0 +1,89 @@
+# AGENTS.md
+
+Guidance for coding agents working in this repository. `CLAUDE.md` is an
+identical copy; keep the two files in sync.
+
+This module, `github.com/bomly-dev/bomly-sdk`, is the public contract for the
+Bomly CLI (`bomly-dev/bomly-cli`), its built-in components, and external
+managed plugins: domain types (`Dependency`, `Package`, `Vulnerability`,
+`Finding`, `Graph`), plugin kinds and validation, support metadata, and the
+shared helper subpackages (`system`, `filecache`, `logkit`, `detectorkit`,
+`matcherkit`, `testkit`, `conformance`).
+
+## This module is the source of truth
+
+The standing placement rule (recorded as
+[ADR-0040 in bomly-cli](https://github.com/bomly-dev/bomly-cli/blob/main/dev-docs/adr/0040-the-sdk-is-the-default-home-for-behavior.md),
+landing via [bomly-dev/bomly-cli#411](https://github.com/bomly-dev/bomly-cli/pull/411) —
+the link resolves once that PR merges):
+behavior about shared domain objects — identity, coordinates, PURLs,
+licenses, SBOM assertions, graph and merge semantics, validation gates —
+lands **here first**, and the CLI and plugins consume it. When a bug is
+reported against the CLI but the rule it violates is a model rule, the
+durable fix belongs in this module; a CLI-side patch is a loan, taken only
+with the SDK issue already filed and linked.
+
+The inverse holds too: do not admit consumer-specific behavior. CLI
+presentation, command surfaces, and pipeline orchestration stay in
+`bomly-cli`; one external tool's integration specifics stay in its
+`bomly-plugin-*` repository. The test is ownership by nature, not current
+usage — "only one consumer needs this today" is neither a reason to keep it
+out nor a reason to let it in.
+
+Bomly's architecture decisions live in
+[`bomly-cli/dev-docs/adr/`](https://github.com/bomly-dev/bomly-cli/tree/main/dev-docs/adr);
+decisions that shape this module's surface are recorded there even when the
+code lands here.
+
+## Compatibility contract
+
+Two axes, with different rules (see `README.md` for the full policy):
+
+- **In-process Go API** — the module is v0: minor releases may adjust the
+  API; patch releases are always safe. Consumers embed `Base*` structs to
+  stay insulated from interface growth.
+- **Wire (`bomly.plugin.v1`)** — strictly additive, forever. Payloads are
+  JSON over gRPC, so struct JSON tags *are* the wire schema. New fields must
+  be optional and tagged `omitempty` (`TestWireV1NewFieldsAreOmitEmpty`
+  guards this for the payloads and fields it enumerates — extend its
+  enumeration when adding wire surface; a field outside it is not covered);
+  frozen fixtures must keep decoding
+  (`TestWireV1FixturesDecode` — never "fix" a fixture); fields and RPCs are
+  never removed, renamed, or repurposed within v1. A breaking change ships
+  as `bomly.plugin.v2` negotiated alongside v1.
+
+Release ordering: **this module tags first, plugin repositories adopt the new
+tag, then bomly-cli updates its pin.** Never ask consumers to pin a commit or
+branch.
+
+## Conventions
+
+- Every exported type and function has a doc comment. New model fields name
+  their validation gate and merge class (fill-gaps scalar, union set, or
+  contradiction-preserving) in the doc comment.
+- Validation lives with the type: fields carrying untrusted input normalize
+  in their JSON codecs on both marshal and unmarshal, the way
+  `DependencyOrigin` does, so no call site can bypass the gate.
+- Every parser of untrusted input ships with a native Go fuzz target from
+  its first commit; bound input size before parsing.
+- Errors wrap with context (`fmt.Errorf("...: %w", err)`); no panics in
+  normal flow — contain third-party panics at the boundary instead.
+- Loggers may be nil; nil-check or use `zap.NewNop()`. No secrets or
+  credentials in logs, ever.
+- Standard library plus the existing pinned dependencies only; discuss
+  before adding any dependency.
+
+## Build & test
+
+```sh
+go test ./...    # all tests must pass before work is done
+go vet ./...
+gofmt -l .          # CI gates on formatting
+go mod tidy -diff   # CI gates on go.mod/go.sum tidiness
+```
+
+The `conformance` package is the reusable plugin-contract suite; changes to
+descriptors, validation, or the serve surface must keep it green, and the
+CLI's `TestExamplePluginFixtureCompiles` compiles against the released SDK —
+breaking the pinned contract there means the change needs a release-notes
+callout and a coordinated bump.
