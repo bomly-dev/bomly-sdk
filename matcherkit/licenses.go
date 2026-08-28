@@ -34,12 +34,11 @@ func MissingLicensePackages(packages []*sdk.Package) []*sdk.Package {
 // the validated expression otherwise. Free text such as "non-standard"
 // leaves SPDXExpression empty instead of masquerading as an expression.
 func NormalizeLicenseSet(values []string, sourceType string) []sdk.PackageLicense {
-	// Classification is one parser invocation per value, so the batch is
-	// gated by spdxkit's aggregate limits. Over the limit nothing is
-	// dropped and nothing masquerades: every value keeps its trimmed Value
-	// and stays unclassified free text (SPDXExpression empty).
-	classify := spdxkit.BatchWithinBounds(values)
-	out := make([]sdk.PackageLicense, 0, len(values))
+	// Blanks and duplicates are dropped before anything is parsed, so the
+	// aggregate parsing gate below measures the values classification will
+	// actually see — a raw slice padded with blanks or repeats must not
+	// cost a small unique set its classification.
+	unique := make([]string, 0, len(values))
 	seen := make(map[string]struct{}, len(values))
 	for _, value := range values {
 		normalized := strings.TrimSpace(value)
@@ -50,6 +49,15 @@ func NormalizeLicenseSet(values []string, sourceType string) []sdk.PackageLicens
 			continue
 		}
 		seen[normalized] = struct{}{}
+		unique = append(unique, normalized)
+	}
+	// Classification is one parser invocation per value, so the batch is
+	// gated by spdxkit's aggregate limits. Over the limit nothing is
+	// dropped and nothing masquerades: every value keeps its trimmed Value
+	// and stays unclassified free text (SPDXExpression empty).
+	classify := spdxkit.BatchWithinBounds(unique)
+	out := make([]sdk.PackageLicense, 0, len(unique))
+	for _, normalized := range unique {
 		license := sdk.PackageLicense{
 			Value: normalized,
 			Type:  sdk.LicenseType(sourceType),

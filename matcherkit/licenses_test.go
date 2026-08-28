@@ -69,3 +69,28 @@ func TestNormalizeLicenseSetBoundsClassificationBatches(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeLicenseSetGatesOnTheParsedSet(t *testing.T) {
+	// A raw slice padded with blanks and duplicates must not cost a small
+	// unique set its classification: the gate measures what is parsed.
+	padded := make([]string, 0, 2000)
+	for i := 0; i < 1990; i++ {
+		if i%2 == 0 {
+			padded = append(padded, "  ")
+		} else {
+			padded = append(padded, "MIT")
+		}
+	}
+	padded = append(padded, "GPL-2.0")
+	licenses := NormalizeLicenseSet(padded, "declared")
+	if len(licenses) != 2 {
+		t.Fatalf("got %d licenses, want 2 (MIT, GPL-2.0)", len(licenses))
+	}
+	byValue := map[string]string{}
+	for _, license := range licenses {
+		byValue[license.Value] = license.SPDXExpression
+	}
+	if byValue["MIT"] != "MIT" || byValue["GPL-2.0"] != "GPL-2.0-only" {
+		t.Fatalf("padded batch lost classification: %+v", byValue)
+	}
+}
