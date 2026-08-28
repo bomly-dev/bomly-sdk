@@ -19,7 +19,8 @@ const maxInputSize = 1 << 20
 // the batch is bounded by count and by total bytes, not only per member.
 const maxBatchMembers = 1024
 
-// Valid reports whether a value parses as an SPDX license expression.
+// Valid reports whether a value within the package's safety limits parses as
+// an SPDX license expression.
 // Unparseable values — free text such as "non-standard", or malformed
 // grouping — report false rather than failing the caller.
 func Valid(expression string) bool {
@@ -31,8 +32,9 @@ func Valid(expression string) bool {
 	return valid
 }
 
-// ValidateAll reports whether every value parses as an SPDX license
-// expression, returning the values that do not.
+// ValidateAll reports whether every value within the package's aggregate and
+// structural safety limits parses as an SPDX license expression, returning
+// the values that do not.
 func ValidateAll(values []string) (valid bool, invalid []string) {
 	if len(values) == 0 {
 		return true, nil
@@ -42,12 +44,12 @@ func ValidateAll(values []string) (valid bool, invalid []string) {
 	if len(values) > maxBatchMembers {
 		return false, append([]string(nil), values...)
 	}
-	// Oversized members are invalid without consulting the parser; the
+	// Out-of-bounds members are invalid without consulting the parser; the
 	// remaining members are still checked so the invalid list stays exact.
 	bounded := make([]string, 0, len(values))
 	boundedTotal := 0
 	for _, value := range values {
-		if len(value) > maxInputSize {
+		if len(value) > maxInputSize || !expressionWithinParseLimits(value) {
 			invalid = append(invalid, value)
 			continue
 		}
@@ -58,7 +60,7 @@ func ValidateAll(values []string) (valid bool, invalid []string) {
 	// invocation; when their total exceeds the bound the remainder is
 	// wholly unchecked, so every member is reported invalid.
 	if boundedTotal > maxInputSize {
-		return false, append(invalid, bounded...)
+		return false, append([]string(nil), values...)
 	}
 	if len(bounded) == 0 {
 		return false, invalid
@@ -123,7 +125,7 @@ func Compose(values []string) string {
 		if value == "" {
 			continue
 		}
-		if strings.ContainsAny(value, " \t") {
+		if hasCompoundOperator(value) {
 			value = "(" + value + ")"
 		}
 		parts = append(parts, value)
@@ -131,16 +133,29 @@ func Compose(values []string) string {
 	return strings.Join(parts, " AND ")
 }
 
+func hasCompoundOperator(expression string) bool {
+	for _, segment := range splitExpression(expression) {
+		if !segment.separator && (segment.text == "AND" || segment.text == "OR") {
+			return true
+		}
+	}
+	return false
+}
+
 // Satisfies reports whether an expression is satisfied by an allowed set.
 // An unparseable expression satisfies nothing and returns the parser's error,
 // or false with no error when the parser could not run at all.
 func Satisfies(expression string, allowed []string) (ok bool, err error) {
-	if len(expression) > maxInputSize || len(allowed) > maxBatchMembers {
+	if len(expression) > maxInputSize || len(allowed) > maxBatchMembers ||
+		!expressionWithinParseLimits(expression) || !satisfiesWithinExpansionLimit(expression) {
 		return false, nil
 	}
 	total := 0
 	for _, member := range allowed {
 		total += len(member)
+		if !expressionWithinParseLimits(member) {
+			return false, nil
+		}
 	}
 	if total > maxInputSize {
 		return false, nil
@@ -157,10 +172,11 @@ func Satisfies(expression string, allowed []string) (ok bool, err error) {
 	return ok, nil
 }
 
-// Extract returns the individual license identifiers an expression uses.
-// An unparseable expression yields nothing.
+// Extract returns the individual license identifiers an expression uses. An
+// unparseable expression returns the parser's error; an expression rejected
+// by a safety limit or parser panic yields nothing and no error.
 func Extract(expression string) (licenses []string, err error) {
-	if len(expression) > maxInputSize {
+	if len(expression) > maxInputSize || !expressionWithinParseLimits(expression) {
 		return nil, nil
 	}
 	defer func() {

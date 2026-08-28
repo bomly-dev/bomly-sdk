@@ -76,6 +76,12 @@ func CanonicalIdentifier(value string) (canonical string, ok bool) {
 // here") is never corrupted. This relocates the token-wise rewriter the
 // CLI's SBOM codec carried.
 func CanonicalExpression(expression string) string {
+	// Bound the original before tokenizing: Valid trims before checking its
+	// own bound, so a huge whitespace padding around a tiny identifier
+	// would otherwise pass validation and still be tokenized.
+	if len(expression) > maxInputSize {
+		return expression
+	}
 	if strings.TrimSpace(expression) == "" {
 		return expression
 	}
@@ -94,7 +100,7 @@ func CanonicalExpression(expression string) string {
 			continue
 		}
 		if replacement, ok := Replacement(segment.text); ok {
-			segments[i].text = replacement
+			segments[i].text = replacementInContext(segments, i, replacement)
 			replaced = true
 		}
 	}
@@ -104,11 +110,11 @@ func CanonicalExpression(expression string) string {
 	if rewritten := joinSegments(segments); Valid(rewritten) {
 		return rewritten
 	}
-	// Per-token fallback: a context-sensitive replacement must not cost the
-	// independent ones, so each replacement is accepted individually and
-	// only while the whole expression keeps validating. The result is valid
-	// by construction — it starts from the valid original and every
-	// accepted step re-validated.
+	// Context-sensitive fallback: identifier-to-identifier replacements are
+	// safe in every operand position. An expression-valued replacement is
+	// also safe unless the original operand is itself followed by WITH,
+	// which would create two exception applications. Apply that distinction
+	// in one pass and validate once, keeping work linear in the input size.
 	segments = splitExpression(expression)
 	for i, segment := range segments {
 		if segment.separator {
@@ -118,13 +124,60 @@ func CanonicalExpression(expression string) string {
 		if !ok {
 			continue
 		}
-		original := segments[i].text
-		segments[i].text = replacement
-		if !Valid(joinSegments(segments)) {
-			segments[i].text = original
+		if _, isIdentifier := Identifier(replacement); !isIdentifier && nextTokenIsWith(segments, i) {
+			continue
+		}
+		segments[i].text = replacementInContext(segments, i, replacement)
+	}
+	if rewritten := joinSegments(segments); Valid(rewritten) {
+		return rewritten
+	}
+
+	// Keep a future expression-valued replacement with an unanticipated
+	// grammar interaction from sacrificing the always-safe identifier
+	// replacements. This final candidate is still built and parsed once.
+	segments = splitExpression(expression)
+	for i, segment := range segments {
+		if segment.separator {
+			continue
+		}
+		replacement, ok := Replacement(segment.text)
+		if !ok {
+			continue
+		}
+		if _, isIdentifier := Identifier(replacement); isIdentifier {
+			segments[i].text = replacementInContext(segments, i, replacement)
 		}
 	}
-	return joinSegments(segments)
+	if rewritten := joinSegments(segments); Valid(rewritten) {
+		return rewritten
+	}
+	return expression
+}
+
+func nextTokenIsWith(segments []expressionSegment, current int) bool {
+	for i := current + 1; i < len(segments); i++ {
+		if !segments[i].separator {
+			return segments[i].text == "WITH"
+		}
+	}
+	return false
+}
+
+func replacementInContext(segments []expressionSegment, current int, replacement string) string {
+	// In the permissive upstream grammar, '+' can be the only boundary
+	// between a license and its following operator ("GPL-2.0+ANDMIT"). A
+	// replacement ending in "-or-later" removes that boundary, so preserve
+	// the tokenization with one inserted space.
+	if strings.HasSuffix(segments[current].text, "+") && current+1 < len(segments) &&
+		!segments[current+1].separator && isExpressionOperator(segments[current+1].text) {
+		return replacement + " "
+	}
+	return replacement
+}
+
+func isExpressionOperator(token string) bool {
+	return token == "AND" || token == "OR" || token == "WITH"
 }
 
 // expressionSegment is one run of an expression: either a token or the
@@ -137,25 +190,64 @@ type expressionSegment struct {
 func splitExpression(expression string) []expressionSegment {
 	var segments []expressionSegment
 	token := strings.Builder{}
+	separator := strings.Builder{}
 	flushToken := func() {
 		if token.Len() == 0 {
 			return
 		}
-		segments = append(segments, expressionSegment{text: token.String()})
+		segments = appendTokenRun(segments, token.String())
 		token.Reset()
 	}
+	flushSeparator := func() {
+		if separator.Len() == 0 {
+			return
+		}
+		segments = append(segments, expressionSegment{separator: true, text: separator.String()})
+		separator.Reset()
+	}
 	for _, r := range expression {
-		// Every whitespace separator the parser accepts is a token
-		// boundary — a validated expression may use tabs or newlines
-		// between tokens, and an unflushed token would escape replacement.
+		// Treat every common whitespace rune as a token boundary. The current
+		// parser accepts spaces only, but keeping the tokenizer wider prevents
+		// a future parser relaxation from letting a token escape replacement.
+		// Consecutive separator runes coalesce into one segment so long
+		// whitespace runs cost one allocation, not one per rune.
 		if r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '(' || r == ')' {
 			flushToken()
-			segments = append(segments, expressionSegment{separator: true, text: string(r)})
+			separator.WriteRune(r)
 			continue
 		}
+		flushSeparator()
 		token.WriteRune(r)
 	}
 	flushToken()
+	flushSeparator()
+	return segments
+}
+
+func appendTokenRun(segments []expressionSegment, run string) []expressionSegment {
+	for run != "" {
+		matchedOperator := false
+		for _, operator := range []string{"WITH", "AND", "OR"} {
+			if strings.HasPrefix(run, operator) {
+				segments = append(segments, expressionSegment{text: operator})
+				run = run[len(operator):]
+				matchedOperator = true
+				break
+			}
+		}
+		if matchedOperator {
+			continue
+		}
+		// A plus is part of the preceding license token, but it also ends
+		// that token, allowing an operator to follow without whitespace.
+		end := strings.IndexByte(run, '+')
+		if end < 0 {
+			return append(segments, expressionSegment{text: run})
+		}
+		end++
+		segments = append(segments, expressionSegment{text: run[:end]})
+		run = run[end:]
+	}
 	return segments
 }
 

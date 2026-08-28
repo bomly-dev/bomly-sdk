@@ -1,6 +1,7 @@
 package spdxkit
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/github/go-spdx/v2/spdxexp/spdxlicenses"
@@ -118,6 +119,11 @@ func TestCanonicalExpression(t *testing.T) {
 		"GPL-2.0":                 "GPL-2.0-only",
 		"(GPL-2.0 OR MIT)":        "(GPL-2.0-only OR MIT)",
 		"GPL-2.0+ AND Apache-2.0": "GPL-2.0-or-later AND Apache-2.0",
+		// The upstream parser permits an operator to be glued to its right
+		// operand, and a plus suffix can delimit an operator on its left.
+		"MIT ORGPL-2.0":              "MIT ORGPL-2.0-only",
+		"GPL-2.0+ANDMIT":             "GPL-2.0-or-later ANDMIT",
+		"GPL-2.0+WITHLLVM-exception": "GPL-2.0-or-later WITHLLVM-exception",
 		// The list lookup accepts case variants, so a validated expression
 		// can carry a lowercase deprecated token; it canonicalizes too.
 		"gpl-2.0 OR MIT": "GPL-2.0-only OR MIT",
@@ -146,5 +152,28 @@ func TestCanonicalExpression(t *testing.T) {
 		if got := CanonicalExpression(input); got != want {
 			t.Errorf("CanonicalExpression(%q) = %q, want %q", input, got, want)
 		}
+	}
+}
+
+func TestCanonicalExpressionBoundsAndLinearFallback(t *testing.T) {
+	// A huge whitespace padding around a tiny identifier must be rejected
+	// before tokenization, not turned into per-rune allocations.
+	padded := strings.Repeat(" ", maxInputSize) + "GPL-2.0"
+	if got := CanonicalExpression(padded); got != padded {
+		t.Fatal("oversized padded input was rewritten")
+	}
+	// A context-sensitive token followed by many independent deprecated
+	// tokens stays linear without imposing a semantic work cap: every safe
+	// token still canonicalizes, even when the unsafe one comes first.
+	many := "(GPL-2.0-with-classpath-exception WITH LLVM-exception) AND " + strings.Repeat("GPL-2.0 AND ", 39) + "GPL-2.0"
+	got := CanonicalExpression(many)
+	if !Valid(got) {
+		t.Fatalf("fallback produced an invalid expression: %q", got)
+	}
+	if count := strings.Count(got, "GPL-2.0-only"); count != 40 {
+		t.Fatalf("fallback folded %d independent tokens, want 40", count)
+	}
+	if !strings.Contains(got, "GPL-2.0-with-classpath-exception WITH LLVM-exception") {
+		t.Fatal("context-sensitive operand was rewritten")
 	}
 }

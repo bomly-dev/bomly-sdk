@@ -64,6 +64,13 @@ func TestCompose(t *testing.T) {
 	if got := Compose([]string{"MIT OR ISC", "Apache-2.0"}); got != "(MIT OR ISC) AND Apache-2.0" {
 		t.Fatalf("Compose parenthesization = %q", got)
 	}
+	compact := "(MIT)ORApache-2.0"
+	if !Valid(compact) {
+		t.Fatalf("compact-expression test fixture %q is not valid SPDX", compact)
+	}
+	if got := Compose([]string{compact, "ISC"}); got != "((MIT)ORApache-2.0) AND ISC" {
+		t.Fatalf("Compose compact parenthesization = %q", got)
+	}
 	if got := Compose([]string{" ", ""}); got != "" {
 		t.Fatalf("Compose(blank) = %q", got)
 	}
@@ -122,6 +129,38 @@ func TestAggregateBatchesAreBounded(t *testing.T) {
 	}
 	if ok, _ := Satisfies("MIT", big); ok {
 		t.Fatal("Satisfies accepted an over-count allowed set")
+	}
+}
+
+func TestExpressionStructureIsBounded(t *testing.T) {
+	deep := strings.Repeat("(", maxExpressionNesting+1) + "MIT" + strings.Repeat(")", maxExpressionNesting+1)
+	if Valid(deep) {
+		t.Fatal("over-nested expression validated")
+	}
+	manyOperators := strings.TrimSuffix(strings.Repeat("MIT AND ", maxExpressionOperators+2), " AND ")
+	if Valid(manyOperators) {
+		t.Fatal("expression with too many recursive operators validated")
+	}
+	if licenses, err := Extract(deep); licenses != nil || err != nil {
+		t.Fatalf("Extract(over-nested) = (%v, %v)", licenses, err)
+	}
+}
+
+func TestSatisfiesBoundsCombinatorialExpansion(t *testing.T) {
+	safe := strings.TrimSuffix(strings.Repeat("(MIT OR Apache-2.0) AND ", 4), " AND ")
+	if !satisfiesWithinExpansionLimit(safe) {
+		t.Fatal("small expression exceeded the expansion bound")
+	}
+	if ok, err := Satisfies(safe, []string{"MIT", "Apache-2.0"}); !ok || err != nil {
+		t.Fatalf("Satisfies(small expansion) = (%v, %v)", ok, err)
+	}
+
+	exponential := strings.TrimSuffix(strings.Repeat("(MIT OR Apache-2.0) AND ", 13), " AND ")
+	if satisfiesWithinExpansionLimit(exponential) {
+		t.Fatal("exponential expression passed the expansion bound")
+	}
+	if ok, err := Satisfies(exponential, []string{"MIT", "Apache-2.0"}); ok || err != nil {
+		t.Fatalf("Satisfies(exponential) = (%v, %v), want safe rejection", ok, err)
 	}
 }
 

@@ -12,7 +12,8 @@ const (
 	// ClassIdentifier is exactly one SPDX license-list entry, deprecated
 	// entries included.
 	ClassIdentifier
-	// ClassExpression parses as an SPDX expression and contains operators.
+	// ClassExpression parses as an SPDX expression but is not one SPDX
+	// license-list identifier. It may be compound or an atomic LicenseRef.
 	ClassExpression
 )
 

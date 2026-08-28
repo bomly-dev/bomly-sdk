@@ -8,6 +8,7 @@ func TestClassify(t *testing.T) {
 		"mit":               ClassIdentifier,
 		"GPL-2.0":           ClassIdentifier, // deprecated entries are identifiers
 		"GPL-2.0+":          ClassIdentifier, // plus-suffixed deprecated entries too
+		"LicenseRef-custom": ClassExpression, // valid SPDX, but not a list identifier
 		"MIT OR Apache-2.0": ClassExpression,
 		"GPL-2.0-only WITH Classpath-exception-2.0": ClassExpression,
 		"non-standard": ClassFreeText,

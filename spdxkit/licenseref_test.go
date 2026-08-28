@@ -1,7 +1,10 @@
 package spdxkit
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -29,6 +32,22 @@ func TestMintLicenseRefFoldsWhitespaceOnly(t *testing.T) {
 	}
 	if a.Text != "see  LICENSE\n\tfile" {
 		t.Fatalf("original text not preserved: %q", a.Text)
+	}
+}
+
+func TestMintLicenseRefMatchesWhitespaceNormalization(t *testing.T) {
+	for _, text := range []string{
+		"  see\tLICENSE\nfile  ",
+		"Unicode\u00a0and\u2003spaces",
+		"invalid-utf8-\xff-kept",
+		"",
+	} {
+		normalized := strings.Join(strings.Fields(text), " ")
+		digest := sha256.Sum256([]byte(normalized))
+		want := licenseRefPrefix + hex.EncodeToString(digest[:16])
+		if got := MintLicenseRef(text).RefID; got != want {
+			t.Errorf("MintLicenseRef(%q).RefID = %q, want %q", text, got, want)
+		}
 	}
 }
 
