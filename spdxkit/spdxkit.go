@@ -237,13 +237,11 @@ func Compose(values []string) string {
 		} else {
 			// The over-limit fallback must not parse, but it must not rebind
 			// either: an unparenthesized compound operand would change the
-			// package assertion under AND precedence. It reuses the one
-			// delimiter rule the work bounds converged on — whitespace,
-			// parentheses, or a delimiter-adjacent operator mention (which
-			// covers compact forms such as (MIT)ORApache-2.0 and
-			// GPL-2.0+ORApache-2.0) — and over-parenthesizing an atom is
+			// package assertion under AND precedence. Per the delegation
+			// convention it makes no grammar guesses at all — every member
+			// is parenthesized, because over-parenthesizing an atom is
 			// harmless while a missing layer is not.
-			needsParens = strings.ContainsAny(value, " \t()") || countOperatorMentions(value) > 0
+			needsParens = true
 		}
 		if needsParens {
 			value = "(" + value + ")"
