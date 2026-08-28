@@ -101,7 +101,10 @@ func CanonicalExpression(expression string) string {
 		token.Reset()
 	}
 	for _, r := range expression {
-		if r == ' ' || r == '(' || r == ')' {
+		// Every whitespace separator the parser accepts is a token
+		// boundary — a validated expression may use tabs or newlines
+		// between tokens, and an unflushed token would escape replacement.
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '(' || r == ')' {
 			flush()
 			b.WriteRune(r)
 			continue
