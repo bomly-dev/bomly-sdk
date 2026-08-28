@@ -2,14 +2,23 @@ package purlkit
 
 import (
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/anchore/packageurl-go"
 )
 
-// ErrInvalidPURL reports a package URL that cannot be built or parsed.
+// ErrInvalidPURL reports a package URL that cannot be built or parsed. Every
+// failure from Parse, Build, and their derivatives matches it with errors.Is,
+// including failures surfaced by the underlying parser.
 var ErrInvalidPURL = errors.New("invalid package URL")
+
+// maxInputSize bounds untrusted input before parsing (the repository's fuzz
+// convention, enforced in production here because package URLs arrive from
+// untrusted SBOMs and registry responses and Parse re-parses while
+// canonicalizing).
+const maxInputSize = 1 << 20
 
 // Qualifier is one key/value qualifier of a package URL. Keys are lowercase
 // in canonical form; qualifier lists are sorted by key.
@@ -36,7 +45,7 @@ type PURL struct {
 // parsing it again yields the same value. Parse never panics.
 func Parse(value string) (PURL, error) {
 	value = strings.TrimSpace(value)
-	if value == "" {
+	if value == "" || len(value) > maxInputSize {
 		return PURL{}, ErrInvalidPURL
 	}
 	// The underlying library is not idempotent on every input: rendering can
@@ -49,11 +58,11 @@ func Parse(value string) (PURL, error) {
 	for range maxCanonicalizationRounds {
 		parsed, err := packageurl.FromString(value)
 		if err != nil {
-			return PURL{}, err
+			return PURL{}, fmt.Errorf("%w: %v", ErrInvalidPURL, err)
 		}
 		restoreNPMScope(&parsed)
 		if err := parsed.Normalize(); err != nil {
-			return PURL{}, err
+			return PURL{}, fmt.Errorf("%w: %v", ErrInvalidPURL, err)
 		}
 		out := fromPackageURL(parsed)
 		rendered, err := Build(out)
@@ -94,7 +103,7 @@ func Build(p PURL) (string, error) {
 	}
 	restoreNPMScope(built)
 	if err := built.Normalize(); err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: %v", ErrInvalidPURL, err)
 	}
 	return built.ToString(), nil
 }
