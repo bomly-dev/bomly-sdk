@@ -44,6 +44,12 @@ func TestIdentifier(t *testing.T) {
 	if canonical, ok := Identifier("GPL-2.0"); !ok || canonical != "GPL-2.0" {
 		t.Fatalf("Identifier(GPL-2.0) = (%q, %v) — deprecated entries remain list members", canonical, ok)
 	}
+	if canonical, ok := Identifier("GPL-2.0+"); !ok || canonical != "GPL-2.0+" {
+		t.Fatalf("Identifier(GPL-2.0+) = (%q, %v) — plus-suffixed deprecated entries are list members", canonical, ok)
+	}
+	if _, ok := Identifier("MIT+"); ok {
+		t.Fatal("Identifier(MIT+) succeeded — an or-later expression is not a list entry")
+	}
 	for _, notIdentifier := range []string{"", "MIT OR Apache-2.0", "GPL-2.0-only+", "non-standard", "(MIT)"} {
 		if _, ok := Identifier(notIdentifier); ok {
 			t.Errorf("Identifier(%q) succeeded, want rejection", notIdentifier)

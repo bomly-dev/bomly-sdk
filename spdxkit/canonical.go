@@ -90,7 +90,10 @@ func CanonicalExpression(expression string) string {
 			return
 		}
 		t := token.String()
-		if replacement, ok := replacements[t]; ok {
+		// Replacement, not a direct map index: the SPDX list lookup accepts
+		// case variants, so a validated expression can carry "gpl-2.0" and
+		// the case folding Replacement already does must apply here too.
+		if replacement, ok := Replacement(t); ok {
 			b.WriteString(replacement)
 		} else {
 			b.WriteString(t)

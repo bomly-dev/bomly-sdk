@@ -99,6 +99,9 @@ func TestCanonicalIdentifier(t *testing.T) {
 	if got, ok := CanonicalIdentifier("GPL-2.0"); !ok || got != "GPL-2.0-only" {
 		t.Fatalf("CanonicalIdentifier(GPL-2.0) = (%q, %v)", got, ok)
 	}
+	if got, ok := CanonicalIdentifier("GPL-2.0+"); !ok || got != "GPL-2.0-or-later" {
+		t.Fatalf("CanonicalIdentifier(GPL-2.0+) = (%q, %v)", got, ok)
+	}
 	if got, ok := CanonicalIdentifier("mit"); !ok || got != "MIT" {
 		t.Fatalf("CanonicalIdentifier(mit) = (%q, %v)", got, ok)
 	}

@@ -7,6 +7,7 @@ func TestClassify(t *testing.T) {
 		"MIT":               ClassIdentifier,
 		"mit":               ClassIdentifier,
 		"GPL-2.0":           ClassIdentifier, // deprecated entries are identifiers
+		"GPL-2.0+":          ClassIdentifier, // plus-suffixed deprecated entries too
 		"MIT OR Apache-2.0": ClassExpression,
 		"GPL-2.0-only WITH Classpath-exception-2.0": ClassExpression,
 		"non-standard": ClassFreeText,

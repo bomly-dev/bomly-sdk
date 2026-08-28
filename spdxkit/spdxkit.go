@@ -64,18 +64,21 @@ func validateBounded(values []string) (valid bool, invalid []string) {
 // Identifier returns the canonical spelling of a value that is exactly one
 // entry in the SPDX license list, and reports whether it is one.
 //
-// Compound expressions are rejected: an operator ("MIT OR Apache-2.0",
-// "GPL-2.0-only+") is an expression, not a list entry, and the two are not
-// interchangeable in formats that hold identifiers and expressions in
-// separate fields. Deprecated identifiers still resolve — they remain list
-// members; CanonicalIdentifier additionally folds them to their current
-// replacements.
+// Compound expressions are rejected: an operator ("MIT OR Apache-2.0") is an
+// expression, not a list entry, and the two are not interchangeable in
+// formats that hold identifiers and expressions in separate fields. A
+// trailing "+" does not by itself make a value compound — deprecated
+// entries such as "GPL-2.0+" are list members and resolve here; a
+// plus-suffixed value that is not a list entry ("GPL-2.0-only+", "MIT+")
+// is an or-later expression and is rejected by the lookups. Deprecated
+// identifiers still resolve — they remain list members; CanonicalIdentifier
+// additionally folds them to their current replacements.
 func Identifier(value string) (string, bool) {
 	value = strings.TrimSpace(value)
 	if value == "" || len(value) > maxInputSize {
 		return "", false
 	}
-	if strings.ContainsAny(value, " \t\n\r()+") {
+	if strings.ContainsAny(value, " \t\n\r()") {
 		return "", false
 	}
 	if ok, canonical := spdxlicenses.IsActiveLicense(value); ok {
