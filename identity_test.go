@@ -153,3 +153,24 @@ func TestIdentityOriginFacet(t *testing.T) {
 		}
 	}
 }
+
+func TestPackageIdentityFoldsDiscriminatorSpellings(t *testing.T) {
+	// The wire accepts case variants of the closed vocabularies verbatim, so
+	// the fallback discriminators fold: "NPM" from a JSON payload and a
+	// built-in's "npm" must mint one identity, or the same manifest node
+	// never consolidates.
+	upper := Coordinates{Ecosystem: "NPM", Type: "Manifest", Name: "package.json"}
+	lower := Coordinates{Ecosystem: EcosystemNPM, Type: PackageTypeManifest, Name: "package.json"}
+	if upper.PackageIdentity() != lower.PackageIdentity() {
+		t.Fatalf("case-variant discriminators split identity: %q vs %q", upper.PackageIdentity(), lower.PackageIdentity())
+	}
+	if got := upper.PackageIdentity(); got != "coord:npm//manifest//package.json/" {
+		t.Fatalf("folded fallback rendering = %q", got)
+	}
+	// The alias table also fills a missing ecosystem discriminator from the
+	// package manager, so a pm-only producer renders the canonical ecosystem.
+	bun := Coordinates{PackageManager: PackageManager("bun"), Type: PackageTypeManifest, Name: "package.json"}
+	if got := bun.PackageIdentity(); got != "coord:npm/bun/manifest//package.json/" {
+		t.Fatalf("alias-derived ecosystem rendering = %q", got)
+	}
+}
