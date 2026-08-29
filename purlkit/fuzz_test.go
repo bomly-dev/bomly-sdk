@@ -97,3 +97,42 @@ func FuzzBuild(f *testing.F) {
 		}
 	})
 }
+
+func FuzzIdentityForm(f *testing.F) {
+	for _, seed := range []string{
+		"pkg:maven/g/a@1?type=jar",
+		"pkg:npm/left-pad@1.3.0?repository_url=https://registry.npmjs.org",
+		"pkg:golang/example.com/mod@v1.0.0#internal/tool",
+		"pkg:maven/g/a@1?classifier=sources#docs",
+		"pkg:npm/%40scope/name@1.0.0",
+		"not a package url",
+		"",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, raw string) {
+		if len(raw) > maxInputSize {
+			return
+		}
+		identity := IdentityForm(raw)
+		if identity == "" {
+			return
+		}
+		parsed, err := Parse(identity)
+		if err != nil {
+			t.Fatalf("identity form does not reparse: %q: %v", identity, err)
+		}
+		allowed := make(map[string]struct{})
+		for _, key := range IdentityQualifierKeys() {
+			allowed[key] = struct{}{}
+		}
+		for _, qualifier := range parsed.Qualifiers {
+			if _, ok := allowed[qualifier.Key]; !ok {
+				t.Fatalf("identity form %q kept qualifier %q outside the allowlist", identity, qualifier.Key)
+			}
+		}
+		if again := IdentityForm(identity); again != identity {
+			t.Fatalf("identity form is not a fixed point: %q then %q", identity, again)
+		}
+	})
+}
