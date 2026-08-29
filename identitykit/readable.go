@@ -69,10 +69,12 @@ func EscapeField(s string) string {
 }
 
 // UnescapeField reverses EscapeField strictly: escape sequences must be
-// '%' plus two uppercase hex digits, and a raw byte EscapeField would have
-// escaped is rejected — an unescaped delimiter inside a field means the
-// value did not come from EscapeField, so there is exactly one escaped
-// spelling per field value.
+// '%' plus two uppercase hex digits, a raw byte EscapeField would have
+// escaped is rejected, and so is an escape whose decoded byte EscapeField
+// would have left raw — either laxity would give one field value two
+// accepted spellings ("%41" beside "A"), letting equivalent identities keep
+// different graph keys. There is exactly one escaped spelling per field
+// value.
 func UnescapeField(s string) (string, error) {
 	if len(s) > maxInputSize {
 		return "", fmt.Errorf("identitykit: field exceeds %d bytes", maxInputSize)
@@ -98,7 +100,11 @@ func UnescapeField(s string) (string, error) {
 			if hi < 0 || lo < 0 {
 				return "", fmt.Errorf("identitykit: invalid escape sequence %q in field", s[i:i+3])
 			}
-			b.WriteByte(byte(hi<<4 | lo))
+			decoded := byte(hi<<4 | lo)
+			if !fieldNeedsEscape(decoded) {
+				return "", fmt.Errorf("identitykit: non-canonical escape sequence %q in field", s[i:i+3])
+			}
+			b.WriteByte(decoded)
 			i += 2
 			continue
 		}
