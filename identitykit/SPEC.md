@@ -96,8 +96,10 @@ manager, type, org, name, version, in that order — each escaped, joined by
 
 each as `%` plus two **uppercase** hex digits. All other bytes pass through
 untouched. Decoding is strict: escape sequences MUST be `%` + two uppercase
-hex digits, and a raw byte from the escape set MUST be rejected — there is
-exactly one escaped spelling per field value. (The escape set extends
+hex digits, a raw byte from the escape set MUST be rejected, and an escape
+whose decoded byte is **not** in the escape set (e.g. `%41` for `A`) MUST
+be rejected — there is exactly one accepted spelling per field value, so
+equivalent identities cannot hold different graph keys. (The escape set extends
 ADR-0036's enumerated set with the joiner, which is required for injective
 six-field parsing; this spec is the normative byte-level authority under
 the ADR's "the spec fixes every byte" clause.)
@@ -160,7 +162,26 @@ persistence: it may cross in-process and intra-run plugin-wire boundaries,
 but MUST NOT reach a user-visible document or persistent store —
 finalization folds or replaces every ephemeral record first.
 
-## 6. Evolution
+## 6. Input bounds
+
+Every entry point shares one dumb byte cap: **1 MiB (2^20 bytes)** per
+untrusted input string, matching purlkit's bound. Oversized input is
+handled per entry point:
+
+- strict field decoding (`UnescapeField`) returns an error, and fallback
+  parsing (`ParseFallbackIdentity`) reports `ok=false`;
+- ID splitting (`SplitID`) returns the whole value as the base with no
+  suffix — splitting classifies, it does not validate;
+- the address encoding (`EncodeFacetsV1`) rejects any facet over the bound
+  (no encoding is produced) and the address (`AddressV1`) is then empty.
+  Real facets — canonical package URLs and normalized origin URLs — sit
+  far below the bound, and rejecting early keeps the four-byte length
+  prefix trivially faithful.
+
+The cap is frozen by test; it is a resource bound, not a format rule, and
+is never refined.
+
+## 7. Evolution
 
 The facet set and encoding evolve only by minting a new version tag
 (`bomly:node:v2`) and encoder beside v1 — never by changing what existing
