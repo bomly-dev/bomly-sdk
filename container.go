@@ -113,7 +113,12 @@ func (c *GraphContainer) Len() int {
 	return len(c.Entries)
 }
 
-// ConsolidatedGraph materializes a single graph view for the container.
+// ConsolidatedGraph materializes a single graph view for the container. Run
+// FinalizeGraphIdentity before materializing or serializing output: the
+// single-entry case returns the entry's graph by reference, so consumers
+// observe finalized records only after finalization ran, and a graph still
+// holding ephemeral occurrence discriminators must never reach a
+// user-visible document.
 func (c *GraphContainer) ConsolidatedGraph() (*Graph, error) {
 	if c == nil || len(c.Entries) == 0 {
 		return nil, nil

@@ -3,6 +3,7 @@ package sdk
 import (
 	"encoding/json"
 	"net/url"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -240,4 +241,70 @@ func sameOrigin(left, right *DependencyOrigin) bool {
 	default:
 		return *left == *right
 	}
+}
+
+func FuzzFinalizeGraphIdentity(f *testing.F) {
+	for _, seed := range []string{
+		`null`,
+		`{"nodes":[{"id":"app","name":"app","version":"1.0.0"},{"id":"dep","name":"dep","version":"2.0.0"}],"edges":[{"fromId":"app","toId":"dep"}]}`,
+		`{"nodes":[{"id":"pkg:npm/react@18.2.0","purl":"pkg:npm/react@18.2.0","name":"react","version":"18.2.0"}]}`,
+		`{"nodes":[{"id":"a","ecosystem":"npm","name":"left-pad","version":"1.3.0","origin":{"artifact_url":"https://e.com/a.tgz"}},{"id":"b","ecosystem":"npm","name":"left-pad","version":"1.3.0","origin":{"artifact_url":"https://mirror.e.com/a.tgz"}},{"id":"c","ecosystem":"npm","name":"left-pad","version":"1.3.0","resolved_url":"registry+https://x/y"}],"edges":[{"fromId":"a","toId":"c"}]}`,
+		`{"nodes":[{"id":"root","type":"application","first_party":true,"name":"app"},{"id":"dup","ecosystem":"npm","name":"app"}]}`,
+	} {
+		f.Add([]byte(seed))
+	}
+
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		if len(raw) > maxFuzzInputSize {
+			return
+		}
+		var graph Graph
+		if err := json.Unmarshal(raw, &graph); err != nil {
+			return
+		}
+		container := SingleGraphContainer(&graph, ManifestMetadata{Path: "fuzz.lock"})
+		if _, err := FinalizeGraphIdentity(container); err != nil {
+			// Nodes without any identity are rejected, never mangled.
+			return
+		}
+		finalized := container.Entries[0].Graph
+		requireFuzzGraphValid(t, finalized)
+		if finalized.HasEphemeralOccurrences() {
+			t.Fatal("ephemeral discriminator survived finalization")
+		}
+		finalized.WalkNodes(func(node *Dependency) bool {
+			if strings.Contains(node.ID, "\x00") {
+				t.Fatalf("NUL byte in finalized ID %q", node.ID)
+			}
+			return true
+		})
+		// A second finalization is a fixed point: same node set, same edges,
+		// no renames. Marshal order is insertion order, so the comparison
+		// uses the sorted snapshot instead of raw bytes.
+		before := graphIdentitySnapshot(finalized)
+		second, err := FinalizeGraphIdentity(container)
+		if err != nil {
+			t.Fatalf("second finalization failed: %v", err)
+		}
+		for _, renames := range second.Renames {
+			if len(renames) != 0 {
+				t.Fatalf("second finalization renamed nodes: %v", renames)
+			}
+		}
+		if after := graphIdentitySnapshot(container.Entries[0].Graph); before != after {
+			t.Fatalf("finalization is not a fixed point:\nbefore: %s\nafter:  %s", before, after)
+		}
+	})
+}
+
+// graphIdentitySnapshot renders the sorted node IDs and edges of a graph, so
+// two graphs compare by identity content rather than insertion order.
+func graphIdentitySnapshot(g *Graph) string {
+	var edges []string
+	g.WalkEdges(func(from, to *Dependency) bool {
+		edges = append(edges, from.ID+"\x00"+to.ID)
+		return true
+	})
+	sort.Strings(edges)
+	return strings.Join(idsOf(g.Nodes()), "\x01") + "\x02" + strings.Join(edges, "\x01")
 }
