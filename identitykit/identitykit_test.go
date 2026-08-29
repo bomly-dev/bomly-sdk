@@ -51,6 +51,8 @@ func TestUnescapeFieldIsStrict(t *testing.T) {
 		"a%",     // truncated escape at end
 		"a%GG",   // non-hex escape
 		"a%zz",   // non-hex escape
+		"a%41b",  // escape of a byte with a raw canonical spelling ('A')
+		"%61",    // escape of a lowercase letter — same class
 		strings.Repeat("a", maxInputSize+1),
 	}
 	for _, value := range invalid {
@@ -95,6 +97,7 @@ func TestParseFallbackIdentityRejections(t *testing.T) {
 		"coord:a/b/c/d/e/f/g", // seven fields
 		"coord:a/b/c/d/e/f%2", // truncated escape in a field
 		"coord:a/b/c/d/e f/g", // raw space plus a field-count decoy
+		"coord:%41/b/c/d/e/f", // non-canonical escape spelling of 'A'
 		FallbackPrefix + strings.Repeat("a", maxInputSize),
 	}
 	for _, value := range invalid {
@@ -228,6 +231,29 @@ func TestEncodeFacetsV1Layout(t *testing.T) {
 	}
 }
 
+func TestAddressV1BoundsFacetLength(t *testing.T) {
+	// The shared input bound keeps the four-byte length prefix trivially
+	// faithful: a facet at the bound still encodes and hashes, one past it
+	// has no encoding and no address.
+	atBound := strings.Repeat("a", maxInputSize)
+	if encoded := EncodeFacetsV1(atBound, ""); len(encoded) != 12+len(AddressTagV1)+len(atBound) {
+		t.Fatal("facet at the bound must encode")
+	}
+	if address := AddressV1(atBound, ""); len(address) != 32 {
+		t.Fatalf("facet at the bound must address, got %q", address)
+	}
+	over := atBound + "a"
+	if encoded := EncodeFacetsV1(over, ""); encoded != nil {
+		t.Fatal("oversized package identity encoded")
+	}
+	if encoded := EncodeFacetsV1("", over); encoded != nil {
+		t.Fatal("oversized occurrence facet encoded")
+	}
+	if address := AddressV1(over, ""); address != "" {
+		t.Fatalf("oversized facet minted address %q", address)
+	}
+}
+
 // TestLeafPurity pins the package's leaf constraint: identitykit imports the
 // standard library only — never the root SDK package, purlkit, or any other
 // dependency — so the root package can delegate to it without a cycle and
@@ -249,7 +275,9 @@ func TestLeafPurity(t *testing.T) {
 		}
 		for _, imp := range file.Imports {
 			path := strings.Trim(imp.Path.Value, `"`)
-			if first, _, _ := strings.Cut(path, "/"); strings.Contains(first, ".") {
+			// cgo's import "C" has no dot but is not standard library.
+			first, _, _ := strings.Cut(path, "/")
+			if strings.Contains(first, ".") || path == "C" {
 				t.Errorf("%s imports %q — identitykit is a leaf package and imports the standard library only", name, path)
 			}
 		}
