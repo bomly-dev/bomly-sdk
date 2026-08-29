@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // maxInputSize bounds every untrusted identity string before parsing,
@@ -39,53 +40,45 @@ func fieldNeedsEscape(c byte) bool {
 }
 
 // EscapeField percent-encodes the bytes that would make a coordinate field
-// ambiguous inside a readable ID: the space delimiter, the percent sign
+// ambiguous inside a readable ID — the space delimiter, the percent sign
 // itself, the '/' field joiner, and control characters (0x00–0x1F and
-// 0x7F), each rendered as '%' plus two uppercase hex digits. Every other
-// byte passes through untouched, so the escaped form stays readable.
+// 0x7F) — plus every byte that is not part of a valid UTF-8 sequence, each
+// rendered as '%' plus two uppercase hex digits. Every other byte passes
+// through untouched, so the escaped form stays readable, is always valid
+// UTF-8, and survives JSON transport byte for byte (encoders replace
+// invalid sequences with U+FFFD, which would silently change a graph key).
 func EscapeField(s string) string {
-	escaped := 0
-	for i := 0; i < len(s); i++ {
-		if fieldNeedsEscape(s[i]) {
-			escaped++
-		}
-	}
-	if escaped == 0 {
+	if !strings.ContainsFunc(s, func(r rune) bool { return r < 0x80 && fieldNeedsEscape(byte(r)) }) && utf8.ValidString(s) {
 		return s
 	}
 	var b strings.Builder
-	b.Grow(len(s) + 2*escaped)
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if fieldNeedsEscape(c) {
+	b.Grow(len(s) + 8)
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if (r == utf8.RuneError && size == 1) || (size == 1 && fieldNeedsEscape(s[i])) {
+			c := s[i]
 			b.WriteByte('%')
 			b.WriteByte(upperHex[c>>4])
 			b.WriteByte(upperHex[c&0x0f])
+			i++
 			continue
 		}
-		b.WriteByte(c)
+		b.WriteString(s[i : i+size])
+		i += size
 	}
 	return b.String()
 }
 
 // UnescapeField reverses EscapeField strictly: escape sequences must be
 // '%' plus two uppercase hex digits, a raw byte EscapeField would have
-// escaped is rejected, and so is an escape whose decoded byte EscapeField
-// would have left raw — either laxity would give one field value two
-// accepted spellings ("%41" beside "A"), letting equivalent identities keep
-// different graph keys. There is exactly one escaped spelling per field
-// value.
+// escaped is rejected, and the decoded value must re-escape to exactly the
+// input — which also rejects an escape of a byte EscapeField would have
+// left raw ("%41" beside "A"). Any laxity would give one field value two
+// accepted spellings, letting equivalent identities keep different graph
+// keys; there is exactly one escaped spelling per field value.
 func UnescapeField(s string) (string, error) {
 	if len(s) > maxInputSize {
 		return "", fmt.Errorf("identitykit: field exceeds %d bytes", maxInputSize)
-	}
-	if !strings.ContainsRune(s, '%') {
-		for i := 0; i < len(s); i++ {
-			if fieldNeedsEscape(s[i]) {
-				return "", fmt.Errorf("identitykit: unescaped byte %#x in field", s[i])
-			}
-		}
-		return s, nil
 	}
 	var b strings.Builder
 	b.Grow(len(s))
@@ -100,11 +93,7 @@ func UnescapeField(s string) (string, error) {
 			if hi < 0 || lo < 0 {
 				return "", fmt.Errorf("identitykit: invalid escape sequence %q in field", s[i:i+3])
 			}
-			decoded := byte(hi<<4 | lo)
-			if !fieldNeedsEscape(decoded) {
-				return "", fmt.Errorf("identitykit: non-canonical escape sequence %q in field", s[i:i+3])
-			}
-			b.WriteByte(decoded)
+			b.WriteByte(byte(hi<<4 | lo))
 			i += 2
 			continue
 		}
@@ -113,7 +102,14 @@ func UnescapeField(s string) (string, error) {
 		}
 		b.WriteByte(c)
 	}
-	return b.String(), nil
+	decoded := b.String()
+	// Canonicality is re-derivation: the decoded value must render back to
+	// the input, byte for byte, under the full escape rule — including the
+	// UTF-8-validity half that a per-escape check cannot see.
+	if EscapeField(decoded) != s {
+		return "", fmt.Errorf("identitykit: non-canonical field spelling")
+	}
+	return decoded, nil
 }
 
 func upperHexValue(c byte) int {

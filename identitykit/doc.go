@@ -16,10 +16,11 @@
 // package-identity base as an opaque escaped string (a canonical package
 // URL percent-encodes spaces by construction, and the coordinate fallback
 // escapes them here), so joining and splitting an ID needs no package-URL
-// knowledge. Identity strings are untrusted input, and every entry point
-// bounds its input; the strict decoders (UnescapeField,
+// knowledge. Identity strings are untrusted input, and the parsing and
+// deriving entry points bound it: the strict decoders (UnescapeField,
 // ParseFallbackIdentity) reject malformed or oversized values with an error
 // or ok=false, while SplitID classifies rather than validates — a value
 // with no suffix, including an oversized one, comes back whole as the base.
-// Nothing here panics.
+// Rendered IDs and address encodings are always valid UTF-8, so they
+// survive JSON transport byte for byte. Nothing here panics.
 package identitykit

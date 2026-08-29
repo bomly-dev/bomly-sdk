@@ -233,7 +233,10 @@ func (d *Dependency) WithoutID() Dependency {
 // fallback otherwise. The occurrence half of the identity is deliberately
 // not derived here: it defaults to empty and is assigned by consolidation,
 // so a witness with no origin can still fold into the same-package witness
-// that has one.
+// that has one. Two raw spellings of one identity now normalize to one ID
+// (Python foo_bar and foo-bar, for example), so insert nodes through
+// Graph.InsertOccurrence rather than bare AddNode — insertion is where
+// duplicate witnesses fold and contradicting records stay alive.
 func NewDependency(dep Dependency) *Dependency {
 	return NewDependencyWithID(dep.Coordinates.PackageIdentity(), dep)
 }

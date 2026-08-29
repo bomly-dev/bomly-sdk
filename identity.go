@@ -91,45 +91,29 @@ func (d *Dependency) ContentAddress() string {
 }
 
 // identityOriginFacet renders the occurrence facet for an origin under the
-// identity admission rule (ADR-0036), which is deliberately stricter than
-// the ADR-0033 publication rule: the artifact URL has its query and
-// fragment stripped BEFORE origin normalization, because a signed or
-// tokenized artifact query (?token=..., ?X-Amz-Signature=...) is a rotating
-// credential that must not shape a persistent identity — while the
-// published origin field keeps ADR-0033's own semantics untouched. The
-// repository form already strips query and fragment under ADR-0033. The
-// facet renderings are fixed by the identity spec: "first-party" (the
-// sentinel constant), "artifact" NUL url, and "repository" NUL url NUL
-// revision, with an invalid or absent revision as an empty trailing field.
-// NUL joining is injective here because normalized URLs and the revision
-// charset are control-free.
+// identity admission rule (ADR-0036). Admission derives only from the
+// codec-surviving normalized origin — the exact view DependencyOrigin's
+// JSON hooks persist — so a facet assigned before a graph crosses the
+// plugin wire re-derives identically afterwards; deriving from raw fields
+// the codec drops would let one record's ID and address silently change
+// across the boundary. This satisfies the ADR's stricter-than-publication
+// rule by construction: a signed or tokenized artifact query (?token=...,
+// ?X-Amz-Signature=...) is a rotating credential, and ADR-0033
+// normalization already rejects any query-carrying artifact URL outright,
+// so no admitted facet can carry one; fragments are dropped and the
+// repository form strips query and fragment the same way. The facet
+// renderings are fixed by the identity spec: "first-party" (the sentinel
+// constant), "artifact" NUL url, and "repository" NUL url NUL revision,
+// with an absent revision as an empty trailing field. NUL joining is
+// injective here because normalized URLs and the revision charset are
+// control-free.
 func identityOriginFacet(origin *DependencyOrigin) (string, bool) {
-	if origin == nil {
+	normalized := origin.Normalized()
+	if normalized == nil {
 		return "", false
 	}
-	if artifact := stripRawQueryFragment(origin.ArtifactURL); artifact != "" {
-		if normalized, ok := NormalizeOriginURL(artifact, false); ok {
-			return "artifact\x00" + normalized, true
-		}
+	if normalized.ArtifactURL != "" {
+		return "artifact\x00" + normalized.ArtifactURL, true
 	}
-	if repository, ok := NormalizeOriginURL(origin.Repository, true); ok {
-		facet := "repository\x00" + repository + "\x00"
-		if revision := strings.TrimSpace(origin.Revision); isValidOriginRevision(revision) {
-			facet += revision
-		}
-		return facet, true
-	}
-	return "", false
-}
-
-// stripRawQueryFragment cuts a raw URL at its first '?' or '#'. It runs on
-// the raw value, before parsing: identity admission must never see the
-// query bytes at all, and a URL malformed enough to confuse a parser still
-// has its query removed by position.
-func stripRawQueryFragment(raw string) string {
-	trimmed := strings.TrimSpace(raw)
-	if i := strings.IndexAny(trimmed, "?#"); i >= 0 {
-		trimmed = strings.TrimSpace(trimmed[:i])
-	}
-	return trimmed
+	return "repository\x00" + normalized.Repository + "\x00" + normalized.Revision, true
 }
