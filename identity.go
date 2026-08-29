@@ -57,8 +57,11 @@ func (d *Dependency) PackageIdentity() string {
 // OccurrenceFacet returns the durable occurrence qualifier assigned by
 // identity finalization, or "" for the default occurrence — and always ""
 // before finalization has run. The facet is in-process state: it is
-// deliberately absent from the wire, and a record decoded from JSON
-// recomputes it by re-running finalization.
+// deliberately absent from the wire, so a consumer on the far side of a
+// plugin boundary — or any holder of a JSON-decoded graph — recovers
+// facets and content addresses by re-running FinalizeGraphIdentity, whose
+// derivation is wire-stable: it admits only codec-surviving origin state,
+// so it reproduces the sender's facets and addresses exactly.
 func (d *Dependency) OccurrenceFacet() string {
 	if d == nil {
 		return ""
