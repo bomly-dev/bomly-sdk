@@ -545,3 +545,35 @@ func TestFinalizeIDOnlyNodesKeepDistinctStableAddresses(t *testing.T) {
 		}
 	}
 }
+
+func TestAuthoredSuffixShapedIDsArePreserved(t *testing.T) {
+	// A legacy custom ID that merely looks like a suffixed occurrence
+	// ("component o1" beside "component") must keep its bytes: stripping is
+	// provenance-gated to tokens finalization itself minted, so authored
+	// IDs are never silently renamed or folded into a sibling.
+	graph := New()
+	for _, id := range []string{"component", "component o1", "component a1b2c3d4e5f6"} {
+		if _, err := graph.InsertOccurrence(NewDependencyWithID(id, Dependency{})); err != nil {
+			t.Fatal(err)
+		}
+	}
+	container := SingleGraphContainer(graph, ManifestMetadata{Path: "custom.lock"})
+	finalization, err := FinalizeGraphIdentity(container)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finalization.Renames[0] != nil {
+		t.Fatalf("authored IDs were renamed: %v", finalization.Renames[0])
+	}
+	finalized := container.Entries[0].Graph
+	if finalized.Size() != 3 {
+		t.Fatalf("size = %d, want all three authored IDs preserved: %v", finalized.Size(), idsOf(finalized.Nodes()))
+	}
+	addresses := make(map[string]string)
+	for _, node := range finalized.Nodes() {
+		if other, dup := addresses[node.ContentAddress()]; dup {
+			t.Fatalf("authored IDs %q and %q share a content address", node.ID, other)
+		}
+		addresses[node.ContentAddress()] = node.ID
+	}
+}

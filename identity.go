@@ -85,7 +85,7 @@ func (d *Dependency) ContentAddress() string {
 	}
 	packageFacet := d.PackageIdentity()
 	if packageFacet == "" {
-		packageFacet = identityFallbackBase(d.ID)
+		packageFacet = identityFallbackBase(d)
 	}
 	return identitykit.AddressV1(packageFacet, d.occurrenceFacet)
 }

@@ -86,7 +86,7 @@ func FinalizeGraphIdentity(container *GraphContainer) (*IdentityFinalization, er
 				// the base — with any ephemeral discriminator and any
 				// occurrence suffix from a previous finalization stripped, so
 				// re-finalizing derives the same base and stays idempotent.
-				base = identityFallbackBase(clone.ID)
+				base = identityFallbackBase(clone)
 			}
 			if base == "" {
 				return nil, fmt.Errorf("finalize identity: dependency %q has no canonical identity", node.QualifiedName())
@@ -250,10 +250,28 @@ func foldWitness(surviving, witness *Dependency) {
 }
 
 // identityFallbackBase derives the readable base for a node with no
-// derivable package identity: its supplied ID with any ephemeral
-// discriminator and any occurrence suffix from a previous finalization
-// stripped.
-func identityFallbackBase(id string) string {
-	base, _ := identitykit.SplitID(identitykit.EphemeralBase(id))
-	return strings.TrimSpace(base)
+// derivable package identity: its supplied ID, ephemeral discriminator
+// stripped, and a trailing occurrence token stripped only when it provably
+// came from a previous finalization — a hash suffix that re-derives from
+// the record's own admitted origin facet, or an ordinal on a record whose
+// resolution key is raw evidence (the only records finalization gives
+// ordinals). An authored custom ID that merely looks suffixed keeps its
+// bytes, so a legacy "component o1" node is never silently renamed or
+// folded into a sibling named "component".
+func identityFallbackBase(node *Dependency) string {
+	id := strings.TrimSpace(identitykit.EphemeralBase(node.ID))
+	base, suffix := identitykit.SplitID(id)
+	if suffix == "" {
+		return id
+	}
+	if facet, ok := identityOriginFacet(node.Origin); ok {
+		if suffix == identitykit.OccurrenceSuffix(facet) {
+			return strings.TrimSpace(base)
+		}
+		return id
+	}
+	if strings.HasPrefix(suffix, "o") && strings.HasPrefix(resolutionKey(node), resolutionKeyRawTag) {
+		return strings.TrimSpace(base)
+	}
+	return id
 }
