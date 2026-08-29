@@ -139,7 +139,12 @@ func (c *GraphContainer) ConsolidatedGraph() (*Graph, error) {
 	return merged, nil
 }
 
-// MergeGraph adds all nodes and relationships from src into dst.
+// MergeGraph adds all nodes and relationships from src into dst. Merging
+// folds strictly by node ID, so graphs from mixed-era producers (a
+// pre-identity-phase plugin's "name@version" IDs beside a current
+// detector's package-URL IDs) must pass through FinalizeGraphIdentity
+// first — it re-derives every ID from the identity facets, which is what
+// makes two eras' records of one package converge on one node.
 func MergeGraph(dst, src *Graph) error {
 	if dst == nil || src == nil {
 		return nil

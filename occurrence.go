@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/bomly-dev/bomly-sdk/identitykit"
@@ -99,13 +100,20 @@ func (g *Graph) InsertOccurrence(node *Dependency) (*Dependency, error) {
 	// Contradicting resolutions: a repeated witness of an already-recorded
 	// sibling resolution folds into that sibling instead of minting yet
 	// another discriminator.
-	siblings := 0
+	next := 1
 	var match *Dependency
 	g.WalkNodes(func(candidate *Dependency) bool {
 		if candidate == nil || !identitykit.IsEphemeralID(candidate.ID) || identitykit.EphemeralBase(candidate.ID) != node.ID {
 			return true
 		}
-		siblings++
+		// The next ordinal clears the highest live sibling, not the sibling
+		// count: removals and non-contiguous discriminators in a decoded
+		// graph must not make a fresh occurrence collide with a live one.
+		if tail, ok := strings.CutPrefix(candidate.ID[len(node.ID):], "\x00o"); ok {
+			if n, err := strconv.Atoi(tail); err == nil && n >= next {
+				next = n + 1
+			}
+		}
 		if match == nil && resolutionKey(candidate) == key {
 			match = candidate
 		}
@@ -118,7 +126,7 @@ func (g *Graph) InsertOccurrence(node *Dependency) (*Dependency, error) {
 		return match, nil
 	}
 	discriminated := node.Clone()
-	discriminated.ID = identitykit.EphemeralID(node.ID, siblings+1)
+	discriminated.ID = identitykit.EphemeralID(node.ID, next)
 	if err := g.AddNode(discriminated); err != nil {
 		return nil, fmt.Errorf("insert contradicting occurrence of %q: %w", node.ID, err)
 	}

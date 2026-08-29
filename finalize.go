@@ -82,9 +82,11 @@ func FinalizeGraphIdentity(container *GraphContainer) (*IdentityFinalization, er
 			}
 			base := clone.Coordinates.PackageIdentity()
 			if base == "" {
-				// A node carrying no identity fields keeps its supplied ID
-				// (its ephemeral discriminator stripped) as the base.
-				base = strings.TrimSpace(identitykit.EphemeralBase(clone.ID))
+				// A node carrying no identity fields keeps its supplied ID as
+				// the base — with any ephemeral discriminator and any
+				// occurrence suffix from a previous finalization stripped, so
+				// re-finalizing derives the same base and stays idempotent.
+				base = identityFallbackBase(clone.ID)
 			}
 			if base == "" {
 				return nil, fmt.Errorf("finalize identity: dependency %q has no canonical identity", node.QualifiedName())
@@ -238,4 +240,20 @@ func foldWitness(surviving, witness *Dependency) {
 	if surviving.occurrenceFacet == "" {
 		surviving.occurrenceFacet = witness.occurrenceFacet
 	}
+	// Ownership is a positive assertion: when any folded witness is the
+	// project's own record, the survivor is too — otherwise a gap witness
+	// that happened to sort first would strip the first-party marker and
+	// reopen the survivor to external enrichment.
+	if witness.FirstParty {
+		surviving.FirstParty = true
+	}
+}
+
+// identityFallbackBase derives the readable base for a node with no
+// derivable package identity: its supplied ID with any ephemeral
+// discriminator and any occurrence suffix from a previous finalization
+// stripped.
+func identityFallbackBase(id string) string {
+	base, _ := identitykit.SplitID(identitykit.EphemeralBase(id))
+	return strings.TrimSpace(base)
 }

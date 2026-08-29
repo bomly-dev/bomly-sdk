@@ -398,3 +398,103 @@ func TestFinalizeNilAndEmptyContainers(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestFoldPreservesFirstPartyOwnership(t *testing.T) {
+	// The evidence-free witness arrives first and holds the plain base; the
+	// project's own record folds into it at finalization. Ownership is a
+	// positive assertion and must survive the fold regardless of insertion
+	// or sort order.
+	witness := identityTestNode(nil, "")
+	project := identityTestNode(nil, "")
+	project.FirstParty = true
+	container := singleEntryContainer(t, witness, project)
+	if _, err := FinalizeGraphIdentity(container); err != nil {
+		t.Fatal(err)
+	}
+	graph := container.Entries[0].Graph
+	if graph.Size() != 1 {
+		t.Fatalf("size = %d, want the witnesses folded", graph.Size())
+	}
+	if survivor := graph.Nodes()[0]; !survivor.FirstParty {
+		t.Fatal("fold dropped the first-party ownership marker")
+	}
+}
+
+func TestInsertOccurrenceSkipsRemovedOrdinals(t *testing.T) {
+	graph := New()
+	if _, err := graph.InsertOccurrence(NewDependency(identityTestNode(ArtifactOrigin("https://a.e.com/a.tgz"), ""))); err != nil {
+		t.Fatal(err)
+	}
+	second, err := graph.InsertOccurrence(NewDependency(identityTestNode(ArtifactOrigin("https://b.e.com/a.tgz"), "")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	third, err := graph.InsertOccurrence(NewDependency(identityTestNode(ArtifactOrigin("https://c.e.com/a.tgz"), "")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Removing an earlier sibling must not make the next discriminator
+	// collide with a live one: the ordinal clears the highest live sibling.
+	if !graph.RemoveNode(second.ID) {
+		t.Fatalf("remove %q failed", second.ID)
+	}
+	fourth, err := graph.InsertOccurrence(NewDependency(identityTestNode(ArtifactOrigin("https://d.e.com/a.tgz"), "")))
+	if err != nil {
+		t.Fatalf("insert after removal: %v", err)
+	}
+	if fourth.ID == third.ID || fourth.ID == second.ID {
+		t.Fatalf("recycled a discriminator: %q", fourth.ID)
+	}
+}
+
+func TestFinalizeIDOnlyNodesKeepDistinctStableAddresses(t *testing.T) {
+	// Nodes with no derivable package identity keep their supplied ID as the
+	// base: distinct custom bases must yield distinct content addresses, and
+	// a second finalization must be a fixed point even for their contested,
+	// suffixed occurrences.
+	graph := New()
+	insert := func(id, url string) {
+		t.Helper()
+		if _, err := graph.InsertOccurrence(NewDependencyWithID(id, Dependency{Origin: ArtifactOrigin(url)})); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insert("legacy-custom-id", "https://e.com/a.tgz")
+	insert("legacy-custom-id", "https://mirror.e.com/a.tgz")
+	insert("other-custom-id", "https://e.com/b.tgz")
+	container := SingleGraphContainer(graph, ManifestMetadata{Path: "custom.lock"})
+	if _, err := FinalizeGraphIdentity(container); err != nil {
+		t.Fatal(err)
+	}
+	finalized := container.Entries[0].Graph
+	if finalized.Size() != 3 {
+		t.Fatalf("size = %d, want 3; nodes: %v", finalized.Size(), idsOf(finalized.Nodes()))
+	}
+	addresses := make(map[string]string)
+	for _, node := range finalized.Nodes() {
+		if node.ContentAddress() == "" {
+			t.Fatalf("node %q has no content address", node.ID)
+		}
+		if other, dup := addresses[node.ContentAddress()]; dup {
+			t.Fatalf("nodes %q and %q share a content address", node.ID, other)
+		}
+		addresses[node.ContentAddress()] = node.ID
+	}
+	before := graphIdentitySnapshot(finalized)
+	facetsBefore := make(map[string]string)
+	for _, node := range finalized.Nodes() {
+		facetsBefore[node.ID] = node.OccurrenceFacet()
+	}
+	if _, err := FinalizeGraphIdentity(container); err != nil {
+		t.Fatal(err)
+	}
+	refinalized := container.Entries[0].Graph
+	if after := graphIdentitySnapshot(refinalized); before != after {
+		t.Fatalf("ID-only finalization is not a fixed point:\nbefore: %s\nafter:  %s", before, after)
+	}
+	for _, node := range refinalized.Nodes() {
+		if node.OccurrenceFacet() != facetsBefore[node.ID] {
+			t.Fatalf("re-finalizing changed %q facet: %q -> %q", node.ID, facetsBefore[node.ID], node.OccurrenceFacet())
+		}
+	}
+}

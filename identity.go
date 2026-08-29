@@ -75,12 +75,19 @@ func (d *Dependency) OccurrenceFacet() string {
 // finalization. It identifies the stable occurrence class of the node,
 // never a per-node primary key: occurrences distinguishable only by raw
 // evidence share an address by design. The address is derived, never
-// stored — it can always be recomputed from the facets.
+// stored — it can always be recomputed from the facets. For a node with no
+// derivable package identity, the package facet is the readable base of
+// its supplied ID (discriminators and suffixes stripped), so distinct
+// custom-ID nodes keep distinct addresses.
 func (d *Dependency) ContentAddress() string {
 	if d == nil {
 		return ""
 	}
-	return identitykit.AddressV1(d.PackageIdentity(), d.occurrenceFacet)
+	packageFacet := d.PackageIdentity()
+	if packageFacet == "" {
+		packageFacet = identityFallbackBase(d.ID)
+	}
+	return identitykit.AddressV1(packageFacet, d.occurrenceFacet)
 }
 
 // identityOriginFacet renders the occurrence facet for an origin under the
