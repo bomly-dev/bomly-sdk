@@ -130,3 +130,62 @@ func FuzzAddressV1(f *testing.F) {
 		}
 	})
 }
+
+func FuzzUnescapeField(f *testing.F) {
+	for _, seed := range []string{"", "lodash", "a%20b", "a%2Fb%25c", "a%2", "a%GG", "a%2fb", "a%41b", "%FF", "a b", "caf\xc3", "%C3%A9", "nul%00byte"} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, raw string) {
+		if len(raw) > fuzzInputBound {
+			return
+		}
+		decoded, err := UnescapeField(raw)
+		if again, againErr := UnescapeField(raw); again != decoded || (err == nil) != (againErr == nil) {
+			t.Fatalf("UnescapeField is not deterministic on %q", raw)
+		}
+		if err != nil {
+			return
+		}
+		// Strict decoding accepts exactly the canonical spellings: every
+		// accepted input re-renders to itself.
+		if rendered := EscapeField(decoded); rendered != raw {
+			t.Fatalf("accepted non-canonical spelling: %q decodes to %q which renders %q", raw, decoded, rendered)
+		}
+	})
+}
+
+func FuzzParseFallbackIdentity(f *testing.F) {
+	for _, seed := range []string{
+		"",
+		"coord:npm/npm/library//lodash/3.10.1",
+		"coord:go/gomod/library/golang.org%2Fx/text/v0.3.5",
+		"coord:a/b/c/d/e",
+		"coord:a/b/c/d/e/f/g",
+		"coord:a/b/c/d/e f/g",
+		"coord:%41/b/c/d/e/f",
+		"coord:a/b/c/d/e/f%2",
+		"pkg:npm/lodash@3.10.1",
+		"coord:caf\xc3/b/c/d/e/f",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, raw string) {
+		if len(raw) > fuzzInputBound {
+			return
+		}
+		fields, ok := ParseFallbackIdentity(raw)
+		if againFields, againOK := ParseFallbackIdentity(raw); againFields != fields || againOK != ok {
+			t.Fatalf("ParseFallbackIdentity is not deterministic on %q", raw)
+		}
+		if !ok {
+			if fields != ([6]string{}) {
+				t.Fatalf("rejection leaked partial fields: %q", fields)
+			}
+			return
+		}
+		// Every accepted input is the canonical rendering of its fields.
+		if rendered := FallbackIdentity(fields[0], fields[1], fields[2], fields[3], fields[4], fields[5]); rendered != raw {
+			t.Fatalf("accepted non-canonical fallback ID: %q parses to %q which renders %q", raw, fields, rendered)
+		}
+	})
+}
