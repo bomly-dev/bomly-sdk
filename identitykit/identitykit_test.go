@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestEscapeFieldRoundTrip(t *testing.T) {
@@ -21,9 +22,14 @@ func TestEscapeFieldRoundTrip(t *testing.T) {
 		"del\x7fbyte",
 		"utf-8 ✓ value",
 		"%20 already looks escaped",
+		"truncated-utf8 caf\xc3",
+		"\xff\xfe invalid bytes",
 	}
 	for _, value := range cases {
 		escaped := EscapeField(value)
+		if !utf8.ValidString(escaped) {
+			t.Errorf("EscapeField(%q) = %q is not valid UTF-8 — it would not survive JSON transport", value, escaped)
+		}
 		for i := 0; i < len(escaped); i++ {
 			// '%' is the escape introducer, so it legitimately remains; every
 			// other escape-set byte must be gone.
@@ -39,20 +45,24 @@ func TestEscapeFieldRoundTrip(t *testing.T) {
 	if got := EscapeField("a b/c%d"); got != "a%20b%2Fc%25d" {
 		t.Fatalf("EscapeField pinned rendering = %q", got)
 	}
+	if got := EscapeField("caf\xc3"); got != "caf%C3" {
+		t.Fatalf("EscapeField invalid-UTF-8 pinned rendering = %q", got)
+	}
 }
 
 func TestUnescapeFieldIsStrict(t *testing.T) {
 	invalid := []string{
-		"a b",    // raw delimiter byte
-		"a/b",    // raw joiner byte
-		"a\x00b", // raw control byte
-		"a%2fb",  // lowercase hex — not the canonical spelling
-		"a%2",    // truncated escape
-		"a%",     // truncated escape at end
-		"a%GG",   // non-hex escape
-		"a%zz",   // non-hex escape
-		"a%41b",  // escape of a byte with a raw canonical spelling ('A')
-		"%61",    // escape of a lowercase letter — same class
+		"a b",     // raw delimiter byte
+		"a/b",     // raw joiner byte
+		"a\x00b",  // raw control byte
+		"a%2fb",   // lowercase hex — not the canonical spelling
+		"a%2",     // truncated escape
+		"a%",      // truncated escape at end
+		"a%GG",    // non-hex escape
+		"a%zz",    // non-hex escape
+		"a%41b",   // escape of a byte with a raw canonical spelling ('A')
+		"%61",     // escape of a lowercase letter — same class
+		"caf\xc3", // raw invalid UTF-8 — its canonical spelling is escaped
 		strings.Repeat("a", maxInputSize+1),
 	}
 	for _, value := range invalid {
@@ -245,6 +255,14 @@ func TestAddressV1BoundsFacetLength(t *testing.T) {
 	over := atBound + "a"
 	if encoded := EncodeFacetsV1(over, ""); encoded != nil {
 		t.Fatal("oversized package identity encoded")
+	}
+	// The v1 fields are UTF-8: an invalid sequence would be rewritten to
+	// U+FFFD by JSON transport and silently re-derive a different address.
+	if encoded := EncodeFacetsV1("pkg:npm/a@1.0.0", "artifact\x00https://e.com/\xff.tgz"); encoded != nil {
+		t.Fatal("invalid-UTF-8 facet encoded")
+	}
+	if address := AddressV1("\xff", ""); address != "" {
+		t.Fatalf("invalid-UTF-8 facet minted address %q", address)
 	}
 	if encoded := EncodeFacetsV1("", over); encoded != nil {
 		t.Fatal("oversized occurrence facet encoded")

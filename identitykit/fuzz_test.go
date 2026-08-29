@@ -3,6 +3,7 @@ package identitykit
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // fuzzInputBound mirrors the shared testkit.MaxFuzzInputSize convention;
@@ -19,6 +20,9 @@ func FuzzFieldEscape(f *testing.F) {
 			return
 		}
 		escaped := EscapeField(value)
+		if !utf8.ValidString(escaped) {
+			t.Fatalf("escaped form %q is not valid UTF-8", escaped)
+		}
 		for i := 0; i < len(escaped); i++ {
 			// '%' is the escape introducer and legitimately remains.
 			if c := escaped[i]; c != '%' && fieldNeedsEscape(c) {
@@ -74,6 +78,7 @@ func FuzzFallbackIdentity(f *testing.F) {
 	f.Add("python", "pip", "library", "org name", "100%", "o3")
 	f.Add("", "", "", "", "", "")
 	f.Add("a", "b", "c", "d\x00e", "f\tg", "h\x7fi")
+	f.Add("caf\xc3", "\xff", "", "", "", "")
 	f.Fuzz(func(t *testing.T, ecosystem, packageManager, pkgType, org, name, version string) {
 		total := len(ecosystem) + len(packageManager) + len(pkgType) + len(org) + len(name) + len(version)
 		if total > fuzzInputBound/4 {
@@ -100,11 +105,18 @@ func FuzzAddressV1(f *testing.F) {
 	f.Add("pkg:npm/left-pad@1.3.0", "first-party")
 	f.Add("coord:npm/npm/library//lodash/3.10.1", "artifact\x00https://example.com/a.tgz")
 	f.Add("", "")
+	f.Add("caf\xc3", "\xff")
 	f.Fuzz(func(t *testing.T, packageIdentity, occurrence string) {
 		if len(packageIdentity) > fuzzInputBound || len(occurrence) > fuzzInputBound {
 			return
 		}
 		encoded := EncodeFacetsV1(packageIdentity, occurrence)
+		if !utf8.ValidString(packageIdentity) || !utf8.ValidString(occurrence) {
+			if encoded != nil || AddressV1(packageIdentity, occurrence) != "" {
+				t.Fatal("invalid-UTF-8 facets must have no encoding and no address")
+			}
+			return
+		}
 		wantLen := 12 + len(AddressTagV1) + len(packageIdentity) + len(occurrence)
 		if len(encoded) != wantLen {
 			t.Fatalf("encoding length = %d, want %d", len(encoded), wantLen)
