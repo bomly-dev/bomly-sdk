@@ -1,0 +1,173 @@
+{
+  "address_vectors": [
+    {
+      "name": "purl-empty-facet",
+      "package_identity": "pkg:npm/left-pad@1.3.0",
+      "occurrence_facet": "",
+      "encoding_hex": "0000000d626f6d6c793a6e6f64653a763100000016706b673a6e706d2f6c6566742d70616440312e332e3000000000",
+      "address": "62b325a01a10705a6dd3235895830e1c"
+    },
+    {
+      "name": "purl-artifact-facet",
+      "package_identity": "pkg:npm/left-pad@1.3.0",
+      "occurrence_facet": "artifact\u0000https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz",
+      "encoding_hex": "0000000d626f6d6c793a6e6f64653a763100000016706b673a6e706d2f6c6566742d70616440312e332e300000004161727469666163740068747470733a2f2f72656769737472792e6e706d6a732e6f72672f6c6566742d7061642f2d2f6c6566742d7061642d312e332e302e74677a",
+      "address": "16937d25adebf92c8a795114943aa97b"
+    },
+    {
+      "name": "purl-repository-facet",
+      "package_identity": "pkg:golang/golang.org/x/text@v0.3.5",
+      "occurrence_facet": "repository\u0000https://github.com/golang/text\u0000v0.3.5",
+      "encoding_hex": "0000000d626f6d6c793a6e6f64653a763100000023706b673a676f6c616e672f676f6c616e672e6f72672f782f746578744076302e332e35000000307265706f7369746f72790068747470733a2f2f6769746875622e636f6d2f676f6c616e672f746578740076302e332e35",
+      "address": "8c5f5ab1e8992ccf1d2ac94259f4b601"
+    },
+    {
+      "name": "repository-empty-revision",
+      "package_identity": "pkg:golang/golang.org/x/text@v0.3.5",
+      "occurrence_facet": "repository\u0000https://github.com/golang/text\u0000",
+      "encoding_hex": "0000000d626f6d6c793a6e6f64653a763100000023706b673a676f6c616e672f676f6c616e672e6f72672f782f746578744076302e332e350000002a7265706f7369746f72790068747470733a2f2f6769746875622e636f6d2f676f6c616e672f7465787400",
+      "address": "0dd71ed7a4552a19fa97ce7dfa1996f3"
+    },
+    {
+      "name": "first-party-sentinel",
+      "package_identity": "pkg:npm/app@1.0.0",
+      "occurrence_facet": "first-party",
+      "encoding_hex": "0000000d626f6d6c793a6e6f64653a763100000011706b673a6e706d2f61707040312e302e300000000b66697273742d7061727479",
+      "address": "ac557298ddbd3057e821132f7983fd4a"
+    },
+    {
+      "name": "subpath-purl",
+      "package_identity": "pkg:golang/example.com/mod@v1.0.0#internal/tool",
+      "occurrence_facet": "",
+      "encoding_hex": "0000000d626f6d6c793a6e6f64653a76310000002f706b673a676f6c616e672f6578616d706c652e636f6d2f6d6f644076312e302e3023696e7465726e616c2f746f6f6c00000000",
+      "address": "3105923f75df2050a6518b5c61287c32"
+    },
+    {
+      "name": "fallback-base",
+      "package_identity": "coord:alpine/apk/library//busybox/1.36.1-r31",
+      "occurrence_facet": "",
+      "encoding_hex": "0000000d626f6d6c793a6e6f64653a76310000002c636f6f72643a616c70696e652f61706b2f6c6962726172792f2f62757379626f782f312e33362e312d72333100000000",
+      "address": "f666b4f5aff8430bdf7ea283084b03f0"
+    },
+    {
+      "name": "non-ascii-facet",
+      "package_identity": "pkg:pypi/example@1.0.0",
+      "occurrence_facet": "artifact\u0000https://example.com/пакет-✓.tgz",
+      "encoding_hex": "0000000d626f6d6c793a6e6f64653a763100000016706b673a707970692f6578616d706c6540312e302e300000002f61727469666163740068747470733a2f2f6578616d706c652e636f6d2fd0bfd0b0d0bad0b5d1822de29c932e74677a",
+      "address": "69deb681b95625dbbe0f9f39c31b0453"
+    },
+    {
+      "name": "facet-coincidence-a",
+      "package_identity": "pkg:npm/dl@2.0.0",
+      "occurrence_facet": "artifact\u0000https://example.com/download",
+      "encoding_hex": "0000000d626f6d6c793a6e6f64653a763100000010706b673a6e706d2f646c40322e302e300000002561727469666163740068747470733a2f2f6578616d706c652e636f6d2f646f776e6c6f6164",
+      "address": "04a348bafec9dae77220a3a651b3d68c"
+    },
+    {
+      "name": "facet-coincidence-b",
+      "package_identity": "pkg:npm/dl@2.0.0",
+      "occurrence_facet": "artifact\u0000https://example.com/download",
+      "encoding_hex": "0000000d626f6d6c793a6e6f64653a763100000010706b673a6e706d2f646c40322e302e300000002561727469666163740068747470733a2f2f6578616d706c652e636f6d2f646f776e6c6f6164",
+      "address": "04a348bafec9dae77220a3a651b3d68c"
+    },
+    {
+      "name": "zero-facets",
+      "package_identity": "",
+      "occurrence_facet": "",
+      "encoding_hex": "0000000d626f6d6c793a6e6f64653a76310000000000000000",
+      "address": "d092213463377228b4c9db24afd4aeb7"
+    }
+  ],
+  "fallback_vectors": [
+    {
+      "name": "alpine-empty-org",
+      "fields": [
+        "alpine",
+        "apk",
+        "library",
+        "",
+        "busybox",
+        "1.36.1-r31"
+      ],
+      "id": "coord:alpine/apk/library//busybox/1.36.1-r31"
+    },
+    {
+      "name": "hostile-bytes",
+      "fields": [
+        "npm",
+        "npm",
+        "library",
+        "org name",
+        "100%/x",
+        "1.0\u00001"
+      ],
+      "id": "coord:npm/npm/library/org%20name/100%25%2Fx/1.0%001"
+    },
+    {
+      "name": "go-org-with-joiner",
+      "fields": [
+        "go",
+        "gomod",
+        "library",
+        "golang.org/x",
+        "text",
+        "v0.3.5"
+      ],
+      "id": "coord:go/gomod/library/golang.org%2Fx/text/v0.3.5"
+    },
+    {
+      "name": "all-empty",
+      "fields": [
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ],
+      "id": "coord://///"
+    }
+  ],
+  "readable_vectors": [
+    {
+      "name": "plain-purl",
+      "base": "pkg:npm/left-pad@1.3.0",
+      "suffix": "",
+      "id": "pkg:npm/left-pad@1.3.0",
+      "split_base": "pkg:npm/left-pad@1.3.0",
+      "split_suffix": ""
+    },
+    {
+      "name": "hash-suffix",
+      "base": "pkg:npm/left-pad@1.3.0",
+      "suffix": "973922640c30",
+      "id": "pkg:npm/left-pad@1.3.0 973922640c30",
+      "split_base": "pkg:npm/left-pad@1.3.0",
+      "split_suffix": "973922640c30"
+    },
+    {
+      "name": "ordinal-suffix",
+      "base": "pkg:npm/left-pad@1.3.0",
+      "suffix": "o2",
+      "id": "pkg:npm/left-pad@1.3.0 o2",
+      "split_base": "pkg:npm/left-pad@1.3.0",
+      "split_suffix": "o2"
+    },
+    {
+      "name": "subpath-with-ordinal",
+      "base": "pkg:golang/example.com/mod@v1.0.0#internal/tool",
+      "suffix": "o3",
+      "id": "pkg:golang/example.com/mod@v1.0.0#internal/tool o3",
+      "split_base": "pkg:golang/example.com/mod@v1.0.0#internal/tool",
+      "split_suffix": "o3"
+    },
+    {
+      "name": "fallback-with-hash",
+      "base": "coord:alpine/apk/library//busybox/1.36.1-r31",
+      "suffix": "4745797f1725",
+      "id": "coord:alpine/apk/library//busybox/1.36.1-r31 4745797f1725",
+      "split_base": "coord:alpine/apk/library//busybox/1.36.1-r31",
+      "split_suffix": "4745797f1725"
+    }
+  ]
+}
