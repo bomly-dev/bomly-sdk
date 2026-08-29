@@ -5,8 +5,9 @@ identical copy; keep the two files in sync.
 
 This module, `github.com/bomly-dev/bomly-sdk`, is the public contract for the
 Bomly CLI (`bomly-dev/bomly-cli`), its built-in components, and external
-managed plugins: domain types (`Dependency`, `Package`, `Vulnerability`,
-`Finding`, `Graph`), plugin kinds and validation, support metadata, and the
+managed plugins: domain types (the `GraphNode` union — manifest, module,
+and `DependencyNode` records — `Package`, `Vulnerability`, `Finding`,
+`Graph`), plugin kinds and validation, support metadata, and the
 shared helper subpackages (`system`, `filecache`, `logkit`, `detectorkit`,
 `matcherkit`, `testkit`, `conformance`).
 

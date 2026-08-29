@@ -45,6 +45,12 @@
 // PackageManager value when Bomly does not yet have a first-class constant for
 // a package manager.
 //
+// Node identity is derived, never hand-assembled (ADR-0041): the
+// constructors are the only mint — a dependency node's ID is its canonical
+// package URL (custom purl types are first-class; express any ecosystem as
+// a purl type), and module and manifest nodes carry kind-qualified
+// canonical paths. Never build a node ID by string concatenation.
+//
 // Plugin identity is split across package metadata and runtime metadata. The
 // bomly-plugin.json manifest describes packaging and install fields such as ID,
 // version, kind, runtime, plugin API version, entrypoint, homepage, and license.

@@ -92,10 +92,77 @@ func Test(t *testing.T, cfg Config) {
 		testRoleSpecific(t, cfg.Module, component)
 	})
 
+	t.Run("graph-wire", func(t *testing.T) {
+		testGraphWireRoundTrip(t)
+	})
+
 	if cfg.ManifestPath != "" {
 		t.Run("manifest", func(t *testing.T) {
 			testManifest(t, cfg.Module, cfg.ManifestPath)
 		})
+	}
+}
+
+// testGraphWireRoundTrip pins the typed graph-node wire contract every
+// plugin shares (ADR-0041): a graph holding all three node kinds survives
+// the module's own JSON codec with identities, kinds, and edges intact.
+// This is the payload shape detector plugins return and matcher, analyzer,
+// and auditor plugins receive, so a codec that cannot reproduce it would
+// break every graph-carrying request.
+func testGraphWireRoundTrip(t *testing.T) {
+	t.Helper()
+	manifest, err := sdk.NewManifestNode("package.json", "")
+	if err != nil {
+		t.Fatalf("NewManifestNode: %v", err)
+	}
+	module, err := sdk.NewModuleNode("package.json", sdk.Coordinates{Name: "app"})
+	if err != nil {
+		t.Fatalf("NewModuleNode: %v", err)
+	}
+	dep, err := sdk.NewDependencyNodeFromPURL("pkg:npm/left-pad@1.3.0")
+	if err != nil {
+		t.Fatalf("NewDependencyNodeFromPURL: %v", err)
+	}
+	graph := sdk.New()
+	for _, node := range []sdk.GraphNode{manifest, module, dep} {
+		if err := graph.AddNode(node); err != nil {
+			t.Fatalf("AddNode(%s): %v", node.NodeID(), err)
+		}
+	}
+	if err := graph.AddEdge(manifest.NodeID(), module.NodeID()); err != nil {
+		t.Fatalf("AddEdge: %v", err)
+	}
+	if err := graph.AddEdge(module.NodeID(), dep.NodeID()); err != nil {
+		t.Fatalf("AddEdge: %v", err)
+	}
+
+	encoded, err := json.Marshal(graph)
+	if err != nil {
+		t.Fatalf("marshal graph: %v", err)
+	}
+	var decoded sdk.Graph
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("unmarshal graph: %v", err)
+	}
+	if decoded.Size() != 3 {
+		t.Fatalf("round-tripped size = %d, want 3", decoded.Size())
+	}
+	for _, want := range []struct {
+		id   string
+		kind sdk.NodeKind
+	}{
+		{manifest.NodeID(), sdk.NodeKindManifest},
+		{module.NodeID(), sdk.NodeKindModule},
+		{dep.NodeID(), sdk.NodeKindDependency},
+	} {
+		node, ok := decoded.Node(want.id)
+		if !ok || node.Kind() != want.kind {
+			t.Fatalf("node %q lost or re-kinded across the wire: %#v", want.id, node)
+		}
+	}
+	children, err := decoded.DirectDependencies(module.NodeID())
+	if err != nil || len(children) != 1 || children[0].NodeID() != dep.NodeID() {
+		t.Fatalf("edges lost across the wire: %v, %v", children, err)
 	}
 }
 
