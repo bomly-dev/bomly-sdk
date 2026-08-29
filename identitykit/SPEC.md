@@ -91,15 +91,19 @@ manager, type, org, name, version, in that order — each escaped, joined by
 
 - the space delimiter (0x20),
 - the percent sign itself (0x25),
-- the field joiner `/` (0x2F), and
-- control characters (0x00–0x1F and 0x7F),
+- the field joiner `/` (0x2F),
+- control characters (0x00–0x1F and 0x7F), and
+- every byte that is not part of a valid UTF-8 sequence,
 
 each as `%` plus two **uppercase** hex digits. All other bytes pass through
-untouched. Decoding is strict: escape sequences MUST be `%` + two uppercase
-hex digits, a raw byte from the escape set MUST be rejected, and an escape
-whose decoded byte is **not** in the escape set (e.g. `%41` for `A`) MUST
-be rejected — there is exactly one accepted spelling per field value, so
-equivalent identities cannot hold different graph keys. (The escape set extends
+untouched, so a rendered ID is always valid UTF-8 and survives JSON
+transport byte for byte — an encoder rewriting an invalid sequence to
+U+FFFD would silently change a graph key. Decoding is strict: escape
+sequences MUST be `%` + two uppercase hex digits, a raw byte from the
+escape set MUST be rejected, and the decoded value MUST re-escape to
+exactly the input (which rejects `%41` for `A`, and any other escape of a
+byte the rule leaves raw) — there is exactly one accepted spelling per
+field value, so equivalent identities cannot hold different graph keys. (The escape set extends
 ADR-0036's enumerated set with the joiner, which is required for injective
 six-field parsing; this spec is the normative byte-level authority under
 the ADR's "the spec fixes every byte" clause.)
@@ -115,6 +119,9 @@ lp(s)    = uint32-big-endian(len(s)) s          ; s as UTF-8 bytes
 ```
 
 - An absent facet is a zero-length field, still length-prefixed.
+- The fields are UTF-8: a facet containing an invalid sequence has no
+  encoding and no address — JSON transport would rewrite it to U+FFFD and
+  silently re-derive a different address for the same record.
 - The digest is truncated to its **first 16 bytes** (128 bits) and rendered
   as 32 lowercase hex characters.
 - The full form is canonical everywhere: a store may re-derive it from the
@@ -164,9 +171,12 @@ finalization folds or replaces every ephemeral record first.
 
 ## 6. Input bounds
 
-Every entry point shares one dumb byte cap: **1 MiB (2^20 bytes)** per
-untrusted input string, matching purlkit's bound. Oversized input is
-handled per entry point:
+The parsing and deriving entry points — strict field decoding, fallback
+parsing, ID splitting, and the address encoding — share one dumb byte cap:
+**1 MiB (2^20 bytes)** per untrusted input string, matching purlkit's
+bound. (Pure renderers such as field escaping, joining, and the suffix and
+ephemeral constructors are linear pass-throughs and carry no cap of their
+own.) Oversized input is handled per entry point:
 
 - strict field decoding (`UnescapeField`) returns an error, and fallback
   parsing (`ParseFallbackIdentity`) reports `ok=false`;

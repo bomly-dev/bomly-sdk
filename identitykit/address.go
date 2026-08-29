@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"unicode/utf8"
 )
 
 // AddressTagV1 is the version tag folded into every v1 content-address
@@ -18,14 +19,17 @@ const AddressTagV1 = "bomly:node:v1"
 // still length-prefixed. Length prefixes keep the encoding injective even
 // when untrusted facet values contain delimiter bytes — a NUL-joined tuple
 // would let ("a\x00b", "c") and ("a", "b\x00c") collide. A facet longer
-// than the shared input bound returns nil: real facets are canonical
-// package URLs and normalized origin URLs, both far below the bound, and
-// rejecting early keeps the four-byte length prefix trivially faithful.
+// than the shared input bound, or one that is not valid UTF-8, returns nil:
+// the v1 encoding defines its fields as UTF-8, and an invalid sequence
+// would be rewritten to U+FFFD by JSON transport, silently re-deriving a
+// different address for the same record. Real facets — canonical package
+// URLs, normalized origin URLs, escaped fallback bases — are valid UTF-8
+// and far below the bound by construction.
 func EncodeFacetsV1(packageIdentity, occurrence string) []byte {
 	fields := [3]string{AddressTagV1, packageIdentity, occurrence}
 	size := 0
 	for _, field := range fields {
-		if len(field) > maxInputSize {
+		if len(field) > maxInputSize || !utf8.ValidString(field) {
 			return nil
 		}
 		size += 4 + len(field)
@@ -46,8 +50,8 @@ func EncodeFacetsV1(packageIdentity, occurrence string) []byte {
 // occurrence class of a node, never a per-node primary key: occurrences
 // distinguishable only by raw evidence share an address by design and are
 // disambiguated by the graph, not the address.
-// A facet over the shared input bound has no address: the empty string is
-// returned.
+// A facet over the shared input bound, or one that is not valid UTF-8,
+// has no address: the empty string is returned.
 func AddressV1(packageIdentity, occurrence string) string {
 	encoded := EncodeFacetsV1(packageIdentity, occurrence)
 	if encoded == nil {
