@@ -1,7 +1,6 @@
 package sdk
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 
@@ -337,10 +336,9 @@ func TestFinalizeIsIdempotentAndReportsRenames(t *testing.T) {
 		t.Fatalf("root edges after finalize: %v, %v", idsOf(children), err)
 	}
 
-	before, err := json.Marshal(container.Entries[0].Graph)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Marshal order is insertion order, so idempotence compares the sorted
+	// identity snapshot rather than raw bytes.
+	before := graphIdentitySnapshot(container.Entries[0].Graph)
 	again, err := FinalizeGraphIdentity(container)
 	if err != nil {
 		t.Fatal(err)
@@ -348,12 +346,44 @@ func TestFinalizeIsIdempotentAndReportsRenames(t *testing.T) {
 	if again.Renames[0] != nil {
 		t.Fatalf("second finalization renamed nodes: %+v", again.Renames[0])
 	}
-	after, err := json.Marshal(container.Entries[0].Graph)
-	if err != nil {
+	if after := graphIdentitySnapshot(container.Entries[0].Graph); before != after {
+		t.Fatalf("finalization is not idempotent:\nbefore: %s\nafter:  %s", before, after)
+	}
+}
+
+func TestImportedApplicationComponentsAreNotProjectOwned(t *testing.T) {
+	// Ownership is the FirstParty marker, never the package type (the
+	// NodeIsEnrichable rule): two application-typed components imported from
+	// an SBOM with contradicting resolutions are distinct external
+	// occurrences — folding them under a shared first-party key would lose a
+	// contradiction.
+	imported := func(url string) Dependency {
+		return Dependency{
+			Coordinates: Coordinates{Ecosystem: EcosystemNPM, PackageManager: PackageManagerNPM, Type: PackageTypeApplication, Name: "left-pad", Version: "1.3.0"},
+			Origin:      ArtifactOrigin(url),
+		}
+	}
+	if (&Dependency{Coordinates: Coordinates{Type: PackageTypeApplication}}).ProjectOwned() {
+		t.Fatal("application type alone must not read as project-owned")
+	}
+	container := singleEntryContainer(t,
+		imported("https://e.com/a.tgz"),
+		imported("https://mirror.e.com/a.tgz"),
+	)
+	if _, err := FinalizeGraphIdentity(container); err != nil {
 		t.Fatal(err)
 	}
-	if string(before) != string(after) {
-		t.Fatalf("finalization is not idempotent:\nbefore: %s\nafter:  %s", before, after)
+	graph := container.Entries[0].Graph
+	if graph.Size() != 2 {
+		t.Fatalf("size = %d — the contradicting imported occurrences folded", graph.Size())
+	}
+	for _, node := range graph.Nodes() {
+		if node.OccurrenceFacet() == FirstPartyOccurrenceFacet {
+			t.Fatalf("imported component %q carries the first-party sentinel", node.ID)
+		}
+		if _, suffix := identitykit.SplitID(node.ID); len(suffix) != 12 {
+			t.Fatalf("imported component ID %q, want an external hash suffix", node.ID)
+		}
 	}
 }
 

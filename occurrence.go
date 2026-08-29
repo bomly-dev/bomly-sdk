@@ -9,12 +9,17 @@ import (
 
 // ProjectOwned reports whether the node is the scanned project's own record —
 // its root package, a workspace member, a reactor module — rather than a
-// consumed third-party package: it is first-party, or its type is the
-// application itself. Identity finalization exempts project-owned records
-// from external occurrence suffixes, and their resolution is the local
-// source tree no matter what origin metadata a producer stapled on.
+// consumed third-party package. Ownership is the FirstParty marker, never
+// the package type (the NodeIsEnrichable rule): an application-typed
+// component imported from an SBOM is an artifact kind, not proof it belongs
+// to the scanned project, and two such imports with contradicting
+// resolutions must stay distinct occurrences instead of folding under a
+// shared first-party key. Detectors mark the nodes they synthesize for the
+// build itself. Identity finalization exempts project-owned records from
+// external occurrence suffixes, and their resolution is the local source
+// tree no matter what origin metadata a producer stapled on.
 func (d *Dependency) ProjectOwned() bool {
-	return d != nil && (d.FirstParty || d.Type == PackageTypeApplication)
+	return d != nil && d.FirstParty
 }
 
 // resolutionKey identifies which resolution a record witnesses, for
