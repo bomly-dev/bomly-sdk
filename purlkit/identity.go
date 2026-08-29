@@ -61,7 +61,11 @@ func SplitIdentity(p PURL) IdentitySplit {
 	split := IdentitySplit{Identity: p}
 	split.Identity.Qualifiers = nil
 	for _, qualifier := range p.Qualifiers {
-		if _, evidence := evidenceQualifierKeys[qualifier.Key]; evidence {
+		// Classify case-insensitively: Parse lowercases keys, but PURL and
+		// Qualifier are exported, so a hand-built value can carry
+		// "DOWNLOAD_URL" — an exact lookup would let it bypass the evidence
+		// partition and publish as an identity qualifier.
+		if IsEvidenceQualifierKey(qualifier.Key) {
 			split.Evidence = append(split.Evidence, qualifier)
 			continue
 		}
