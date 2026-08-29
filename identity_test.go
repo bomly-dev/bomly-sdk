@@ -1,9 +1,6 @@
 package sdk
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 func TestPackageIdentityDerivation(t *testing.T) {
 	cases := []struct {
@@ -120,17 +117,16 @@ func TestOccurrenceFacetAndContentAddress(t *testing.T) {
 }
 
 func TestIdentityOriginFacet(t *testing.T) {
-	// A tokenized artifact query is stripped before normalization: the raw
-	// URL's credential bytes never reach the facet, the ID, or the address.
+	// Admission derives only from the codec-surviving normalized origin: a
+	// tokenized artifact query fails ADR-0033 normalization outright, so
+	// such an origin admits nothing — after the JSON codec drops it, a
+	// re-derivation reaches the same answer, keeping facets wire-stable,
+	// and the credential bytes can never shape an identity.
 	tokenized := &DependencyOrigin{ArtifactURL: "https://example.com/dl.tgz?X-Amz-Signature=secret123"}
-	facet, ok := identityOriginFacet(tokenized)
-	if !ok || facet != "artifact\x00https://example.com/dl.tgz" {
-		t.Fatalf("tokenized artifact facet = (%q, %v)", facet, ok)
+	if facet, ok := identityOriginFacet(tokenized); ok {
+		t.Fatalf("query-carrying artifact origin admitted facet %q", facet)
 	}
-	if strings.Contains(facet, "secret123") {
-		t.Fatal("credential bytes reached the identity facet")
-	}
-	// Fragments are stripped the same way.
+	// Fragments are dropped by normalization, so the facet still admits.
 	fragment := &DependencyOrigin{ArtifactURL: "https://example.com/dl.tgz#sha256=abc"}
 	if facet, ok := identityOriginFacet(fragment); !ok || facet != "artifact\x00https://example.com/dl.tgz" {
 		t.Fatalf("fragment artifact facet = (%q, %v)", facet, ok)
