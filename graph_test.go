@@ -9,8 +9,8 @@ import (
 
 func TestNewNode_BuildsIDFromNameAndVersion(t *testing.T) {
 	n := NewDependencyRef("react", "18.2.0")
-	if n.ID != "react@18.2.0" {
-		t.Fatalf("expected ID react@18.2.0, got %q", n.ID)
+	if n.ID != "pkg:generic/react@18.2.0" {
+		t.Fatalf("expected the generic-type package URL, got %q", n.ID)
 	}
 }
 
@@ -22,8 +22,8 @@ func TestNewDependencyNode_StoresCoordinatesAndBuildsID(t *testing.T) {
 		PackageManager: PackageManagerMaven},
 	})
 
-	if n.ID != "com.example:demo-artifact:sources@1.0.0" {
-		t.Fatalf("expected qualified ID, got %q", n.ID)
+	if n.ID != "pkg:maven/com.example/demo-artifact:sources@1.0.0" {
+		t.Fatalf("expected the canonical package URL, got %q", n.ID)
 	}
 	if n.QualifiedName() != "com.example:demo-artifact:sources" {
 		t.Fatalf("expected qualified name, got %q", n.QualifiedName())
@@ -153,7 +153,7 @@ func TestTopologicalSort_ReturnsPartialOrderOnCycle(t *testing.T) {
 	if !errors.Is(err, ErrCycleDetected) {
 		t.Fatalf("expected cycle error, got %v", err)
 	}
-	if got := idsOf(order); !slices.Equal(got, []string{"c"}) {
+	if got := idsOf(order); !slices.Equal(got, []string{c.ID}) {
 		t.Fatalf("expected partial order [c], got %#v", got)
 	}
 }
@@ -176,10 +176,10 @@ func TestRootsAndLeaves(t *testing.T) {
 	roots := idsOf(g.Roots())
 	leaves := idsOf(g.Leaves())
 
-	if !slices.Equal(roots, []string{"app", "lodash"}) {
+	if !slices.Equal(roots, []string{app.ID, lodash.ID}) {
 		t.Fatalf("unexpected roots: %#v", roots)
 	}
-	if !slices.Equal(leaves, []string{"lodash", "react"}) {
+	if !slices.Equal(leaves, []string{lodash.ID, react.ID}) {
 		t.Fatalf("unexpected leaves: %#v", leaves)
 	}
 }
@@ -210,7 +210,7 @@ func TestCollectPathsTo_PrunesIrrelevantBranches(t *testing.T) {
 	if len(paths) != 1 {
 		t.Fatalf("expected 1 path, got %#v", paths)
 	}
-	assertCollectedPath(t, paths[0], false, "", []string{"app", "left", "target"})
+	assertCollectedPath(t, paths[0], false, "", []string{app.ID, left.ID, target.ID})
 	for _, path := range paths {
 		for _, node := range path.Nodes {
 			if strings.HasPrefix(node.ID, "irrelevant") {
@@ -244,8 +244,8 @@ func TestCollectPathsTo_RecordsTargetCycle(t *testing.T) {
 	if len(paths) != 2 {
 		t.Fatalf("expected 2 paths, got %#v", paths)
 	}
-	assertCollectedPath(t, paths[0], false, "", []string{"app", "b"})
-	assertCollectedPath(t, paths[1], true, b.ID, []string{"app", "b", "c", "b"})
+	assertCollectedPath(t, paths[0], false, "", []string{app.ID, b.ID})
+	assertCollectedPath(t, paths[1], true, b.ID, []string{app.ID, b.ID, c.ID, b.ID})
 }
 
 func TestCollectPathsTo_RootlessCycleFallsBackToRelevantNodes(t *testing.T) {
@@ -274,10 +274,10 @@ func TestCollectPathsTo_RootlessCycleFallsBackToRelevantNodes(t *testing.T) {
 	if len(paths) != 4 {
 		t.Fatalf("expected 4 paths, got %#v", paths)
 	}
-	assertCollectedPath(t, paths[0], false, "", []string{"a", "b"})
-	assertCollectedPath(t, paths[1], false, "", []string{"b"})
-	assertCollectedPath(t, paths[2], true, b.ID, []string{"b", "c", "a", "b"})
-	assertCollectedPath(t, paths[3], false, "", []string{"c", "a", "b"})
+	assertCollectedPath(t, paths[0], false, "", []string{a.ID, b.ID})
+	assertCollectedPath(t, paths[1], false, "", []string{b.ID})
+	assertCollectedPath(t, paths[2], true, b.ID, []string{b.ID, c.ID, a.ID, b.ID})
+	assertCollectedPath(t, paths[3], false, "", []string{c.ID, a.ID, b.ID})
 }
 
 func TestRemoveNode_RemovesIncidentEdges(t *testing.T) {
@@ -329,7 +329,7 @@ func TestPrettyString(t *testing.T) {
 	}
 
 	got := g.PrettyString()
-	want := "app -> [react@18.2.0, zod]\nreact@18.2.0 -> []\nzod -> []"
+	want := app.ID + " -> [" + react.ID + ", " + zod.ID + "]\n" + react.ID + " -> []\n" + zod.ID + " -> []"
 	if got != want {
 		t.Fatalf("unexpected pretty string:\nwant:\n%s\n\ngot:\n%s", want, got)
 	}
@@ -454,16 +454,16 @@ func TestCompare_ClassifiesAddedRemovedAndUpdated(t *testing.T) {
 	}
 
 	diff := Compare(base, head)
-	if got := idsOf(diff.Added); !slices.Equal(got, []string{"add@2.0.0"}) {
+	if got := idsOf(diff.Added); !slices.Equal(got, []string{headAdd.ID}) {
 		t.Fatalf("unexpected added nodes: %#v", got)
 	}
-	if got := idsOf(diff.Removed); !slices.Equal(got, []string{"remove@1.0.0"}) {
+	if got := idsOf(diff.Removed); !slices.Equal(got, []string{baseRemove.ID}) {
 		t.Fatalf("unexpected removed nodes: %#v", got)
 	}
 	if len(diff.Updated) != 1 {
 		t.Fatalf("expected one updated node, got %#v", diff.Updated)
 	}
-	if diff.Updated[0].Before.ID != "update@1.0.0" || diff.Updated[0].After.ID != "update@2.0.0" {
+	if diff.Updated[0].Before.ID != baseUpdate.ID || diff.Updated[0].After.ID != headUpdate.ID {
 		t.Fatalf("unexpected updated node: %#v", diff.Updated[0])
 	}
 	if len(diff.Transitions) != 0 {
@@ -742,7 +742,7 @@ func TestCompare_DerivesRelationshipTransitionFromGraphEdges(t *testing.T) {
 			}
 		}
 	}
-	appID := NewDependencyRef("app", "").ID
+	appID := NewDependency(Dependency{Coordinates: Coordinates{Type: PackageTypeApplication, Name: "app", FirstParty: true}}).ID
 	parentID := NewDependency(Dependency{Coordinates: Coordinates{Ecosystem: EcosystemNPM, Name: "parent", Version: "1.0.0"}}).ID
 	childID := NewDependency(Dependency{Coordinates: Coordinates{Ecosystem: EcosystemNPM, Name: "child", Version: "1.0.0"}}).ID
 	if err := base.AddEdge(appID, childID); err != nil {

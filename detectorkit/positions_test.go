@@ -30,7 +30,7 @@ func TestAttachPositionsDoesNotDuplicate(t *testing.T) {
 	}
 	AttachPositions(g, positions, func(p *sdk.Dependency) string { return p.Name })
 
-	got, _ := g.Node("foo@1.0.0")
+	got, _ := g.Node(pkg.ID)
 	if got == nil {
 		t.Fatal("missing foo")
 	}
@@ -50,7 +50,7 @@ func TestAttachPositionsHonorsNameKey(t *testing.T) {
 		return toLower(p.Name)
 	})
 
-	got, _ := g.Node("Foo@1")
+	got, _ := g.Node(pkg.ID)
 	if got == nil {
 		t.Fatal("missing Foo")
 	}
@@ -74,7 +74,7 @@ func TestAttachPositionCandidatesExactKeyStopsFallback(t *testing.T) {
 		return []string{p.Name + "@" + p.Version, p.Name}
 	})
 
-	got, _ := g.Node("foo@2.0.0")
+	got, _ := g.Node(pkg.ID)
 	if got == nil || len(got.Locations) != 1 {
 		t.Fatalf("Locations = %#v, want one exact-version location", got)
 	}
@@ -96,7 +96,7 @@ func TestAttachPositionCandidatesUpgradesFileOnlyLocation(t *testing.T) {
 		return []string{p.Name + "@" + p.Version}
 	})
 
-	got, _ := g.Node("foo@1.0.0")
+	got, _ := g.Node(pkg.ID)
 	if got == nil || len(got.Locations) != 2 {
 		t.Fatalf("Locations = %#v, want file-only plus line-specific location", got)
 	}

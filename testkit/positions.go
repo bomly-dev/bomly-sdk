@@ -15,9 +15,10 @@ import (
 // cross-detector position test: each detector module keeps its own lockfile
 // fixture and asserts its own position extraction with one call.
 //
-// wantPositionKeys entries are graph node IDs, typically "name@version" (or
-// "org:name@version" for org-scoped ecosystems). A missing node or a node
-// without a position fails the test with the offending key.
+// wantPositionKeys entries are graph node IDs — for nodes minted by
+// sdk.NewDependency that is the readable package identity, typically the
+// canonical package URL such as "pkg:npm/left-pad@1.3.0". A missing node or
+// a node without a position fails the test with the offending key.
 func RequireLockfilePositions(t *testing.T, detector sdk.Detector, fixtureDir string, wantPositionKeys []string) {
 	t.Helper()
 	if detector == nil {

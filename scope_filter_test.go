@@ -124,10 +124,12 @@ func TestFilterDetectionResultByScope_RepresentativeParserOutputs(t *testing.T) 
 				t.Fatalf("FilterDetectionResultByScope() error = %v", err)
 			}
 			graph := filtered.Graphs.Entries[0].Graph
-			if _, ok := graph.Node(tt.ecosystem + "-runtime@1.0.0"); !ok {
+			runtimeID := Coordinates{Ecosystem: Ecosystem(tt.ecosystem), Name: tt.ecosystem + "-runtime", Version: "1.0.0"}.PackageIdentity()
+			devID := Coordinates{Ecosystem: Ecosystem(tt.ecosystem), Name: tt.ecosystem + "-dev", Version: "1.0.0"}.PackageIdentity()
+			if _, ok := graph.Node(runtimeID); !ok {
 				t.Fatalf("expected runtime dependency for %s: %s", tt.name, graph.PrettyString())
 			}
-			if _, ok := graph.Node(tt.ecosystem + "-dev@1.0.0"); ok {
+			if _, ok := graph.Node(devID); ok {
 				t.Fatalf("expected development dependency to be filtered for %s: %s", tt.name, graph.PrettyString())
 			}
 		})

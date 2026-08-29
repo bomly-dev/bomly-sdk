@@ -109,6 +109,14 @@ type Dependency struct {
 	Matched bool `json:"matched,omitempty"`
 	// PackageRef is the PURL of this dependency's matching artifact.
 	PackageRef string `json:"package_ref,omitempty"`
+
+	// occurrenceFacet is the durable occurrence qualifier assigned by
+	// identity finalization (ADR-0036), read through OccurrenceFacet. It is
+	// in-process state, deliberately absent from the wire: Clone copies it
+	// via its struct copy, and a JSON round trip drops it by design —
+	// recompute it by re-running finalization. Promoting it to an omitempty
+	// wire field later is additive; the reverse would not be.
+	occurrenceFacet string
 }
 
 // QualifiedName returns the name prefixed with its organization when present.
@@ -209,6 +217,7 @@ func (d *Dependency) Clone() *Dependency {
 }
 
 // WithoutID returns the dependency data without the precomputed graph ID.
+// In-process identity state such as the occurrence facet is retained.
 func (d *Dependency) WithoutID() Dependency {
 	if d == nil {
 		return Dependency{}
@@ -218,9 +227,15 @@ func (d *Dependency) WithoutID() Dependency {
 	return *clone
 }
 
-// NewDependency constructs a dependency node, deriving its ID from identity.
+// NewDependency constructs a dependency node, deriving its ID from identity:
+// the readable rendering of the package-identity facet (ADR-0036) — the
+// canonical package URL when one is derivable, the escaped coordinate
+// fallback otherwise. The occurrence half of the identity is deliberately
+// not derived here: it defaults to empty and is assigned by consolidation,
+// so a witness with no origin can still fold into the same-package witness
+// that has one.
 func NewDependency(dep Dependency) *Dependency {
-	return NewDependencyWithID(dep.StableID(), dep)
+	return NewDependencyWithID(dep.Coordinates.PackageIdentity(), dep)
 }
 
 // NewDependencyWithID constructs a dependency node with a custom ID.
@@ -230,8 +245,10 @@ func NewDependencyWithID(id string, dep Dependency) *Dependency {
 	return clone
 }
 
-// NewDependencyRef constructs a dependency from a name and version. If version
-// is set, ID is "name@version"; otherwise ID is "name".
+// NewDependencyRef constructs a dependency from a name and version, deriving
+// its ID like NewDependency — for a bare name and version with no ecosystem
+// evidence that is the generic-type package URL, e.g.
+// "pkg:generic/name@version".
 func NewDependencyRef(name, version string) *Dependency {
 	return NewDependency(Dependency{Coordinates: Coordinates{Name: name, Version: version}})
 }

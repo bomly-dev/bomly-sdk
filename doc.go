@@ -45,6 +45,13 @@
 // PackageManager value when Bomly does not yet have a first-class constant for
 // a package manager.
 //
+// Node identity is derived, never hand-assembled (ADR-0036 in bomly-cli's
+// dev-docs/adr): NewDependency mints IDs from PackageIdentity — the canonical
+// package URL when one is derivable, an escaped coordinate fallback otherwise
+// — and the byte-level grammar, occurrence suffixes, and the derived content
+// address are specified in identitykit/SPEC.md. Never build a node ID by
+// string concatenation.
+//
 // Plugin identity is split across package metadata and runtime metadata. The
 // bomly-plugin.json manifest describes packaging and install fields such as ID,
 // version, kind, runtime, plugin API version, entrypoint, homepage, and license.

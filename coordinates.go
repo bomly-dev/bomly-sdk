@@ -109,6 +109,11 @@ func (i Coordinates) displayEcosystem() Ecosystem {
 }
 
 // StableID returns a graph-friendly identifier derived from name and version.
+//
+// Deprecated: StableID is not ecosystem-qualified — npm and PyPI
+// "left-pad@1.0.0" produce the same value — and is superseded by
+// PackageIdentity, the readable rendering of the ADR-0036 package-identity
+// facet. Behavior is unchanged for existing callers.
 func (i Coordinates) StableID() string {
 	base := i.QualifiedName()
 	if i.Version == "" {

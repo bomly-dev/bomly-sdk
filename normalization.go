@@ -23,6 +23,16 @@ func NormalizeDependencyIdentity(pkg *Dependency) {
 	originalName := pkg.Name
 	originalOrg := pkg.Org
 	originalVersion := pkg.Version
+	applied := normalizeIdentityFields(pkg)
+	normRecordMetadata(pkg, applied, originalName, originalOrg, originalVersion)
+}
+
+// normalizeIdentityFields applies the per-ecosystem case, separator, and
+// format rules to the identity fields in place and returns which rules
+// applied. It records no metadata, so identity derivation (PackageIdentity)
+// can run it on a scratch copy without stamping bomly.normalization.* keys;
+// NormalizeDependencyIdentity wraps it and keeps recording.
+func normalizeIdentityFields(pkg *Dependency) []string {
 	applied := make([]string, 0, 4)
 
 	pkg.Name = strings.TrimSpace(pkg.Name)
@@ -54,7 +64,7 @@ func NormalizeDependencyIdentity(pkg *Dependency) {
 		applied = append(applied, "version")
 	}
 
-	normRecordMetadata(pkg, applied, originalName, originalOrg, originalVersion)
+	return applied
 }
 
 func normNPM(pkg *Dependency) []string {

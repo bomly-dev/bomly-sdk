@@ -41,6 +41,9 @@ plugins reuse the same implementations Bomly's built-ins use:
 - `system` — bounded filesystem reads plus exec, path, and environment wrappers.
 - `filecache` — TTL-based on-disk JSON cache with typed `Get`/`Set` helpers.
 - `logkit` — secret-safe subprocess logging: argument/URL sanitizers, command fields, stderr counter.
+- `purlkit` — the single home for package-URL parsing, building, canonicalization, and the ecosystem/type mapping tables.
+- `spdxkit` — the single home for SPDX license expression validation, classification, canonicalization, and LicenseRef minting.
+- `identitykit` — the byte-level grammar of dependency identity: readable node IDs, occurrence suffixes, and the v1 content address (normative spec in `identitykit/SPEC.md`).
 - `detectorkit` — detector helpers: manifest metadata, source positions, remediation hints, subgraphs, build-tool readiness and timeouts.
 - `matcherkit` — matcher helpers: registry package seeding and license normalization.
 - `testkit` — test helpers: fuzz graph invariants, Go binary builders, lockfile position assertions.
