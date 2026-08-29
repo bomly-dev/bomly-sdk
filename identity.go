@@ -30,19 +30,29 @@ const FirstPartyOccurrenceFacet = "first-party"
 func (i Coordinates) PackageIdentity() string {
 	scratch := Dependency{Coordinates: i}
 	normalizeIdentityFields(&scratch)
+	// The discriminator fields are closed lowercase vocabularies, and the
+	// wire accepts case variants of them verbatim ("NPM" beside "npm", a
+	// "Manifest" type that would dodge the manifest check), so the scratch
+	// copy folds them before any derivation: case for all three, and the
+	// ecosystem additionally through purlkit's canonical alias table — the
+	// one authority. Org, name, and version keep their bytes; their
+	// ecosystem-specific case rules already ran in the normalization pass.
+	scratch.Ecosystem = Ecosystem(strings.ToLower(strings.TrimSpace(string(scratch.Ecosystem))))
+	scratch.PackageManager = PackageManager(strings.ToLower(strings.TrimSpace(scratch.PackageManager.Name())))
+	scratch.Type = PackageType(strings.ToLower(strings.TrimSpace(string(scratch.Type))))
+	if canonical, ok := purlkit.CanonicalEcosystem(string(scratch.Ecosystem), scratch.PackageManager.Name(), string(scratch.Type)); ok {
+		scratch.Ecosystem = Ecosystem(canonical)
+	}
 	if purl := scratch.CanonicalPURL(); purl != "" {
 		if identity := purlkit.IdentityForm(purl); identity != "" {
 			return identity
 		}
 	}
-	ecosystem := strings.TrimSpace(string(scratch.Ecosystem))
-	manager := strings.TrimSpace(scratch.PackageManager.Name())
-	pkgType := strings.TrimSpace(string(scratch.Type))
-	if ecosystem == "" && manager == "" && pkgType == "" &&
+	if scratch.Ecosystem == "" && scratch.PackageManager.Name() == "" && scratch.Type == "" &&
 		scratch.Org == "" && scratch.Name == "" && scratch.Version == "" {
 		return ""
 	}
-	return identitykit.FallbackIdentity(ecosystem, manager, pkgType, scratch.Org, scratch.Name, scratch.Version)
+	return identitykit.FallbackIdentity(string(scratch.Ecosystem), scratch.PackageManager.Name(), string(scratch.Type), scratch.Org, scratch.Name, scratch.Version)
 }
 
 // PackageIdentity returns the readable package-identity facet rendering for
