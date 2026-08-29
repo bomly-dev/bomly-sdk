@@ -1,6 +1,7 @@
 package sdk
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -240,11 +241,13 @@ func TestFinalizeRawEvidenceGetsDeterministicOrdinals(t *testing.T) {
 	}
 }
 
-func TestFinalizeCoincidingFacetsShareAddressButNotIDs(t *testing.T) {
-	// Two records whose resolutions differ (origin key vs raw evidence) but
-	// whose admitted identity facets coincide after query stripping: the
-	// ordinal keeps their readable IDs apart while they share the
-	// stable-facet content address, as the ADR states.
+func TestFinalizeIsStableAcrossPluginWireRoundTrip(t *testing.T) {
+	// Facets derive only from codec-surviving origin state, so a finalized
+	// graph that crosses the JSON plugin boundary re-finalizes to the same
+	// IDs, facets, and addresses. The tokenized origin is the sharp case:
+	// its query-carrying artifact URL fails ADR-0033 normalization, the
+	// codec serializes it empty, and admission must reach the same "no
+	// facet" answer before and after the boundary.
 	clean := identityTestNode(ArtifactOrigin("https://e.com/download.tgz"), "")
 	tokenized := identityTestNode(
 		&DependencyOrigin{ArtifactURL: "https://e.com/download.tgz?artifact=b"},
@@ -254,24 +257,68 @@ func TestFinalizeCoincidingFacetsShareAddressButNotIDs(t *testing.T) {
 	if _, err := FinalizeGraphIdentity(container); err != nil {
 		t.Fatal(err)
 	}
-	graph := container.Entries[0].Graph
-	if graph.Size() != 2 {
-		t.Fatalf("size = %d, want two occurrences", graph.Size())
-	}
-	nodes := graph.Nodes()
-	if nodes[0].ContentAddress() != nodes[1].ContentAddress() {
-		t.Fatal("coinciding facets must share the stable-facet content address")
-	}
-	if nodes[0].ID == nodes[1].ID {
-		t.Fatal("coinciding facets must keep distinct readable IDs")
-	}
-	for _, node := range nodes {
-		if _, suffix := identitykit.SplitID(node.ID); !strings.HasPrefix(suffix, "o") {
-			t.Fatalf("coinciding facet record ID %q, want an ordinal suffix", node.ID)
+	snapshot := func(c *GraphContainer) map[string][2]string {
+		out := make(map[string][2]string)
+		for _, node := range c.Entries[0].Graph.Nodes() {
+			out[node.ID] = [2]string{node.OccurrenceFacet(), node.ContentAddress()}
 		}
-		if node.OccurrenceFacet() != "artifact\x00https://e.com/download.tgz" {
-			t.Fatalf("facet = %q, want the shared stripped facet", node.OccurrenceFacet())
+		return out
+	}
+	before := snapshot(container)
+	if len(before) != 2 {
+		t.Fatalf("want two occurrences, got %v", before)
+	}
+
+	encoded, err := json.Marshal(container.Entries[0].Graph)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Graph
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	roundTripped := SingleGraphContainer(&decoded, ManifestMetadata{Path: "package-lock.json"})
+	if _, err := FinalizeGraphIdentity(roundTripped); err != nil {
+		t.Fatal(err)
+	}
+	after := snapshot(roundTripped)
+	for id, want := range before {
+		got, ok := after[id]
+		if !ok {
+			t.Fatalf("node %q lost its ID across the wire round trip: %v", id, after)
 		}
+		// The facet is in-process state and recomputes; the address must
+		// re-derive identically from what survived the codec.
+		if got != want {
+			t.Fatalf("node %q changed across the wire: %v -> %v", id, want, got)
+		}
+	}
+}
+
+func TestResolutionKeyDomainsCannotCollide(t *testing.T) {
+	// A raw resolution string spelling the first-party sentinel — or an
+	// origin key's NUL-joined form — must not fold an external record into
+	// the project record or a structured-origin occurrence: each key
+	// variant carries its own domain tag.
+	graph := New()
+	project := identityTestNode(nil, "")
+	project.FirstParty = true
+	if _, err := graph.InsertOccurrence(NewDependency(project)); err != nil {
+		t.Fatal(err)
+	}
+	spoofed := identityTestNode(nil, resolutionKeyFirstParty)
+	inserted, err := graph.InsertOccurrence(NewDependency(spoofed))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !identitykit.IsEphemeralID(inserted.ID) {
+		t.Fatalf("sentinel-spoofing raw record folded into the project record: %q", inserted.ID)
+	}
+	origin := ArtifactOrigin("https://e.com/a.tgz").Normalized()
+	rawSpoof := identityTestNode(nil, origin.ArtifactURL+"\x00"+origin.Repository+"\x00"+origin.Revision)
+	structured := identityTestNode(ArtifactOrigin("https://e.com/a.tgz"), "")
+	if resolutionKey(NewDependency(rawSpoof)) == resolutionKey(NewDependency(structured)) {
+		t.Fatal("raw origin-key spelling collides with the structured origin key")
 	}
 }
 

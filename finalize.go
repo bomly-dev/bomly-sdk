@@ -129,7 +129,7 @@ func FinalizeGraphIdentity(container *GraphContainer) (*IdentityFinalization, er
 		var ordinalKeys []string
 		for key := range keys {
 			facet := facetOfKey[base][key]
-			if key == "\x00first-party" {
+			if key == resolutionKeyFirstParty {
 				continue
 			}
 			if facet != "" && keysOfFacet[base][facet] == 1 {

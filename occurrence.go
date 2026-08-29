@@ -23,13 +23,24 @@ func (d *Dependency) ProjectOwned() bool {
 	return d != nil && d.FirstParty
 }
 
+// Resolution keys are domain-separated: each variant carries its own tag,
+// so a raw resolution string that happens to spell the sentinel or an
+// origin key's NUL-joined form cannot collide with the structured
+// variants. No tag is a prefix of another, and the tagged content follows
+// it, so the key space is injective per domain.
+const (
+	resolutionKeyFirstParty = "first-party\x00"
+	resolutionKeyOriginTag  = "origin\x00"
+	resolutionKeyRawTag     = "raw\x00"
+)
+
 // resolutionKey identifies which resolution a record witnesses, for
 // contradiction detection only: the first-party sentinel for project-owned
-// records, else the ADR-0033-normalized origin (query intact), else the
-// manifest's raw resolution string. Raw evidence is legal here — comparison
-// never publishes — but it must never reach a readable ID, a facet, or a
-// content address; the identity admission rule (identityOriginFacet) is the
-// separate, stricter gate for what persists.
+// records, else the ADR-0033-normalized origin, else the manifest's raw
+// resolution string — each under its domain tag. Raw evidence is legal
+// here — comparison never publishes — but it must never reach a readable
+// ID, a facet, or a content address; the identity admission rule
+// (identityOriginFacet) is the separate gate for what persists.
 func resolutionKey(node *Dependency) string {
 	if node == nil {
 		return ""
@@ -38,12 +49,15 @@ func resolutionKey(node *Dependency) string {
 		// Project-ownedness comes before the origin key: an external record
 		// asserting the same origin must not read as the same resolution and
 		// fold away the project record's suppression semantics.
-		return "\x00first-party"
+		return resolutionKeyFirstParty
 	}
 	if key := originKey(node.Origin); key != "" {
-		return key
+		return resolutionKeyOriginTag + key
 	}
-	return strings.TrimSpace(node.ResolvedURL)
+	if raw := strings.TrimSpace(node.ResolvedURL); raw != "" {
+		return resolutionKeyRawTag + raw
+	}
+	return ""
 }
 
 // originKey renders a normalized origin as a stable comparison string, so
