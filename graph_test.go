@@ -7,23 +7,28 @@ import (
 	"testing"
 )
 
-func TestNewNode_BuildsIDFromNameAndVersion(t *testing.T) {
-	n := NewDependencyRef("react", "18.2.0")
-	if n.ID != "react@18.2.0" {
-		t.Fatalf("expected ID react@18.2.0, got %q", n.ID)
+func TestNewDependencyNode_MintsCanonicalPURLID(t *testing.T) {
+	// IDs are canonical package URLs now: name+version mints pkg:generic.
+	n := mustDep(t, Coordinates{Name: "react", Version: "18.2.0"})
+	if n.NodeID() != "pkg:generic/react@18.2.0" {
+		t.Fatalf("expected ID pkg:generic/react@18.2.0, got %q", n.NodeID())
+	}
+	if n.Coordinates.PURL != n.NodeID() {
+		t.Fatalf("expected coordinates PURL to match the node ID, got %q", n.Coordinates.PURL)
 	}
 }
 
 func TestNewDependencyNode_StoresCoordinatesAndBuildsID(t *testing.T) {
-	n := NewDependency(Dependency{Coordinates: Coordinates{Ecosystem: EcosystemMaven,
+	n := mustDep(t, Coordinates{Ecosystem: EcosystemMaven,
 		Name:           "demo-artifact:sources",
 		Version:        "1.0.0",
 		Org:            "com.example",
-		PackageManager: PackageManagerMaven},
+		PackageManager: PackageManagerMaven,
 	})
 
-	if n.ID != "com.example:demo-artifact:sources@1.0.0" {
-		t.Fatalf("expected qualified ID, got %q", n.ID)
+	// IDs are canonical package URLs now.
+	if n.NodeID() != "pkg:maven/com.example/demo-artifact:sources@1.0.0" {
+		t.Fatalf("expected canonical purl ID, got %q", n.NodeID())
 	}
 	if n.QualifiedName() != "com.example:demo-artifact:sources" {
 		t.Fatalf("expected qualified name, got %q", n.QualifiedName())
@@ -35,8 +40,8 @@ func TestNewDependencyNode_StoresCoordinatesAndBuildsID(t *testing.T) {
 
 func TestAddNodeAndDependency_Success(t *testing.T) {
 	g := New()
-	app := NewDependencyRef("app", "1.0.0")
-	react := NewDependencyRef("react", "18.2.0")
+	app := mustDep(t, Coordinates{Name: "app", Version: "1.0.0"})
+	react := mustDep(t, Coordinates{Name: "react", Version: "18.2.0"})
 
 	if err := g.AddNode(app); err != nil {
 		t.Fatalf("add app node: %v", err)
@@ -44,76 +49,76 @@ func TestAddNodeAndDependency_Success(t *testing.T) {
 	if err := g.AddNode(react); err != nil {
 		t.Fatalf("add react node: %v", err)
 	}
-	if err := g.AddEdge(app.ID, react.ID); err != nil {
+	if err := g.AddEdge(app.NodeID(), react.NodeID()); err != nil {
 		t.Fatalf("add edge: %v", err)
 	}
 
-	deps, err := g.DirectDependencies(app.ID)
+	deps, err := g.DirectDependencies(app.NodeID())
 	if err != nil {
 		t.Fatalf("direct dependencies: %v", err)
 	}
-	if len(deps) != 1 || deps[0].ID != react.ID {
+	if len(deps) != 1 || deps[0].NodeID() != react.NodeID() {
 		t.Fatalf("expected app to depend on react, got %#v", deps)
 	}
 
-	dependents, err := g.Dependents(react.ID)
+	dependents, err := g.Dependents(react.NodeID())
 	if err != nil {
 		t.Fatalf("dependents: %v", err)
 	}
-	if len(dependents) != 1 || dependents[0].ID != app.ID {
+	if len(dependents) != 1 || dependents[0].NodeID() != app.NodeID() {
 		t.Fatalf("expected react dependent app, got %#v", dependents)
 	}
 }
 
 func TestAddEdge_AllowsCycles(t *testing.T) {
 	g := New()
-	a := NewDependencyRef("a", "")
-	b := NewDependencyRef("b", "")
-	c := NewDependencyRef("c", "")
+	a := mustDep(t, Coordinates{Name: "a"})
+	b := mustDep(t, Coordinates{Name: "b"})
+	c := mustDep(t, Coordinates{Name: "c"})
 
-	for _, n := range []*Dependency{a, b, c} {
+	for _, n := range []*DependencyNode{a, b, c} {
 		if err := g.AddNode(n); err != nil {
-			t.Fatalf("add node %q: %v", n.ID, err)
+			t.Fatalf("add node %q: %v", n.NodeID(), err)
 		}
 	}
-	if err := g.AddEdge(a.ID, b.ID); err != nil {
+	if err := g.AddEdge(a.NodeID(), b.NodeID()); err != nil {
 		t.Fatalf("add edge a->b: %v", err)
 	}
-	if err := g.AddEdge(b.ID, c.ID); err != nil {
+	if err := g.AddEdge(b.NodeID(), c.NodeID()); err != nil {
 		t.Fatalf("add edge b->c: %v", err)
 	}
-	if err := g.AddEdge(c.ID, a.ID); err != nil {
+	if err := g.AddEdge(c.NodeID(), a.NodeID()); err != nil {
 		t.Fatalf("add edge c->a: %v", err)
 	}
 
-	deps, err := g.DirectDependencies(c.ID)
+	deps, err := g.DirectDependencies(c.NodeID())
 	if err != nil {
 		t.Fatalf("direct dependencies(c): %v", err)
 	}
-	if len(deps) != 1 || deps[0].ID != a.ID {
+	if len(deps) != 1 || deps[0].NodeID() != a.NodeID() {
 		t.Fatalf("expected c to depend on a, got %#v", deps)
 	}
 }
 
 func TestTopologicalSort(t *testing.T) {
 	g := New()
-	app := NewDependencyRef("app", "")
-	api := NewDependencyRef("api", "")
-	log := NewDependencyRef("log", "")
-	util := NewDependencyRef("util", "")
+	app := mustDep(t, Coordinates{Name: "app"})
+	api := mustDep(t, Coordinates{Name: "api"})
+	log := mustDep(t, Coordinates{Name: "log"})
+	util := mustDep(t, Coordinates{Name: "util"})
 
-	for _, n := range []*Dependency{app, api, log, util} {
+	for _, n := range []*DependencyNode{app, api, log, util} {
 		if err := g.AddNode(n); err != nil {
-			t.Fatalf("add node %q: %v", n.ID, err)
+			t.Fatalf("add node %q: %v", n.NodeID(), err)
 		}
 	}
-	if err := g.AddEdge(app.ID, api.ID); err != nil {
+	if err := g.AddEdge(app.NodeID(), api.NodeID()); err != nil {
 		t.Fatalf("add app->api: %v", err)
 	}
-	if err := g.AddEdge(api.ID, util.ID); err != nil {
+	if err := g.AddEdge(api.NodeID(), util.NodeID()); err != nil {
 		t.Fatalf("add api->util: %v", err)
 	}
-	if err := g.AddEdge(app.ID, log.ID); err != nil {
+	if err := g.AddEdge(app.NodeID(), log.NodeID()); err != nil {
 		t.Fatalf("add app->log: %v", err)
 	}
 
@@ -122,28 +127,25 @@ func TestTopologicalSort(t *testing.T) {
 		t.Fatalf("topological sort: %v", err)
 	}
 
-	ids := make([]string, 0, len(order))
-	for _, n := range order {
-		ids = append(ids, n.ID)
-	}
+	ids := idsOf(order)
 
-	assertBefore(t, ids, app.ID, api.ID)
-	assertBefore(t, ids, app.ID, log.ID)
-	assertBefore(t, ids, api.ID, util.ID)
+	assertBefore(t, ids, app.NodeID(), api.NodeID())
+	assertBefore(t, ids, app.NodeID(), log.NodeID())
+	assertBefore(t, ids, api.NodeID(), util.NodeID())
 }
 
 func TestTopologicalSort_ReturnsPartialOrderOnCycle(t *testing.T) {
 	g := New()
-	a := NewDependencyRef("a", "")
-	b := NewDependencyRef("b", "")
-	c := NewDependencyRef("c", "")
+	a := mustDep(t, Coordinates{Name: "a"})
+	b := mustDep(t, Coordinates{Name: "b"})
+	c := mustDep(t, Coordinates{Name: "c"})
 
-	for _, n := range []*Dependency{a, b, c} {
+	for _, n := range []*DependencyNode{a, b, c} {
 		if err := g.AddNode(n); err != nil {
-			t.Fatalf("add node %q: %v", n.ID, err)
+			t.Fatalf("add node %q: %v", n.NodeID(), err)
 		}
 	}
-	for _, edge := range [][2]string{{a.ID, b.ID}, {b.ID, a.ID}} {
+	for _, edge := range [][2]string{{a.NodeID(), b.NodeID()}, {b.NodeID(), a.NodeID()}} {
 		if err := g.AddEdge(edge[0], edge[1]); err != nil {
 			t.Fatalf("add edge %q -> %q: %v", edge[0], edge[1], err)
 		}
@@ -153,67 +155,67 @@ func TestTopologicalSort_ReturnsPartialOrderOnCycle(t *testing.T) {
 	if !errors.Is(err, ErrCycleDetected) {
 		t.Fatalf("expected cycle error, got %v", err)
 	}
-	if got := idsOf(order); !slices.Equal(got, []string{"c"}) {
-		t.Fatalf("expected partial order [c], got %#v", got)
+	if got := idsOf(order); !slices.Equal(got, []string{"pkg:generic/c"}) {
+		t.Fatalf("expected partial order [pkg:generic/c], got %#v", got)
 	}
 }
 
 func TestRootsAndLeaves(t *testing.T) {
 	g := New()
-	app := NewDependencyRef("app", "")
-	react := NewDependencyRef("react", "")
-	lodash := NewDependencyRef("lodash", "")
+	app := mustDep(t, Coordinates{Name: "app"})
+	react := mustDep(t, Coordinates{Name: "react"})
+	lodash := mustDep(t, Coordinates{Name: "lodash"})
 
-	for _, n := range []*Dependency{app, react, lodash} {
+	for _, n := range []*DependencyNode{app, react, lodash} {
 		if err := g.AddNode(n); err != nil {
-			t.Fatalf("add node %q: %v", n.ID, err)
+			t.Fatalf("add node %q: %v", n.NodeID(), err)
 		}
 	}
-	if err := g.AddEdge(app.ID, react.ID); err != nil {
+	if err := g.AddEdge(app.NodeID(), react.NodeID()); err != nil {
 		t.Fatalf("add edge: %v", err)
 	}
 
 	roots := idsOf(g.Roots())
 	leaves := idsOf(g.Leaves())
 
-	if !slices.Equal(roots, []string{"app", "lodash"}) {
+	if !slices.Equal(roots, []string{"pkg:generic/app", "pkg:generic/lodash"}) {
 		t.Fatalf("unexpected roots: %#v", roots)
 	}
-	if !slices.Equal(leaves, []string{"lodash", "react"}) {
+	if !slices.Equal(leaves, []string{"pkg:generic/lodash", "pkg:generic/react"}) {
 		t.Fatalf("unexpected leaves: %#v", leaves)
 	}
 }
 
 func TestCollectPathsTo_PrunesIrrelevantBranches(t *testing.T) {
 	g := New()
-	app := NewDependencyRef("app", "")
-	left := NewDependencyRef("left", "")
-	target := NewDependencyRef("target", "")
-	irrelevantA := NewDependencyRef("irrelevant-a", "")
-	irrelevantB := NewDependencyRef("irrelevant-b", "")
+	app := mustDep(t, Coordinates{Name: "app"})
+	left := mustDep(t, Coordinates{Name: "left"})
+	target := mustDep(t, Coordinates{Name: "target"})
+	irrelevantA := mustDep(t, Coordinates{Name: "irrelevant-a"})
+	irrelevantB := mustDep(t, Coordinates{Name: "irrelevant-b"})
 
-	for _, n := range []*Dependency{app, left, target, irrelevantA, irrelevantB} {
+	for _, n := range []*DependencyNode{app, left, target, irrelevantA, irrelevantB} {
 		if err := g.AddNode(n); err != nil {
-			t.Fatalf("add node %q: %v", n.ID, err)
+			t.Fatalf("add node %q: %v", n.NodeID(), err)
 		}
 	}
-	for _, edge := range [][2]string{{app.ID, left.ID}, {left.ID, target.ID}, {app.ID, irrelevantA.ID}, {irrelevantA.ID, irrelevantB.ID}, {irrelevantB.ID, irrelevantA.ID}} {
+	for _, edge := range [][2]string{{app.NodeID(), left.NodeID()}, {left.NodeID(), target.NodeID()}, {app.NodeID(), irrelevantA.NodeID()}, {irrelevantA.NodeID(), irrelevantB.NodeID()}, {irrelevantB.NodeID(), irrelevantA.NodeID()}} {
 		if err := g.AddEdge(edge[0], edge[1]); err != nil {
 			t.Fatalf("add edge %q -> %q: %v", edge[0], edge[1], err)
 		}
 	}
 
-	paths, err := g.CollectPathsTo(target.ID)
+	paths, err := g.CollectPathsTo(target.NodeID())
 	if err != nil {
 		t.Fatalf("CollectPathsTo(): %v", err)
 	}
 	if len(paths) != 1 {
 		t.Fatalf("expected 1 path, got %#v", paths)
 	}
-	assertCollectedPath(t, paths[0], false, "", []string{"app", "left", "target"})
+	assertCollectedPath(t, paths[0], false, "", []string{"pkg:generic/app", "pkg:generic/left", "pkg:generic/target"})
 	for _, path := range paths {
 		for _, node := range path.Nodes {
-			if strings.HasPrefix(node.ID, "irrelevant") {
+			if strings.Contains(node.NodeID(), "irrelevant") {
 				t.Fatalf("unexpected irrelevant node in path %#v", idsOf(path.Nodes))
 			}
 		}
@@ -222,114 +224,114 @@ func TestCollectPathsTo_PrunesIrrelevantBranches(t *testing.T) {
 
 func TestCollectPathsTo_RecordsTargetCycle(t *testing.T) {
 	g := New()
-	app := NewDependencyRef("app", "")
-	b := NewDependencyRef("b", "")
-	c := NewDependencyRef("c", "")
+	app := mustDep(t, Coordinates{Name: "app"})
+	b := mustDep(t, Coordinates{Name: "b"})
+	c := mustDep(t, Coordinates{Name: "c"})
 
-	for _, n := range []*Dependency{app, b, c} {
+	for _, n := range []*DependencyNode{app, b, c} {
 		if err := g.AddNode(n); err != nil {
-			t.Fatalf("add node %q: %v", n.ID, err)
+			t.Fatalf("add node %q: %v", n.NodeID(), err)
 		}
 	}
-	for _, edge := range [][2]string{{app.ID, b.ID}, {b.ID, c.ID}, {c.ID, b.ID}} {
+	for _, edge := range [][2]string{{app.NodeID(), b.NodeID()}, {b.NodeID(), c.NodeID()}, {c.NodeID(), b.NodeID()}} {
 		if err := g.AddEdge(edge[0], edge[1]); err != nil {
 			t.Fatalf("add edge %q -> %q: %v", edge[0], edge[1], err)
 		}
 	}
 
-	paths, err := g.CollectPathsTo(b.ID)
+	paths, err := g.CollectPathsTo(b.NodeID())
 	if err != nil {
 		t.Fatalf("CollectPathsTo(): %v", err)
 	}
 	if len(paths) != 2 {
 		t.Fatalf("expected 2 paths, got %#v", paths)
 	}
-	assertCollectedPath(t, paths[0], false, "", []string{"app", "b"})
-	assertCollectedPath(t, paths[1], true, b.ID, []string{"app", "b", "c", "b"})
+	assertCollectedPath(t, paths[0], false, "", []string{"pkg:generic/app", "pkg:generic/b"})
+	assertCollectedPath(t, paths[1], true, b.NodeID(), []string{"pkg:generic/app", "pkg:generic/b", "pkg:generic/c", "pkg:generic/b"})
 }
 
 func TestCollectPathsTo_RootlessCycleFallsBackToRelevantNodes(t *testing.T) {
 	g := New()
-	a := NewDependencyRef("a", "")
-	b := NewDependencyRef("b", "")
-	c := NewDependencyRef("c", "")
-	x := NewDependencyRef("x", "")
-	y := NewDependencyRef("y", "")
+	a := mustDep(t, Coordinates{Name: "a"})
+	b := mustDep(t, Coordinates{Name: "b"})
+	c := mustDep(t, Coordinates{Name: "c"})
+	x := mustDep(t, Coordinates{Name: "x"})
+	y := mustDep(t, Coordinates{Name: "y"})
 
-	for _, n := range []*Dependency{a, b, c, x, y} {
+	for _, n := range []*DependencyNode{a, b, c, x, y} {
 		if err := g.AddNode(n); err != nil {
-			t.Fatalf("add node %q: %v", n.ID, err)
+			t.Fatalf("add node %q: %v", n.NodeID(), err)
 		}
 	}
-	for _, edge := range [][2]string{{a.ID, b.ID}, {b.ID, c.ID}, {c.ID, a.ID}, {x.ID, y.ID}, {y.ID, x.ID}} {
+	for _, edge := range [][2]string{{a.NodeID(), b.NodeID()}, {b.NodeID(), c.NodeID()}, {c.NodeID(), a.NodeID()}, {x.NodeID(), y.NodeID()}, {y.NodeID(), x.NodeID()}} {
 		if err := g.AddEdge(edge[0], edge[1]); err != nil {
 			t.Fatalf("add edge %q -> %q: %v", edge[0], edge[1], err)
 		}
 	}
 
-	paths, err := g.CollectPathsTo(b.ID)
+	paths, err := g.CollectPathsTo(b.NodeID())
 	if err != nil {
 		t.Fatalf("CollectPathsTo(): %v", err)
 	}
 	if len(paths) != 4 {
 		t.Fatalf("expected 4 paths, got %#v", paths)
 	}
-	assertCollectedPath(t, paths[0], false, "", []string{"a", "b"})
-	assertCollectedPath(t, paths[1], false, "", []string{"b"})
-	assertCollectedPath(t, paths[2], true, b.ID, []string{"b", "c", "a", "b"})
-	assertCollectedPath(t, paths[3], false, "", []string{"c", "a", "b"})
+	assertCollectedPath(t, paths[0], false, "", []string{"pkg:generic/a", "pkg:generic/b"})
+	assertCollectedPath(t, paths[1], false, "", []string{"pkg:generic/b"})
+	assertCollectedPath(t, paths[2], true, b.NodeID(), []string{"pkg:generic/b", "pkg:generic/c", "pkg:generic/a", "pkg:generic/b"})
+	assertCollectedPath(t, paths[3], false, "", []string{"pkg:generic/c", "pkg:generic/a", "pkg:generic/b"})
 }
 
 func TestRemoveNode_RemovesIncidentEdges(t *testing.T) {
 	g := New()
-	a := NewDependencyRef("a", "")
-	b := NewDependencyRef("b", "")
-	c := NewDependencyRef("c", "")
+	a := mustDep(t, Coordinates{Name: "a"})
+	b := mustDep(t, Coordinates{Name: "b"})
+	c := mustDep(t, Coordinates{Name: "c"})
 
-	for _, n := range []*Dependency{a, b, c} {
+	for _, n := range []*DependencyNode{a, b, c} {
 		if err := g.AddNode(n); err != nil {
-			t.Fatalf("add node %q: %v", n.ID, err)
+			t.Fatalf("add node %q: %v", n.NodeID(), err)
 		}
 	}
-	if err := g.AddEdge(a.ID, b.ID); err != nil {
+	if err := g.AddEdge(a.NodeID(), b.NodeID()); err != nil {
 		t.Fatalf("add a->b: %v", err)
 	}
-	if err := g.AddEdge(c.ID, b.ID); err != nil {
+	if err := g.AddEdge(c.NodeID(), b.NodeID()); err != nil {
 		t.Fatalf("add c->b: %v", err)
 	}
 
-	if ok := g.RemoveNode(b.ID); !ok {
+	if ok := g.RemoveNode(b.NodeID()); !ok {
 		t.Fatalf("expected node b removal to succeed")
 	}
 
-	if _, ok := g.Node(b.ID); ok {
+	if _, ok := g.Node(b.NodeID()); ok {
 		t.Fatalf("expected node b removed")
 	}
-	if deps, err := g.DirectDependencies(a.ID); err != nil || len(deps) != 0 {
+	if deps, err := g.DirectDependencies(a.NodeID()); err != nil || len(deps) != 0 {
 		t.Fatalf("expected a dependencies cleared, deps=%#v err=%v", deps, err)
 	}
 }
 
 func TestPrettyString(t *testing.T) {
 	g := New()
-	app := NewDependencyRef("app", "")
-	react := NewDependencyRef("react", "18.2.0")
-	zod := NewDependencyRef("zod", "")
+	app := mustDep(t, Coordinates{Name: "app"})
+	react := mustDep(t, Coordinates{Name: "react", Version: "18.2.0"})
+	zod := mustDep(t, Coordinates{Name: "zod"})
 
-	for _, n := range []*Dependency{app, react, zod} {
+	for _, n := range []*DependencyNode{app, react, zod} {
 		if err := g.AddNode(n); err != nil {
-			t.Fatalf("add node %q: %v", n.ID, err)
+			t.Fatalf("add node %q: %v", n.NodeID(), err)
 		}
 	}
-	if err := g.AddEdge(app.ID, react.ID); err != nil {
+	if err := g.AddEdge(app.NodeID(), react.NodeID()); err != nil {
 		t.Fatalf("add edge: %v", err)
 	}
-	if err := g.AddEdge(app.ID, zod.ID); err != nil {
+	if err := g.AddEdge(app.NodeID(), zod.NodeID()); err != nil {
 		t.Fatalf("add edge: %v", err)
 	}
 
 	got := g.PrettyString()
-	want := "app -> [react@18.2.0, zod]\nreact@18.2.0 -> []\nzod -> []"
+	want := "pkg:generic/app -> [pkg:generic/react@18.2.0, pkg:generic/zod]\npkg:generic/react@18.2.0 -> []\npkg:generic/zod -> []"
 	if got != want {
 		t.Fatalf("unexpected pretty string:\nwant:\n%s\n\ngot:\n%s", want, got)
 	}
@@ -337,24 +339,24 @@ func TestPrettyString(t *testing.T) {
 
 func TestPrettyTree_WithSharedDependency(t *testing.T) {
 	g := New()
-	a := NewDependencyRef("a", "")
-	b := NewDependencyRef("b", "")
-	c := NewDependencyRef("c", "")
+	a := mustDep(t, Coordinates{Name: "a"})
+	b := mustDep(t, Coordinates{Name: "b"})
+	c := mustDep(t, Coordinates{Name: "c"})
 
-	for _, n := range []*Dependency{a, b, c} {
+	for _, n := range []*DependencyNode{a, b, c} {
 		if err := g.AddNode(n); err != nil {
-			t.Fatalf("add node %q: %v", n.ID, err)
+			t.Fatalf("add node %q: %v", n.NodeID(), err)
 		}
 	}
-	if err := g.AddEdge(a.ID, b.ID); err != nil {
+	if err := g.AddEdge(a.NodeID(), b.NodeID()); err != nil {
 		t.Fatalf("add a->b: %v", err)
 	}
-	if err := g.AddEdge(c.ID, b.ID); err != nil {
+	if err := g.AddEdge(c.NodeID(), b.NodeID()); err != nil {
 		t.Fatalf("add c->b: %v", err)
 	}
 
 	got := g.PrettyTree()
-	want := "a\n`-- b\nc\n`-- b (shared)"
+	want := "pkg:generic/a\n`-- pkg:generic/b\npkg:generic/c\n`-- pkg:generic/b (shared)"
 	if got != want {
 		t.Fatalf("unexpected pretty tree:\nwant:\n%s\n\ngot:\n%s", want, got)
 	}
@@ -362,23 +364,23 @@ func TestPrettyTree_WithSharedDependency(t *testing.T) {
 
 func TestPrettyTree_WithCycle(t *testing.T) {
 	g := New()
-	app := NewDependencyRef("app", "")
-	a := NewDependencyRef("a", "")
-	b := NewDependencyRef("b", "")
+	app := mustDep(t, Coordinates{Name: "app"})
+	a := mustDep(t, Coordinates{Name: "a"})
+	b := mustDep(t, Coordinates{Name: "b"})
 
-	for _, n := range []*Dependency{app, a, b} {
+	for _, n := range []*DependencyNode{app, a, b} {
 		if err := g.AddNode(n); err != nil {
-			t.Fatalf("add node %q: %v", n.ID, err)
+			t.Fatalf("add node %q: %v", n.NodeID(), err)
 		}
 	}
-	for _, edge := range [][2]string{{app.ID, a.ID}, {a.ID, b.ID}, {b.ID, a.ID}} {
+	for _, edge := range [][2]string{{app.NodeID(), a.NodeID()}, {a.NodeID(), b.NodeID()}, {b.NodeID(), a.NodeID()}} {
 		if err := g.AddEdge(edge[0], edge[1]); err != nil {
 			t.Fatalf("add edge %q -> %q: %v", edge[0], edge[1], err)
 		}
 	}
 
 	got := g.PrettyTree()
-	want := "app\n`-- a\n    `-- b\n        `-- a (cycle)"
+	want := "pkg:generic/app\n`-- pkg:generic/a\n    `-- pkg:generic/b\n        `-- pkg:generic/a (cycle)"
 	if got != want {
 		t.Fatalf("unexpected pretty tree:\nwant:\n%s\n\ngot:\n%s", want, got)
 	}
@@ -386,45 +388,45 @@ func TestPrettyTree_WithCycle(t *testing.T) {
 
 func TestReAddNodeAfterRemove_ReusesGraphState(t *testing.T) {
 	g := New()
-	a := NewDependencyRef("a", "")
-	b := NewDependencyRef("b", "")
-	c := NewDependencyRef("c", "")
+	a := mustDep(t, Coordinates{Name: "a"})
+	b := mustDep(t, Coordinates{Name: "b"})
+	c := mustDep(t, Coordinates{Name: "c"})
 
-	for _, n := range []*Dependency{a, b, c} {
+	for _, n := range []*DependencyNode{a, b, c} {
 		if err := g.AddNode(n); err != nil {
-			t.Fatalf("add node %q: %v", n.ID, err)
+			t.Fatalf("add node %q: %v", n.NodeID(), err)
 		}
 	}
-	if err := g.AddEdge(a.ID, b.ID); err != nil {
+	if err := g.AddEdge(a.NodeID(), b.NodeID()); err != nil {
 		t.Fatalf("add a->b: %v", err)
 	}
-	if err := g.AddEdge(c.ID, b.ID); err != nil {
+	if err := g.AddEdge(c.NodeID(), b.NodeID()); err != nil {
 		t.Fatalf("add c->b: %v", err)
 	}
 
-	if ok := g.RemoveNode(b.ID); !ok {
+	if ok := g.RemoveNode(b.NodeID()); !ok {
 		t.Fatalf("remove b failed")
 	}
 
-	d := NewDependencyRef("d", "")
+	d := mustDep(t, Coordinates{Name: "d"})
 	if err := g.AddNode(d); err != nil {
 		t.Fatalf("add d: %v", err)
 	}
-	if err := g.AddEdge(a.ID, d.ID); err != nil {
+	if err := g.AddEdge(a.NodeID(), d.NodeID()); err != nil {
 		t.Fatalf("add a->d: %v", err)
 	}
-	if err := g.AddEdge(c.ID, d.ID); err != nil {
+	if err := g.AddEdge(c.NodeID(), d.NodeID()); err != nil {
 		t.Fatalf("add c->d: %v", err)
 	}
 
 	if got := g.Size(); got != 3 {
 		t.Fatalf("expected size 3, got %d", got)
 	}
-	deps, err := g.DirectDependencies(a.ID)
+	deps, err := g.DirectDependencies(a.NodeID())
 	if err != nil {
 		t.Fatalf("direct dependencies(a): %v", err)
 	}
-	if len(deps) != 1 || deps[0].ID != d.ID {
+	if len(deps) != 1 || deps[0].NodeID() != d.NodeID() {
 		t.Fatalf("expected a to depend on d, got %#v", deps)
 	}
 }
@@ -433,37 +435,39 @@ func TestCompare_ClassifiesAddedRemovedAndUpdated(t *testing.T) {
 	base := New()
 	head := New()
 
-	baseApp := NewDependencyRef("app", "1.0.0")
-	baseKeep := NewDependency(Dependency{Coordinates: Coordinates{Ecosystem: EcosystemNPM, Name: "keep", Version: "1.0.0"}})
-	baseRemove := NewDependency(Dependency{Coordinates: Coordinates{Ecosystem: EcosystemNPM, Name: "remove", Version: "1.0.0"}})
-	baseUpdate := NewDependency(Dependency{Coordinates: Coordinates{Ecosystem: EcosystemNPM, Name: "update", Version: "1.0.0"}})
-	headApp := NewDependencyRef("app", "1.0.0")
-	headKeep := NewDependency(Dependency{Coordinates: Coordinates{Ecosystem: EcosystemNPM, Name: "keep", Version: "1.0.0"}})
-	headAdd := NewDependency(Dependency{Coordinates: Coordinates{Ecosystem: EcosystemNPM, Name: "add", Version: "2.0.0"}})
-	headUpdate := NewDependency(Dependency{Coordinates: Coordinates{Ecosystem: EcosystemNPM, Name: "update", Version: "2.0.0"}})
+	// The application root is a module node under the union; modules are
+	// structural and never diff.
+	baseApp := mustModule(t, "package.json", Coordinates{Name: "app", Version: "1.0.0"})
+	baseKeep := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "keep", Version: "1.0.0"})
+	baseRemove := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "remove", Version: "1.0.0"})
+	baseUpdate := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "update", Version: "1.0.0"})
+	headApp := mustModule(t, "package.json", Coordinates{Name: "app", Version: "1.0.0"})
+	headKeep := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "keep", Version: "1.0.0"})
+	headAdd := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "add", Version: "2.0.0"})
+	headUpdate := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "update", Version: "2.0.0"})
 
-	for _, node := range []*Dependency{baseApp, baseKeep, baseRemove, baseUpdate} {
+	for _, node := range []GraphNode{baseApp, baseKeep, baseRemove, baseUpdate} {
 		if err := base.AddNode(node); err != nil {
-			t.Fatalf("base.AddNode(%q): %v", node.ID, err)
+			t.Fatalf("base.AddNode(%q): %v", node.NodeID(), err)
 		}
 	}
-	for _, node := range []*Dependency{headApp, headKeep, headAdd, headUpdate} {
+	for _, node := range []GraphNode{headApp, headKeep, headAdd, headUpdate} {
 		if err := head.AddNode(node); err != nil {
-			t.Fatalf("head.AddNode(%q): %v", node.ID, err)
+			t.Fatalf("head.AddNode(%q): %v", node.NodeID(), err)
 		}
 	}
 
 	diff := Compare(base, head)
-	if got := idsOf(diff.Added); !slices.Equal(got, []string{"add@2.0.0"}) {
+	if got := depIDsOf(diff.Added); !slices.Equal(got, []string{"pkg:npm/add@2.0.0"}) {
 		t.Fatalf("unexpected added nodes: %#v", got)
 	}
-	if got := idsOf(diff.Removed); !slices.Equal(got, []string{"remove@1.0.0"}) {
+	if got := depIDsOf(diff.Removed); !slices.Equal(got, []string{"pkg:npm/remove@1.0.0"}) {
 		t.Fatalf("unexpected removed nodes: %#v", got)
 	}
 	if len(diff.Updated) != 1 {
 		t.Fatalf("expected one updated node, got %#v", diff.Updated)
 	}
-	if diff.Updated[0].Before.ID != "update@1.0.0" || diff.Updated[0].After.ID != "update@2.0.0" {
+	if diff.Updated[0].Before.NodeID() != "pkg:npm/update@1.0.0" || diff.Updated[0].After.NodeID() != "pkg:npm/update@2.0.0" {
 		t.Fatalf("unexpected updated node: %#v", diff.Updated[0])
 	}
 	if len(diff.Transitions) != 0 {
@@ -474,21 +478,20 @@ func TestCompare_ClassifiesAddedRemovedAndUpdated(t *testing.T) {
 func TestCompare_ClassifiesDependencyDetailTransitions(t *testing.T) {
 	base := New()
 	head := New()
-	baseRoot := NewDependency(Dependency{Coordinates: Coordinates{Type: PackageTypeApplication, Name: "app", FirstParty: true}})
+	// The first-party application root is a module node under the union.
+	baseRoot := mustModule(t, "package.json", Coordinates{Type: PackageTypeApplication, Name: "app"})
 	headRoot := baseRoot.Clone()
-	baseDependency := NewDependency(Dependency{
-		Coordinates:  Coordinates{Ecosystem: EcosystemNPM, Name: "example", Version: "1.0.0"},
-		Relationship: DependencyRelationshipDirect,
-		Source:       DependencySourceRegistry,
-	})
+	baseDependency := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "example", Version: "1.0.0"})
+	baseDependency.Relationship = DependencyRelationshipDirect
+	baseDependency.Source = DependencySourceRegistry
 	headDependency := baseDependency.Clone()
 	headDependency.Relationship = DependencyRelationshipUnknown
 	headDependency.Source = DependencySourceGit
 
 	for _, pair := range []struct {
 		graph *Graph
-		root  *Dependency
-		dep   *Dependency
+		root  *ModuleNode
+		dep   *DependencyNode
 	}{
 		{graph: base, root: baseRoot, dep: baseDependency},
 		{graph: head, root: headRoot, dep: headDependency},
@@ -499,7 +502,7 @@ func TestCompare_ClassifiesDependencyDetailTransitions(t *testing.T) {
 		if err := pair.graph.AddNode(pair.dep); err != nil {
 			t.Fatal(err)
 		}
-		if err := pair.graph.AddEdge(pair.root.ID, pair.dep.ID); err != nil {
+		if err := pair.graph.AddEdge(pair.root.NodeID(), pair.dep.NodeID()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -528,44 +531,54 @@ func TestCompare_ClassifiesDependencyDetailTransitions(t *testing.T) {
 }
 
 func TestCompareDependencyDetailsClassifiesEachAxisIndependently(t *testing.T) {
-	base := NewDependency(Dependency{
-		Coordinates: Coordinates{
-			Ecosystem: EcosystemNPM,
-			Name:      "example",
-			Version:   "1.0.0",
-			PURL:      "pkg:npm/example@1.0.0",
-		},
-		Relationship: DependencyRelationshipDirect,
-		Source:       DependencySourceRegistry,
-	})
+	newBase := func() *DependencyNode {
+		base := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "example", Version: "1.0.0"})
+		base.Relationship = DependencyRelationshipDirect
+		base.Source = DependencySourceRegistry
+		return base
+	}
 	tests := []struct {
-		name  string
-		after func() *Dependency
-		want  DependencyDetailField
+		name   string
+		before func() *DependencyNode
+		after  func() *DependencyNode
+		want   DependencyDetailField
 	}{
 		{
-			name: "relationship only",
-			after: func() *Dependency {
-				after := base.Clone()
+			name:   "relationship only",
+			before: newBase,
+			after: func() *DependencyNode {
+				after := newBase().Clone()
 				after.Relationship = DependencyRelationshipTransitive
 				return after
 			},
 			want: DependencyDetailRelationship,
 		},
 		{
-			name: "known source only",
-			after: func() *Dependency {
-				after := base.Clone()
+			name:   "known source only",
+			before: newBase,
+			after: func() *DependencyNode {
+				after := newBase().Clone()
 				after.Source = DependencySource("custom-registry")
 				return after
 			},
 			want: DependencyDetailSource,
 		},
 		{
+			// Eligibility is derived from source and ecosystem now (the
+			// FirstParty flag is gone): the Swift source-control special case
+			// is the remaining lever that flips eligibility with an unchanged
+			// source value.
 			name: "registry eligibility only",
-			after: func() *Dependency {
-				after := base.Clone()
-				after.FirstParty = true
+			before: func() *DependencyNode {
+				before := mustDepPURL(t, "pkg:swift/github.com/acme/example@1.0.0")
+				before.Relationship = DependencyRelationshipDirect
+				before.Source = DependencySourceGit
+				return before
+			},
+			after: func() *DependencyNode {
+				after := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "example", Version: "1.0.0"})
+				after.Relationship = DependencyRelationshipDirect
+				after.Source = DependencySourceGit
 				return after
 			},
 			want: DependencyDetailRegistryEligibility,
@@ -573,7 +586,7 @@ func TestCompareDependencyDetailsClassifiesEachAxisIndependently(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			transition, changed := CompareDependencyDetails(nil, nil, base, tt.after())
+			transition, changed := CompareDependencyDetails(nil, nil, tt.before(), tt.after())
 			if !changed {
 				t.Fatal("CompareDependencyDetails() did not report a transition")
 			}
@@ -585,10 +598,8 @@ func TestCompareDependencyDetailsClassifiesEachAxisIndependently(t *testing.T) {
 }
 
 func TestCompareDependencyDetailsIgnoresMissingEvidence(t *testing.T) {
-	before := NewDependency(Dependency{
-		Coordinates:  Coordinates{Ecosystem: EcosystemNPM, Name: "example", Version: "1.0.0"},
-		Relationship: DependencyRelationshipUnknown,
-	})
+	before := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "example", Version: "1.0.0"})
+	before.Relationship = DependencyRelationshipUnknown
 	after := before.Clone()
 	after.Relationship = DependencyRelationshipDirect
 	after.Source = DependencySourceRegistry
@@ -599,7 +610,12 @@ func TestCompareDependencyDetailsIgnoresMissingEvidence(t *testing.T) {
 }
 
 func TestDependencyDetailTransitionReviewReasons(t *testing.T) {
-	dependency := &Dependency{Source: DependencySourceRegistry}
+	depWithSource := func(source DependencySource) *DependencyNode {
+		node := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "example", Version: "1.0.0"})
+		node.Source = source
+		return node
+	}
+	dependency := depWithSource(DependencySourceRegistry)
 	tests := []struct {
 		name       string
 		transition DependencyDetailTransition
@@ -609,7 +625,7 @@ func TestDependencyDetailTransitionReviewReasons(t *testing.T) {
 			name: "source changed to Git",
 			transition: DependencyDetailTransition{
 				Before:                 dependency,
-				After:                  &Dependency{Source: DependencySourceGit},
+				After:                  depWithSource(DependencySourceGit),
 				ChangedFields:          []DependencyDetailField{DependencyDetailSource, DependencyDetailRegistryEligibility},
 				BeforeRegistryEligible: true,
 			},
@@ -621,7 +637,7 @@ func TestDependencyDetailTransitionReviewReasons(t *testing.T) {
 			name: "source changed to URL",
 			transition: DependencyDetailTransition{
 				Before:        dependency,
-				After:         &Dependency{Source: DependencySourceURL},
+				After:         depWithSource(DependencySourceURL),
 				ChangedFields: []DependencyDetailField{DependencyDetailSource},
 			},
 			want: []DependencyDetailReviewReason{DependencyDetailReviewSourceURL},
@@ -647,14 +663,14 @@ func TestDependencyDetailTransitionReviewReasons(t *testing.T) {
 			name: "missing changed-field evidence",
 			transition: DependencyDetailTransition{
 				Before: dependency,
-				After:  &Dependency{Source: DependencySourceGit},
+				After:  depWithSource(DependencySourceGit),
 			},
 		},
 		{
 			name: "missing previous source evidence",
 			transition: DependencyDetailTransition{
-				Before:        &Dependency{},
-				After:         &Dependency{Source: DependencySourceGit},
+				Before:        depWithSource(""),
+				After:         depWithSource(DependencySourceGit),
 				ChangedFields: []DependencyDetailField{DependencyDetailSource},
 			},
 		},
@@ -674,10 +690,8 @@ func TestDependencyDetailTransitionReviewReasons(t *testing.T) {
 }
 
 func TestCloneDependencyDetailTransitionsDeepCopiesEvidence(t *testing.T) {
-	before := NewDependencyWithID("before", Dependency{
-		Coordinates: Coordinates{Name: "example", Version: "1.0.0"},
-		Source:      DependencySourceRegistry,
-	})
+	before := mustDep(t, Coordinates{Name: "example", Version: "1.0.0"})
+	before.Source = DependencySourceRegistry
 	after := before.Clone()
 	after.Source = DependencySourceGit
 	original := []DependencyDetailTransition{{
@@ -705,10 +719,8 @@ func TestCompareSortsDependencyDetailTransitions(t *testing.T) {
 	base := New()
 	head := New()
 	for _, name := range []string{"zeta", "alpha"} {
-		before := NewDependency(Dependency{
-			Coordinates: Coordinates{Ecosystem: EcosystemNPM, Name: name, Version: "1.0.0"},
-			Source:      DependencySourceRegistry,
-		})
+		before := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: name, Version: "1.0.0"})
+		before.Source = DependencySourceRegistry
 		after := before.Clone()
 		after.Source = DependencySourceGit
 		if err := base.AddNode(before); err != nil {
@@ -731,20 +743,21 @@ func TestCompareSortsDependencyDetailTransitions(t *testing.T) {
 func TestCompare_DerivesRelationshipTransitionFromGraphEdges(t *testing.T) {
 	base := New()
 	head := New()
+	// The first-party application root is a module node under the union.
+	appID := ""
+	parentID := ""
+	childID := ""
 	for _, graph := range []*Graph{base, head} {
-		for _, node := range []*Dependency{
-			NewDependency(Dependency{Coordinates: Coordinates{Type: PackageTypeApplication, Name: "app", FirstParty: true}}),
-			NewDependency(Dependency{Coordinates: Coordinates{Ecosystem: EcosystemNPM, Name: "parent", Version: "1.0.0"}}),
-			NewDependency(Dependency{Coordinates: Coordinates{Ecosystem: EcosystemNPM, Name: "child", Version: "1.0.0"}}),
-		} {
+		app := mustModule(t, "package.json", Coordinates{Type: PackageTypeApplication, Name: "app"})
+		parent := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "parent", Version: "1.0.0"})
+		child := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "child", Version: "1.0.0"})
+		appID, parentID, childID = app.NodeID(), parent.NodeID(), child.NodeID()
+		for _, node := range []GraphNode{app, parent, child} {
 			if err := graph.AddNode(node); err != nil {
 				t.Fatal(err)
 			}
 		}
 	}
-	appID := NewDependencyRef("app", "").ID
-	parentID := NewDependency(Dependency{Coordinates: Coordinates{Ecosystem: EcosystemNPM, Name: "parent", Version: "1.0.0"}}).ID
-	childID := NewDependency(Dependency{Coordinates: Coordinates{Ecosystem: EcosystemNPM, Name: "child", Version: "1.0.0"}}).ID
 	if err := base.AddEdge(appID, childID); err != nil {
 		t.Fatal(err)
 	}
@@ -774,16 +787,12 @@ func TestCompare_DerivesRelationshipTransitionFromGraphEdges(t *testing.T) {
 func TestCompare_ReportsVersionAndDetailChangesSeparately(t *testing.T) {
 	base := New()
 	head := New()
-	before := NewDependency(Dependency{
-		Coordinates:  Coordinates{Ecosystem: EcosystemNPM, Name: "example", Version: "1.0.0"},
-		Relationship: DependencyRelationshipDirect,
-		Source:       DependencySourceRegistry,
-	})
-	after := NewDependency(Dependency{
-		Coordinates:  Coordinates{Ecosystem: EcosystemNPM, Name: "example", Version: "2.0.0"},
-		Relationship: DependencyRelationshipTransitive,
-		Source:       DependencySourceRegistry,
-	})
+	before := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "example", Version: "1.0.0"})
+	before.Relationship = DependencyRelationshipDirect
+	before.Source = DependencySourceRegistry
+	after := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "example", Version: "2.0.0"})
+	after.Relationship = DependencyRelationshipTransitive
+	after.Source = DependencySourceRegistry
 	if err := base.AddNode(before); err != nil {
 		t.Fatal(err)
 	}
@@ -804,12 +813,14 @@ func TestCompare_IgnoresSyntheticSubprojectRoots(t *testing.T) {
 	base := New()
 	head := New()
 	for _, g := range []*Graph{base, head} {
-		for _, node := range []*Dependency{
-			NewDependencyRefWithID("subproject:npm:root", "root", ""),
-			NewDependency(Dependency{Coordinates: Coordinates{Ecosystem: EcosystemNPM, Name: "shared", Version: "1.0.0"}}),
+		// Synthetic subproject roots are module nodes under the union;
+		// module nodes never diff.
+		for _, node := range []GraphNode{
+			mustModule(t, "package.json", Coordinates{Name: "root"}),
+			mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "shared", Version: "1.0.0"}),
 		} {
 			if err := g.AddNode(node); err != nil {
-				t.Fatalf("AddNode(%q): %v", node.ID, err)
+				t.Fatalf("AddNode(%q): %v", node.NodeID(), err)
 			}
 		}
 	}
@@ -823,16 +834,18 @@ func TestCompare_IgnoresSyntheticSubprojectRoots(t *testing.T) {
 func TestCompareIgnoresManifestAndRootNodes(t *testing.T) {
 	base := New()
 	head := New()
-	for _, node := range []*Dependency{
-		NewDependencyWithID("pkg:generic/root", Dependency{Coordinates: Coordinates{Name: "root", PURL: "pkg:generic/root"}}),
-		NewDependencyWithID("pkg:generic/requirements.txt", Dependency{Coordinates: Coordinates{Name: "requirements.txt", PURL: "pkg:generic/requirements.txt"}}),
-		NewDependencyWithID("pkg:npm/react@18.2.0", Dependency{Coordinates: Coordinates{Ecosystem: EcosystemNPM, PackageManager: PackageManagerNPM, Name: "react", Version: "18.2.0", PURL: "pkg:npm/react@18.2.0"}}),
+	// Manifest records and first-party roots are ManifestNode and ModuleNode
+	// kinds under the union; only dependency nodes diff.
+	for _, node := range []GraphNode{
+		mustModule(t, "requirements.txt", Coordinates{Name: "root"}),
+		mustManifest(t, "requirements.txt"),
+		mustDep(t, Coordinates{Ecosystem: EcosystemNPM, PackageManager: PackageManagerNPM, Name: "react", Version: "18.2.0"}),
 	} {
 		if err := head.AddNode(node); err != nil {
-			t.Fatalf("head add node %q: %v", node.ID, err)
+			t.Fatalf("head add node %q: %v", node.NodeID(), err)
 		}
 	}
-	if err := base.AddNode(NewDependencyWithID("pkg:npm/react@18.2.0", Dependency{Coordinates: Coordinates{Ecosystem: EcosystemNPM, PackageManager: PackageManagerNPM, Name: "react", Version: "18.2.0", PURL: "pkg:npm/react@18.2.0"}})); err != nil {
+	if err := base.AddNode(mustDep(t, Coordinates{Ecosystem: EcosystemNPM, PackageManager: PackageManagerNPM, Name: "react", Version: "18.2.0"})); err != nil {
 		t.Fatalf("base add node: %v", err)
 	}
 
@@ -842,41 +855,50 @@ func TestCompareIgnoresManifestAndRootNodes(t *testing.T) {
 	}
 }
 
-func TestCompareIgnoresApplicationNodes(t *testing.T) {
+func TestCompareIncludesImportedApplicationNodes(t *testing.T) {
+	// Application-typed imported components are dependency nodes and diff now
+	// (ADR-0041): application type alone is never an ownership signal.
 	base := New()
 	head := New()
-	if err := head.AddNode(NewDependencyWithID("pkg:npm/demo@1.0.0", Dependency{Coordinates: Coordinates{Ecosystem: EcosystemNPM, PackageManager: PackageManagerNPM, Name: "demo", Version: "1.0.0", Type: PackageTypeApplication, PURL: "pkg:npm/demo@1.0.0"}})); err != nil {
+	if err := head.AddNode(mustDep(t, Coordinates{Ecosystem: EcosystemNPM, PackageManager: PackageManagerNPM, Name: "demo", Version: "1.0.0", Type: PackageTypeApplication})); err != nil {
 		t.Fatalf("head add application: %v", err)
 	}
 
 	diff := Compare(base, head)
-	if len(diff.Added) != 0 || len(diff.Removed) != 0 || len(diff.Updated) != 0 {
-		t.Fatalf("expected application node to be ignored, got %#v", diff)
+	if got := depIDsOf(diff.Added); !slices.Equal(got, []string{"pkg:npm/demo@1.0.0"}) {
+		t.Fatalf("expected the imported application node to diff as added, got %#v", diff)
+	}
+	if len(diff.Removed) != 0 || len(diff.Updated) != 0 {
+		t.Fatalf("unexpected removed/updated entries: %#v", diff)
 	}
 }
 
-func TestNodeIsEnrichable(t *testing.T) {
-	cases := []struct {
-		name string
-		node *Dependency
-		want bool
-	}{
-		{name: "nil node", node: nil, want: false},
-		{name: "manifest node", node: &Dependency{Coordinates: Coordinates{Name: "pom.xml", Type: PackageTypeManifest}}, want: false},
-		{name: "first-party module node", node: &Dependency{Coordinates: Coordinates{Name: "my-module", Version: "1.0.0", Type: PackageTypeApplication, FirstParty: true, PURL: "pkg:maven/com.acme/my-module@1.0.0"}}, want: false},
-		{name: "first-party untyped node", node: &Dependency{Coordinates: Coordinates{Name: "my-root", FirstParty: true}}, want: false},
+func TestEnrichableNodesAreDependencyNodes(t *testing.T) {
+	// NodeIsEnrichable is gone: enrichable and diffable are the dependency
+	// kind itself. DependencyNodes() is the enrichment iteration surface.
+	g := New()
+	for _, node := range []GraphNode{
+		mustManifest(t, "pom.xml"),
+		mustModule(t, "pom.xml", Coordinates{Ecosystem: EcosystemMaven, Org: "com.acme", Name: "my-module", Version: "1.0.0", Type: PackageTypeApplication}),
 		// An application type imported from an SBOM is an artifact kind, not
-		// an ownership signal: without the first-party mark it stays enrichable.
-		{name: "imported application node", node: &Dependency{Coordinates: Coordinates{Name: "bundled-app", Version: "2.0.0", Type: PackageTypeApplication, PURL: "pkg:npm/bundled-app@2.0.0"}}, want: true},
-		{name: "package node", node: &Dependency{Coordinates: Coordinates{Name: "lodash", Version: "4.17.15", PURL: "pkg:npm/lodash@4.17.15"}}, want: true},
-		{name: "untyped node", node: &Dependency{Coordinates: Coordinates{Name: "guava", Version: "31.0"}}, want: true},
+		// an ownership signal: it stays a dependency node and stays enrichable.
+		mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "bundled-app", Version: "2.0.0", Type: PackageTypeApplication}),
+		mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "lodash", Version: "4.17.15"}),
+		mustDep(t, Coordinates{Name: "guava", Version: "31.0"}),
+	} {
+		if err := g.AddNode(node); err != nil {
+			t.Fatalf("AddNode(%q): %v", node.NodeID(), err)
+		}
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := NodeIsEnrichable(tc.node); got != tc.want {
-				t.Fatalf("NodeIsEnrichable() = %v, want %v", got, tc.want)
-			}
-		})
+
+	got := depIDsOf(g.DependencyNodes())
+	want := []string{
+		"pkg:generic/guava@31.0",
+		"pkg:npm/bundled-app@2.0.0",
+		"pkg:npm/lodash@4.17.15",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("DependencyNodes() = %#v, want %#v", got, want)
 	}
 }
 
@@ -910,10 +932,18 @@ func assertBefore(t *testing.T, ids []string, first, second string) {
 	}
 }
 
-func idsOf(nodes []*Dependency) []string {
+func idsOf(nodes []GraphNode) []string {
 	ids := make([]string, 0, len(nodes))
 	for _, n := range nodes {
-		ids = append(ids, n.ID)
+		ids = append(ids, n.NodeID())
+	}
+	return ids
+}
+
+func depIDsOf(nodes []*DependencyNode) []string {
+	ids := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		ids = append(ids, n.NodeID())
 	}
 	return ids
 }

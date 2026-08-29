@@ -14,15 +14,16 @@ const (
 	normMetadataOriginalVersionKey = "bomly.normalization.original_version"
 )
 
-// NormalizeDependencyIdentity applies ecosystem-aware identity normalization in place.
-func NormalizeDependencyIdentity(pkg *Dependency) {
+// NormalizeCoordinates applies ecosystem-aware identity normalization to
+// the coordinate fields in place and returns which rules applied. It is the
+// pre-minting step of node construction — normalize, then mint the
+// canonical package URL, then construct — and records nothing itself: the
+// constructors store the provenance breadcrumbs on the node.
+func NormalizeCoordinates(pkg *Coordinates) []string {
 	if pkg == nil {
-		return
+		return nil
 	}
 
-	originalName := pkg.Name
-	originalOrg := pkg.Org
-	originalVersion := pkg.Version
 	applied := make([]string, 0, 4)
 
 	pkg.Name = strings.TrimSpace(pkg.Name)
@@ -54,10 +55,10 @@ func NormalizeDependencyIdentity(pkg *Dependency) {
 		applied = append(applied, "version")
 	}
 
-	normRecordMetadata(pkg, applied, originalName, originalOrg, originalVersion)
+	return applied
 }
 
-func normNPM(pkg *Dependency) []string {
+func normNPM(pkg *Coordinates) []string {
 	applied := make([]string, 0, 2)
 	if scope, name, ok := normSplitScopedNPMName(pkg.Name); ok {
 		pkg.Org = scope
@@ -75,7 +76,7 @@ func normNPM(pkg *Dependency) []string {
 	return applied
 }
 
-func normPython(pkg *Dependency) []string {
+func normPython(pkg *Coordinates) []string {
 	normalized := normCanonicalizePythonName(pkg.Name)
 	if normalized == pkg.Name {
 		return nil
@@ -84,7 +85,7 @@ func normPython(pkg *Dependency) []string {
 	return []string{"name"}
 }
 
-func normRust(pkg *Dependency) []string {
+func normRust(pkg *Coordinates) []string {
 	normalized := normCollapseRepeated(strings.ToLower(strings.ReplaceAll(pkg.Name, "_", "-")), '-')
 	if normalized == pkg.Name {
 		return nil
@@ -93,7 +94,7 @@ func normRust(pkg *Dependency) []string {
 	return []string{"name"}
 }
 
-func normMaven(pkg *Dependency) []string {
+func normMaven(pkg *Coordinates) []string {
 	applied := make([]string, 0, 2)
 	if normalizedOrg := strings.ToLower(pkg.Org); normalizedOrg != pkg.Org {
 		pkg.Org = normalizedOrg
@@ -106,7 +107,7 @@ func normMaven(pkg *Dependency) []string {
 	return applied
 }
 
-func normGo(pkg *Dependency) []string {
+func normGo(pkg *Coordinates) []string {
 	applied := make([]string, 0, 2)
 	if normalizedOrg := normNormalizeSlashPath(pkg.Org); normalizedOrg != pkg.Org {
 		pkg.Org = normalizedOrg
@@ -119,7 +120,7 @@ func normGo(pkg *Dependency) []string {
 	return applied
 }
 
-func normComposer(pkg *Dependency) []string {
+func normComposer(pkg *Coordinates) []string {
 	if len(pkg.Version) > 1 && (pkg.Version[0] == 'v' || pkg.Version[0] == 'V') {
 		pkg.Version = pkg.Version[1:]
 		return []string{"version"}
@@ -127,7 +128,7 @@ func normComposer(pkg *Dependency) []string {
 	return nil
 }
 
-func normEffectiveEcosystem(pkg *Dependency) Ecosystem {
+func normEffectiveEcosystem(pkg *Coordinates) Ecosystem {
 	if pkg == nil {
 		return EcosystemUnknown
 	}
@@ -218,25 +219,6 @@ func normCollapseRepeated(value string, separator rune) string {
 		builder.WriteRune(r)
 	}
 	return builder.String()
-}
-
-func normRecordMetadata(pkg *Dependency, applied []string, originalName, originalOrg, originalVersion string) {
-	if pkg == nil || len(applied) == 0 {
-		return
-	}
-	if pkg.Metadata == nil {
-		pkg.Metadata = make(map[string]any, 4)
-	}
-	pkg.Metadata[normMetadataAppliedKey] = normUniqueStrings(applied)
-	if pkg.Name != originalName {
-		pkg.Metadata[normMetadataOriginalNameKey] = originalName
-	}
-	if pkg.Org != originalOrg {
-		pkg.Metadata[normMetadataOriginalOrgKey] = originalOrg
-	}
-	if pkg.Version != originalVersion {
-		pkg.Metadata[normMetadataOriginalVersionKey] = originalVersion
-	}
 }
 
 func normUniqueStrings(values []string) []string {

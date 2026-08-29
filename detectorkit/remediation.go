@@ -35,16 +35,13 @@ func BuildRemediationHints(
 		if entry.Graph == nil {
 			continue
 		}
-		for _, dependency := range entry.Graph.Nodes() {
+		for _, dependency := range entry.Graph.DependencyNodes() {
 			if dependency == nil {
 				continue
 			}
 			packageRef := dependency.PackageRef
 			if packageRef == "" {
-				packageRef = sdk.CanonicalPackageURLFromDependency(dependency)
-			}
-			if packageRef == "" {
-				continue
+				packageRef = dependency.NodeID()
 			}
 			pkg, ok := request.Registry.Get(packageRef)
 			if !ok || pkg == nil || pkg.Remediation == nil ||
@@ -60,7 +57,7 @@ func BuildRemediationHints(
 				continue
 			}
 			hint := sdk.RemediationHint{
-				DependencyRef: dependency.ID,
+				DependencyRef: dependency.NodeID(),
 				ManifestPath:  entry.Manifest.Path,
 			}
 			for _, action := range remediationActionOrder {

@@ -31,11 +31,11 @@ func ParseDependencyRelationship(value string) DependencyRelationship {
 
 // RelationshipForPath returns the explicit target relationship when present,
 // otherwise derives directness from a root-to-target path.
-func RelationshipForPath(path []*Dependency) DependencyRelationship {
+func RelationshipForPath(path []GraphNode) DependencyRelationship {
 	if len(path) == 0 {
 		return ""
 	}
-	target := path[len(path)-1]
+	target, _ := path[len(path)-1].(*DependencyNode)
 	depth := len(path) - 1
 	if depth == 0 {
 		// Preserve the historical interpretation of a one-node path as a
@@ -46,7 +46,7 @@ func RelationshipForPath(path []*Dependency) DependencyRelationship {
 	return relationshipForDepth(target, depth)
 }
 
-func relationshipForDepth(target *Dependency, depth int) DependencyRelationship {
+func relationshipForDepth(target *DependencyNode, depth int) DependencyRelationship {
 	if target != nil && target.Relationship != "" {
 		return target.Relationship
 	}

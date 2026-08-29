@@ -280,43 +280,41 @@ func TestDependencyOriginEmpty(t *testing.T) {
 
 // Cloning a dependency must not leave the copies sharing origin state.
 func TestDependencyCloneCopiesOrigin(t *testing.T) {
-	dep := NewDependencyWithID("react@18.2.0", Dependency{
-		Coordinates: Coordinates{Name: "react", Version: "18.2.0"},
-		Origin:      ArtifactOrigin("https://registry.npmjs.org/react/-/react-18.2.0.tgz"),
-	})
+	dep := mustDep(t, Coordinates{Name: "react", Version: "18.2.0"})
+	dep.Origins = MergeOrigins(nil, []DependencyOrigin{*ArtifactOrigin("https://registry.npmjs.org/react/-/react-18.2.0.tgz")})
 	clone := dep.Clone()
-	clone.Origin.ArtifactURL = "https://npm.corp/mirror/react/-/react-18.2.0.tgz"
+	clone.Origins[0].ArtifactURL = "https://npm.corp/mirror/react/-/react-18.2.0.tgz"
 
-	if dep.Origin.ArtifactURL != "https://registry.npmjs.org/react/-/react-18.2.0.tgz" {
-		t.Fatalf("mutating a clone changed the original: %+v", dep.Origin)
+	if dep.Origins[0].ArtifactURL != "https://registry.npmjs.org/react/-/react-18.2.0.tgz" {
+		t.Fatalf("mutating a clone changed the original: %+v", dep.Origins)
 	}
 }
 
 // The wire contract is additive: an origin-bearing payload round-trips, and a
 // payload from a build that predates the field still decodes.
 func TestDependencyOriginWireRoundTrip(t *testing.T) {
-	dep := NewDependencyWithID("react@18.2.0", Dependency{
-		Coordinates: Coordinates{Name: "react", Version: "18.2.0"},
-		Origin:      RepositoryOrigin("https://github.com/facebook/react", "b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7"),
+	dep := mustDep(t, Coordinates{Name: "react", Version: "18.2.0"})
+	dep.Origins = MergeOrigins(nil, []DependencyOrigin{
+		*RepositoryOrigin("https://github.com/facebook/react", "b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7"),
 	})
 	raw, err := json.Marshal(dep)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var decoded Dependency
+	var decoded DependencyNode
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded.Origin == nil || *decoded.Origin != *dep.Origin {
-		t.Fatalf("decoded origin = %+v, want %+v", decoded.Origin, dep.Origin)
+	if len(decoded.Origins) != 1 || decoded.Origins[0] != dep.Origins[0] {
+		t.Fatalf("decoded origins = %+v, want %+v", decoded.Origins, dep.Origins)
 	}
 
-	var legacy Dependency
+	var legacy DependencyNode
 	if err := json.Unmarshal([]byte(`{"id":"react@18.2.0","name":"react","version":"18.2.0"}`), &legacy); err != nil {
 		t.Fatal(err)
 	}
-	if legacy.Origin != nil {
-		t.Fatalf("origin = %+v, want nil for a payload that predates the field", legacy.Origin)
+	if legacy.Origins != nil {
+		t.Fatalf("origins = %+v, want nil for a payload that predates the field", legacy.Origins)
 	}
 	if raw, err := json.Marshal(legacy); err != nil || strings.Contains(string(raw), "origin") {
 		t.Fatalf("an absent origin must not be serialized: %s (err %v)", raw, err)
@@ -421,35 +419,34 @@ func TestDependencyOriginNormalizesAcrossJSON(t *testing.T) {
 	}
 }
 
-// Graph merging is a merger of both in the fill-gaps sense: an origin fills in
-// from whichever record has one, so it survives regardless of manifest order,
-// and on a genuine conflict the existing record's origin stays.
-func TestMergeGraphFillsOriginGaps(t *testing.T) {
+// Graph merging unions origins: gap-fill is gone (ADR-0041) — Origins is a
+// deduplicated union list, so an origin survives regardless of manifest order
+// and two disagreeing witnesses both stay visible instead of one winning.
+func TestMergeGraphUnionsOrigins(t *testing.T) {
 	const (
 		artifact = "https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz"
 		mirror   = "https://npm.corp/mirror/lodash/-/lodash-4.17.21.tgz"
+		mergedID = "pkg:npm/lodash@4.17.21"
 	)
 	build := func(t *testing.T, url string) *Graph {
 		t.Helper()
 		g := New()
-		node := NewDependencyWithID("lodash@4.17.21", Dependency{
-			Coordinates: Coordinates{Name: "lodash", Version: "4.17.21", Ecosystem: EcosystemNPM},
-		})
+		node := mustDep(t, Coordinates{Name: "lodash", Version: "4.17.21", Ecosystem: EcosystemNPM})
 		if url != "" {
-			node.Origin = ArtifactOrigin(url)
+			node.Origins = MergeOrigins(nil, []DependencyOrigin{*ArtifactOrigin(url)})
 		}
 		if err := g.AddNode(node); err != nil {
 			t.Fatal(err)
 		}
 		return g
 	}
-	originOf := func(t *testing.T, g *Graph) *DependencyOrigin {
+	originsOf := func(t *testing.T, g *Graph) []DependencyOrigin {
 		t.Helper()
-		node, ok := g.Node("lodash@4.17.21")
+		node, ok := g.DependencyNode(mergedID)
 		if !ok {
 			t.Fatal("expected lodash in the merged graph")
 		}
-		return node.Origin.Normalized()
+		return node.Origins
 	}
 
 	t.Run("a later record fills the gap", func(t *testing.T) {
@@ -460,31 +457,27 @@ func TestMergeGraphFillsOriginGaps(t *testing.T) {
 		if err := MergeGraph(merged, build(t, artifact)); err != nil {
 			t.Fatal(err)
 		}
-		if got := originOf(t, merged); got == nil || got.ArtifactURL != artifact {
-			t.Fatalf("merged origin = %+v, want %q regardless of manifest order", got, artifact)
+		if got := originsOf(t, merged); len(got) != 1 || got[0].ArtifactURL != artifact {
+			t.Fatalf("merged origins = %+v, want %q regardless of manifest order", got, artifact)
 		}
 	})
 
-	// A graph decoded from JSON holds a non-nil zero Origin when the recorded
-	// value was unpublishable, so a gap is "publishes nothing", not "nil".
-	t.Run("a decoded-empty origin is a gap", func(t *testing.T) {
+	t.Run("an earlier record's origin survives a bare witness", func(t *testing.T) {
 		merged := New()
-		unpublishable := build(t, "")
-		if node, ok := unpublishable.Node("lodash@4.17.21"); ok {
-			node.Origin = &DependencyOrigin{} // what UnmarshalJSON leaves behind
-		}
-		if err := MergeGraph(merged, unpublishable); err != nil {
-			t.Fatal(err)
-		}
 		if err := MergeGraph(merged, build(t, artifact)); err != nil {
 			t.Fatal(err)
 		}
-		if got := originOf(t, merged); got == nil || got.ArtifactURL != artifact {
-			t.Fatalf("merged origin = %+v, want %q: an empty origin must not block the fill", got, artifact)
+		if err := MergeGraph(merged, build(t, "")); err != nil {
+			t.Fatal(err)
+		}
+		if got := originsOf(t, merged); len(got) != 1 || got[0].ArtifactURL != artifact {
+			t.Fatalf("merged origins = %+v, want %q", got, artifact)
 		}
 	})
 
-	t.Run("an existing origin stays on conflict", func(t *testing.T) {
+	// Two disagreeing witnesses union instead of the existing one winning —
+	// the shape of a dependency-confusion signal stays observable.
+	t.Run("disagreeing origins union", func(t *testing.T) {
 		merged := New()
 		if err := MergeGraph(merged, build(t, artifact)); err != nil {
 			t.Fatal(err)
@@ -492,8 +485,9 @@ func TestMergeGraphFillsOriginGaps(t *testing.T) {
 		if err := MergeGraph(merged, build(t, mirror)); err != nil {
 			t.Fatal(err)
 		}
-		if got := originOf(t, merged); got == nil || got.ArtifactURL != artifact {
-			t.Fatalf("merged origin = %+v, want the existing record's %q", got, artifact)
+		got := originsOf(t, merged)
+		if len(got) != 2 || got[0].ArtifactURL != artifact || got[1].ArtifactURL != mirror {
+			t.Fatalf("merged origins = %+v, want the union [%q, %q]", got, artifact, mirror)
 		}
 	})
 }

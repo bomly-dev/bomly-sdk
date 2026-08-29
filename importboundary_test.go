@@ -26,18 +26,6 @@ var boundedImports = []struct {
 		allowed: map[string]string{},
 	},
 	{
-		// This fork remains only because the deprecated ParsePackageURL
-		// signature exposes its concrete type. Remove both together in the
-		// next coordinated minor release.
-		module: "github.com/anchore/packageurl-go",
-		allowed: map[string]string{
-			// ParsePackageURL exposes the packageurl type in its signature;
-			// the import goes when that deprecated function is removed in
-			// the next coordinated breaking release.
-			"purl.go": "deprecated ParsePackageURL keeps the type in its signature",
-		},
-	},
-	{
 		// The SPDX expression parser panics on some untrusted inputs;
 		// spdxkit contains those panics, so no other package may reach the
 		// parser directly.

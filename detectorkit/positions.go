@@ -19,7 +19,7 @@ import (
 // nameKey returns the lookup key for a graph node. Detectors
 // typically derive it from dep.Name, dep.Org+":"+dep.Name, or a
 // language-specific normalization. Returning "" skips the node.
-func AttachPositions(g *sdk.Graph, positions map[string]*sdk.SourcePosition, nameKey func(*sdk.Dependency) string) {
+func AttachPositions(g *sdk.Graph, positions map[string]*sdk.SourcePosition, nameKey func(*sdk.DependencyNode) string) {
 	candidates := make(map[string][]*sdk.SourcePosition, len(positions))
 	for key, pos := range positions {
 		if pos == nil {
@@ -27,7 +27,7 @@ func AttachPositions(g *sdk.Graph, positions map[string]*sdk.SourcePosition, nam
 		}
 		candidates[key] = []*sdk.SourcePosition{pos}
 	}
-	attachPositionCandidates(g, candidates, func(dep *sdk.Dependency) []string {
+	attachPositionCandidates(g, candidates, func(dep *sdk.DependencyNode) []string {
 		if nameKey == nil {
 			return nil
 		}
@@ -38,7 +38,7 @@ func AttachPositions(g *sdk.Graph, positions map[string]*sdk.SourcePosition, nam
 // AttachPositionCandidates populates PackageLocation.Position on graph nodes
 // using one or more lookup keys per dependency. It preserves multiple
 // declaration sites and skips exact duplicate file/line/column entries.
-func AttachPositionCandidates(g *sdk.Graph, positions map[string][]*sdk.SourcePosition, keys func(*sdk.Dependency) []string) {
+func AttachPositionCandidates(g *sdk.Graph, positions map[string][]*sdk.SourcePosition, keys func(*sdk.DependencyNode) []string) {
 	attachPositionCandidates(g, positions, keys, true)
 }
 
@@ -57,11 +57,11 @@ func AppendPosition(out map[string][]*sdk.SourcePosition, key string, pos *sdk.S
 	out[key] = append(out[key], pos)
 }
 
-func attachPositionCandidates(g *sdk.Graph, positions map[string][]*sdk.SourcePosition, keys func(*sdk.Dependency) []string, exactDuplicate bool) {
+func attachPositionCandidates(g *sdk.Graph, positions map[string][]*sdk.SourcePosition, keys func(*sdk.DependencyNode) []string, exactDuplicate bool) {
 	if g == nil || len(positions) == 0 || keys == nil {
 		return
 	}
-	for _, pkg := range g.Nodes() {
+	for _, pkg := range g.DependencyNodes() {
 		if pkg == nil {
 			continue
 		}

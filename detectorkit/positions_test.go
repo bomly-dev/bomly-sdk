@@ -6,31 +6,30 @@ import (
 	"testing"
 
 	sdk "github.com/bomly-dev/bomly-sdk"
+	"github.com/bomly-dev/bomly-sdk/testkit"
 )
 
 func TestAttachPositionsNilSafe(t *testing.T) {
 	// All-nil inputs must not panic.
 	AttachPositions(nil, nil, nil)
-	AttachPositions(sdk.New(), nil, func(*sdk.Dependency) string { return "" })
+	AttachPositions(sdk.New(), nil, func(*sdk.DependencyNode) string { return "" })
 	AttachPositions(sdk.New(), map[string]*sdk.SourcePosition{"x": {File: "f"}}, nil)
 }
 
 func TestAttachPositionsDoesNotDuplicate(t *testing.T) {
 	g := sdk.New()
-	pkg := sdk.NewDependency(sdk.Dependency{Coordinates: sdk.Coordinates{Name: "foo",
-		Version:   "1.0.0",
-		Ecosystem: "test"}, Locations: []sdk.PackageLocation{
+	pkg := testkit.MustDependencyCoords(t, sdk.Coordinates{Name: "foo", Version: "1.0.0", Ecosystem: "test"})
+	pkg.Locations = []sdk.PackageLocation{
 		{RealPath: "lock.txt", Position: &sdk.SourcePosition{File: "lock.txt", Line: 1}},
-	},
-	})
+	}
 	_ = g.AddNode(pkg)
 
 	positions := map[string]*sdk.SourcePosition{
 		"foo": {File: "lock.txt", Line: 5},
 	}
-	AttachPositions(g, positions, func(p *sdk.Dependency) string { return p.Name })
+	AttachPositions(g, positions, func(p *sdk.DependencyNode) string { return p.Name })
 
-	got, _ := g.Node("foo@1.0.0")
+	got, _ := g.DependencyNode(pkg.NodeID())
 	if got == nil {
 		t.Fatal("missing foo")
 	}
@@ -41,16 +40,16 @@ func TestAttachPositionsDoesNotDuplicate(t *testing.T) {
 
 func TestAttachPositionsHonorsNameKey(t *testing.T) {
 	g := sdk.New()
-	pkg := sdk.NewDependency(sdk.Dependency{Coordinates: sdk.Coordinates{Name: "Foo", Version: "1", Ecosystem: "test"}})
+	pkg := testkit.MustDependencyCoords(t, sdk.Coordinates{Name: "Foo", Version: "1", Ecosystem: "test"})
 	_ = g.AddNode(pkg)
 
 	// Map keyed by lowercase name; nameKey lowercases the node.
 	positions := map[string]*sdk.SourcePosition{"foo": {File: "lock", Line: 42}}
-	AttachPositions(g, positions, func(p *sdk.Dependency) string {
+	AttachPositions(g, positions, func(p *sdk.DependencyNode) string {
 		return toLower(p.Name)
 	})
 
-	got, _ := g.Node("Foo@1")
+	got, _ := g.DependencyNode(pkg.NodeID())
 	if got == nil {
 		t.Fatal("missing Foo")
 	}
@@ -64,17 +63,17 @@ func TestAttachPositionsHonorsNameKey(t *testing.T) {
 
 func TestAttachPositionCandidatesExactKeyStopsFallback(t *testing.T) {
 	g := sdk.New()
-	pkg := sdk.NewDependency(sdk.Dependency{Coordinates: sdk.Coordinates{Name: "foo", Version: "2.0.0", Ecosystem: "test"}})
+	pkg := testkit.MustDependencyCoords(t, sdk.Coordinates{Name: "foo", Version: "2.0.0", Ecosystem: "test"})
 	_ = g.AddNode(pkg)
 
 	AttachPositionCandidates(g, map[string][]*sdk.SourcePosition{
 		"foo@2.0.0": {{File: "lock", Line: 20}},
 		"foo":       {{File: "lock", Line: 10}},
-	}, func(p *sdk.Dependency) []string {
+	}, func(p *sdk.DependencyNode) []string {
 		return []string{p.Name + "@" + p.Version, p.Name}
 	})
 
-	got, _ := g.Node("foo@2.0.0")
+	got, _ := g.DependencyNode(pkg.NodeID())
 	if got == nil || len(got.Locations) != 1 {
 		t.Fatalf("Locations = %#v, want one exact-version location", got)
 	}
@@ -85,18 +84,19 @@ func TestAttachPositionCandidatesExactKeyStopsFallback(t *testing.T) {
 
 func TestAttachPositionCandidatesUpgradesFileOnlyLocation(t *testing.T) {
 	g := sdk.New()
-	pkg := sdk.NewDependency(sdk.Dependency{Coordinates: sdk.Coordinates{Name: "foo", Version: "1.0.0", Ecosystem: "test"}, Locations: []sdk.PackageLocation{
+	pkg := testkit.MustDependencyCoords(t, sdk.Coordinates{Name: "foo", Version: "1.0.0", Ecosystem: "test"})
+	pkg.Locations = []sdk.PackageLocation{
 		{RealPath: "lock", AccessPath: "lock"},
-	}})
+	}
 	_ = g.AddNode(pkg)
 
 	AttachPositionCandidates(g, map[string][]*sdk.SourcePosition{
 		"foo@1.0.0": {{File: "lock", Line: 8}},
-	}, func(p *sdk.Dependency) []string {
+	}, func(p *sdk.DependencyNode) []string {
 		return []string{p.Name + "@" + p.Version}
 	})
 
-	got, _ := g.Node("foo@1.0.0")
+	got, _ := g.DependencyNode(pkg.NodeID())
 	if got == nil || len(got.Locations) != 2 {
 		t.Fatalf("Locations = %#v, want file-only plus line-specific location", got)
 	}

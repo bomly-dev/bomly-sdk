@@ -44,18 +44,21 @@ func (fakeLockfileDetector) ResolveGraph(_ context.Context, req sdk.DetectionReq
 			continue
 		}
 		name, version := fields[0], fields[1]
-		dep := sdk.NewDependency(sdk.Dependency{Coordinates: sdk.Coordinates{
+		dep, err := sdk.NewDependencyNode(sdk.Coordinates{
 			Name: name, Version: version, Ecosystem: "fake",
-		}})
+		})
+		if err != nil {
+			return sdk.DetectionResult{}, err
+		}
 		if err := graph.AddNode(dep); err != nil {
 			return sdk.DetectionResult{}, err
 		}
 		if name != "positionless" {
-			positions[name+"@"+version] = []*sdk.SourcePosition{{File: "fake.lock", Line: line}}
+			positions[dep.NodeID()] = []*sdk.SourcePosition{{File: "fake.lock", Line: line}}
 		}
 	}
 	for key, entries := range positions {
-		if node, ok := graph.Node(key); ok {
+		if node, ok := graph.DependencyNode(key); ok {
 			for _, pos := range entries {
 				node.Locations = append(node.Locations, sdk.PackageLocation{
 					RealPath: pos.File, AccessPath: pos.File, Position: pos,
@@ -75,7 +78,8 @@ func TestRequireLockfilePositionsPassesForPositionedPackages(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	RequireLockfilePositions(t, fakeLockfileDetector{}, dir, []string{"foo@1.0.0", "bar@2.0.0"})
+	// Node IDs are canonical package URLs now.
+	RequireLockfilePositions(t, fakeLockfileDetector{}, dir, []string{"pkg:fake/foo@1.0.0", "pkg:fake/bar@2.0.0"})
 }
 
 func TestRequireLockfilePositionsDetectsMissingPositions(t *testing.T) {
@@ -95,15 +99,15 @@ func TestRequireLockfilePositionsDetectsMissingPositions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	positioned, ok := graph.Node("foo@1.0.0")
+	positioned, ok := graph.Node("pkg:fake/foo@1.0.0")
 	if !ok || !hasSourcePosition(positioned) {
-		t.Fatalf("expected foo@1.0.0 to carry a source position, got %#v", positioned)
+		t.Fatalf("expected pkg:fake/foo@1.0.0 to carry a source position, got %#v", positioned)
 	}
-	bare, ok := graph.Node("positionless@3.0.0")
+	bare, ok := graph.Node("pkg:fake/positionless@3.0.0")
 	if !ok {
-		t.Fatal("expected positionless@3.0.0 in graph")
+		t.Fatal("expected pkg:fake/positionless@3.0.0 in graph")
 	}
 	if hasSourcePosition(bare) {
-		t.Fatalf("expected positionless@3.0.0 to have no source position, got %#v", bare.Locations)
+		t.Fatalf("expected pkg:fake/positionless@3.0.0 to have no source position, got %#v", bare.NodeLocations())
 	}
 }

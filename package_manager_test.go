@@ -103,9 +103,15 @@ func TestScalaPackageManagerAndEcosystem(t *testing.T) {
 	}
 }
 
-func TestBuildPackageURLFallbackForSwift(t *testing.T) {
-	got := BuildPackageURL("swift", "", "async-kit", "1.15.0")
-	if got != "pkg:swift/async-kit@1.15.0" {
+func TestBuildPackageURLEnforcesSwiftNamespaceProfile(t *testing.T) {
+	// The legacy namespace-less Swift fallback emission is gone: the purl
+	// specification profile requires the repository namespace, and the
+	// library-refused fallback is no longer emitted.
+	if got := BuildPackageURL("swift", "", "async-kit", "1.15.0"); got != "" {
+		t.Fatalf("expected no namespace-less Swift package URL, got %q", got)
+	}
+	got := BuildPackageURL("swift", "github.com/vapor", "async-kit", "1.15.0")
+	if got != "pkg:swift/github.com/vapor/async-kit@1.15.0" {
 		t.Fatalf("expected Swift package URL, got %q", got)
 	}
 }

@@ -34,7 +34,7 @@ type AuditRequest struct {
 	Graph           *Graph           `json:"graph,omitempty"`
 	BaselineGraph   *Graph           `json:"baselineGraph,omitempty"`
 	Registry        *PackageRegistry `json:"registry,omitempty"`
-	Target          *Dependency      `json:"target,omitempty"`
+	Target          *DependencyNode  `json:"target,omitempty"`
 	// DependencyDetailChanges contains canonical head-side transitions for a
 	// diff audit. Scan and explain requests leave it empty.
 	DependencyDetailChanges []DependencyDetailTransition `json:"dependencyDetailChanges,omitempty"`

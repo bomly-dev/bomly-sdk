@@ -6,10 +6,16 @@ import (
 )
 
 func TestNormalizePackageIdentityPython(t *testing.T) {
-	pkg := &Dependency{Coordinates: Coordinates{Ecosystem: EcosystemPython, Name: " Requests_Toolbelt ", Version: "1.0.0RC1"}}
+	coords := Coordinates{Ecosystem: EcosystemPython, Name: " Requests_Toolbelt ", Version: "1.0.0RC1"}
 
-	NormalizeDependencyIdentity(pkg)
+	// NormalizeDependencyIdentity is gone: NormalizeCoordinates returns the
+	// applied rules, and the constructors record the provenance breadcrumbs.
+	applied := NormalizeCoordinates(&coords)
+	if !reflect.DeepEqual(applied, []string{"name", "version"}) {
+		t.Fatalf("NormalizeCoordinates() applied = %#v", applied)
+	}
 
+	pkg := mustDep(t, Coordinates{Ecosystem: EcosystemPython, Name: " Requests_Toolbelt ", Version: "1.0.0RC1"})
 	if pkg.Name != "requests-toolbelt" {
 		normReturnNameMismatch(t, pkg.Name, "requests-toolbelt")
 	}
@@ -20,9 +26,7 @@ func TestNormalizePackageIdentityPython(t *testing.T) {
 }
 
 func TestNormalizePackageIdentityRust(t *testing.T) {
-	pkg := &Dependency{Coordinates: Coordinates{PackageManager: PackageManagerCargo, Name: "Serde_JSON", Version: "1.0.0-RC1"}}
-
-	NormalizeDependencyIdentity(pkg)
+	pkg := mustDep(t, Coordinates{PackageManager: PackageManagerCargo, Name: "Serde_JSON", Version: "1.0.0-RC1"})
 
 	if pkg.Name != "serde-json" {
 		normReturnNameMismatch(t, pkg.Name, "serde-json")
@@ -34,9 +38,7 @@ func TestNormalizePackageIdentityRust(t *testing.T) {
 }
 
 func TestNormalizePackageIdentityNPMScopedName(t *testing.T) {
-	pkg := &Dependency{Coordinates: Coordinates{Ecosystem: EcosystemNPM, Name: "@Types/Node", Version: "20.11.30"}}
-
-	NormalizeDependencyIdentity(pkg)
+	pkg := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "@Types/Node", Version: "20.11.30"})
 
 	if pkg.Org != "types" {
 		normReturnNameMismatch(t, pkg.Org, "types")
@@ -48,9 +50,7 @@ func TestNormalizePackageIdentityNPMScopedName(t *testing.T) {
 }
 
 func TestNormalizePackageIdentityGoPath(t *testing.T) {
-	pkg := &Dependency{Coordinates: Coordinates{Ecosystem: EcosystemGo, Name: "github.com\\Example\\lib//v2", Version: "V2.1.0-RC1"}}
-
-	NormalizeDependencyIdentity(pkg)
+	pkg := mustDep(t, Coordinates{Ecosystem: EcosystemGo, Name: "github.com\\Example\\lib//v2", Version: "V2.1.0-RC1"})
 
 	if pkg.Name != "github.com/Example/lib/v2" {
 		normReturnNameMismatch(t, pkg.Name, "github.com/Example/lib/v2")
@@ -73,9 +73,7 @@ func TestNormalizePackageIdentityUsesCanonicalEcosystemAliases(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			pkg := &Dependency{Coordinates: Coordinates{PackageManager: tc.manager, Name: tc.input}}
-
-			NormalizeDependencyIdentity(pkg)
+			pkg := mustDep(t, Coordinates{PackageManager: tc.manager, Name: tc.input})
 
 			if pkg.Name != tc.want {
 				normReturnNameMismatch(t, pkg.Name, tc.want)

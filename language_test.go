@@ -173,10 +173,9 @@ func TestVulnerabilityCloneCarriesNewFields(t *testing.T) {
 
 func TestDependencyCloneCarriesLocationPosition(t *testing.T) {
 	pos := SourcePosition{File: "package.json", Line: 12, Column: 5}
-	dep := Dependency{Coordinates: Coordinates{Name: "lodash",
-		Version: "4.17.21"}, Locations: []PackageLocation{
+	dep := mustDep(t, Coordinates{Name: "lodash", Version: "4.17.21"})
+	dep.Locations = []PackageLocation{
 		{RealPath: "/abs/package.json", Position: &pos},
-	},
 	}
 	clone := dep.Clone()
 	if clone.Locations[0].Position == dep.Locations[0].Position {

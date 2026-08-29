@@ -172,6 +172,12 @@ type Package struct {
 	// for matchers (repository resolution reads it). It is raw and never
 	// published; the dependency's validated Origin stays on the graph node.
 	ResolvedURL string `json:"resolved_url,omitempty"`
+	// DetectedOrigins carries the graph node's vetted ADR-0033 origins onto
+	// the seeded registry package, so matchers that resolved repositories
+	// from the (now identity-stripped) URL-valued purl qualifiers receive
+	// the relocated signal. Additive and optional; every element passes the
+	// origin codecs' validation. Merge class: union by normalized value.
+	DetectedOrigins []DependencyOrigin `json:"detected_origins,omitempty"`
 
 	CPEs            []string             `json:"cpes,omitempty"`
 	Digests         []Digest             `json:"digests,omitempty"`
@@ -235,7 +241,7 @@ func (p *Package) IdentityKey() string {
 	if p == nil {
 		return ""
 	}
-	return p.Coordinates.IdentityKey()
+	return string(p.Ecosystem) + "\x00" + p.PackageManager.Name() + "\x00" + string(p.Type) + "\x00" + p.Org + "\x00" + p.Name
 }
 
 // LicenseValues returns normalized package license labels in stable order.
@@ -390,7 +396,7 @@ func (p *Package) mergeVulnerabilities(incoming []Vulnerability) {
 // SetDetectionLicenses stashes detection-time license facts on dep's metadata
 // under MetadataKeyDetectionLicenses, so consolidation can lift them into the
 // package registry. No-op when dep is nil or licenses is empty.
-func SetDetectionLicenses(dep *Dependency, licenses []PackageLicense) {
+func SetDetectionLicenses(dep *DependencyNode, licenses []PackageLicense) {
 	if dep == nil || len(licenses) == 0 {
 		return
 	}
@@ -401,7 +407,7 @@ func SetDetectionLicenses(dep *Dependency, licenses []PackageLicense) {
 }
 
 // DetectionLicenses returns license facts stashed on dep at detection time.
-func DetectionLicenses(dep *Dependency) []PackageLicense {
+func DetectionLicenses(dep *DependencyNode) []PackageLicense {
 	if dep == nil || dep.Metadata == nil {
 		return nil
 	}
@@ -411,13 +417,18 @@ func DetectionLicenses(dep *Dependency) []PackageLicense {
 	return nil
 }
 
-// PackageFromDependency seeds a registry package from a dependency's identity
-// fields. The returned package carries no enrichment; matchers fill it in.
-func PackageFromDependency(dep *Dependency) *Package {
+// PackageFromDependencyNode seeds a registry package from a dependency
+// node's identity. The node's ID is its canonical package URL, so the
+// package is keyed on it directly. The returned package carries no
+// enrichment; matchers fill it in. DetectedOrigins projects the node's
+// vetted origins onto the package, so matchers that used to read the
+// URL-valued purl qualifiers (Scorecard's repository resolution) receive
+// the relocated signal.
+func PackageFromDependencyNode(dep *DependencyNode) *Package {
 	if dep == nil {
 		return nil
 	}
-	purl := CanonicalPackageURLFromDependency(dep)
+	purl := dep.NodeID()
 	return &Package{
 		Coordinates: Coordinates{
 			PURL:           purl,
@@ -429,8 +440,9 @@ func PackageFromDependency(dep *Dependency) *Package {
 			PackageManager: dep.PackageManager,
 			Language:       dep.Language,
 		},
-		ID:          purl,
-		ResolvedURL: dep.ResolvedURL,
+		ID:              purl,
+		ResolvedURL:     dep.ResolvedURL,
+		DetectedOrigins: MergeOrigins(nil, dep.Origins),
 	}
 }
 

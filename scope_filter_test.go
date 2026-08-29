@@ -4,22 +4,25 @@ import "testing"
 
 func TestFilterGraphByScope(t *testing.T) {
 	depsGraph := New()
-	root := NewDependency(Dependency{Coordinates: Coordinates{Name: "app", Version: "1.0.0"}})
-	runtimeDep := NewDependency(Dependency{Coordinates: Coordinates{Name: "react", Version: "18.2.0"}, Scopes: ScopesOf(ScopeRuntime)})
-	devDep := NewDependency(Dependency{Coordinates: Coordinates{Name: "vitest", Version: "2.0.0"}, Scopes: ScopesOf(ScopeDevelopment)})
-	sharedDep := NewDependency(Dependency{Coordinates: Coordinates{Name: "shared", Version: "1.0.0"}, Scopes: ScopesOf(ScopeDevelopment, ScopeRuntime)})
-	for _, pkg := range []*Dependency{root, runtimeDep, devDep, sharedDep} {
+	root := mustDep(t, Coordinates{Name: "app", Version: "1.0.0"})
+	runtimeDep := mustDep(t, Coordinates{Name: "react", Version: "18.2.0"})
+	runtimeDep.Scopes = ScopesOf(ScopeRuntime)
+	devDep := mustDep(t, Coordinates{Name: "vitest", Version: "2.0.0"})
+	devDep.Scopes = ScopesOf(ScopeDevelopment)
+	sharedDep := mustDep(t, Coordinates{Name: "shared", Version: "1.0.0"})
+	sharedDep.Scopes = ScopesOf(ScopeDevelopment, ScopeRuntime)
+	for _, pkg := range []*DependencyNode{root, runtimeDep, devDep, sharedDep} {
 		if err := depsGraph.AddNode(pkg); err != nil {
-			t.Fatalf("add package %q: %v", pkg.ID, err)
+			t.Fatalf("add package %q: %v", pkg.NodeID(), err)
 		}
 	}
-	if err := depsGraph.AddEdge(root.ID, runtimeDep.ID); err != nil {
+	if err := depsGraph.AddEdge(root.NodeID(), runtimeDep.NodeID()); err != nil {
 		t.Fatalf("add runtime dependency: %v", err)
 	}
-	if err := depsGraph.AddEdge(root.ID, devDep.ID); err != nil {
+	if err := depsGraph.AddEdge(root.NodeID(), devDep.NodeID()); err != nil {
 		t.Fatalf("add development dependency: %v", err)
 	}
-	if err := depsGraph.AddEdge(root.ID, sharedDep.ID); err != nil {
+	if err := depsGraph.AddEdge(root.NodeID(), sharedDep.NodeID()); err != nil {
 		t.Fatalf("add shared dependency: %v", err)
 	}
 
@@ -30,13 +33,13 @@ func TestFilterGraphByScope(t *testing.T) {
 	if filtered.Size() != 3 {
 		t.Fatalf("expected 3 packages after runtime filter, got %d", filtered.Size())
 	}
-	if _, ok := filtered.Node(runtimeDep.ID); !ok {
+	if _, ok := filtered.Node(runtimeDep.NodeID()); !ok {
 		t.Fatal("expected runtime dependency to be kept")
 	}
-	if _, ok := filtered.Node(sharedDep.ID); !ok {
+	if _, ok := filtered.Node(sharedDep.NodeID()); !ok {
 		t.Fatal("expected dependency shared with runtime to be kept")
 	}
-	if _, ok := filtered.Node(devDep.ID); ok {
+	if _, ok := filtered.Node(devDep.NodeID()); ok {
 		t.Fatal("expected development dependency to be removed")
 	}
 
@@ -44,31 +47,33 @@ func TestFilterGraphByScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FilterGraphByScope() error = %v", err)
 	}
-	if _, ok := filtered.Node(devDep.ID); !ok {
+	if _, ok := filtered.Node(devDep.NodeID()); !ok {
 		t.Fatal("expected development dependency to be kept")
 	}
-	if _, ok := filtered.Node(runtimeDep.ID); ok {
+	if _, ok := filtered.Node(runtimeDep.NodeID()); ok {
 		t.Fatal("expected runtime dependency to be removed")
 	}
-	if _, ok := filtered.Node(sharedDep.ID); ok {
+	if _, ok := filtered.Node(sharedDep.NodeID()); ok {
 		t.Fatal("expected runtime-primary shared dependency to be removed from development filter")
 	}
 }
 
 func TestFilterDetectionResultByScope_FiltersEntryPackages(t *testing.T) {
 	depsGraph := New()
-	root := NewDependency(Dependency{Coordinates: Coordinates{Name: "app", Version: "1.0.0"}})
-	runtimeDep := NewDependency(Dependency{Coordinates: Coordinates{Ecosystem: EcosystemNPM, Name: "react", Version: "18.2.0"}, Scopes: ScopesOf(ScopeRuntime)})
-	devDep := NewDependency(Dependency{Coordinates: Coordinates{Ecosystem: EcosystemNPM, Name: "vitest", Version: "2.0.0"}, Scopes: ScopesOf(ScopeDevelopment)})
-	for _, pkg := range []*Dependency{root, runtimeDep, devDep} {
+	root := mustDep(t, Coordinates{Name: "app", Version: "1.0.0"})
+	runtimeDep := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "react", Version: "18.2.0"})
+	runtimeDep.Scopes = ScopesOf(ScopeRuntime)
+	devDep := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "vitest", Version: "2.0.0"})
+	devDep.Scopes = ScopesOf(ScopeDevelopment)
+	for _, pkg := range []*DependencyNode{root, runtimeDep, devDep} {
 		if err := depsGraph.AddNode(pkg); err != nil {
-			t.Fatalf("add package %q: %v", pkg.ID, err)
+			t.Fatalf("add package %q: %v", pkg.NodeID(), err)
 		}
 	}
-	if err := depsGraph.AddEdge(root.ID, runtimeDep.ID); err != nil {
+	if err := depsGraph.AddEdge(root.NodeID(), runtimeDep.NodeID()); err != nil {
 		t.Fatalf("add runtime dependency: %v", err)
 	}
-	if err := depsGraph.AddEdge(root.ID, devDep.ID); err != nil {
+	if err := depsGraph.AddEdge(root.NodeID(), devDep.NodeID()); err != nil {
 		t.Fatalf("add development dependency: %v", err)
 	}
 
@@ -113,9 +118,10 @@ func TestFilterDetectionResultByScope_RepresentativeParserOutputs(t *testing.T) 
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
+			graph, runtimeID, devID := representativeScopedGraph(t, Ecosystem(tt.ecosystem))
 			result := DetectionResult{
 				Graphs: &GraphContainer{Entries: []GraphEntry{{
-					Graph:    representativeScopedGraph(t, Ecosystem(tt.ecosystem)),
+					Graph:    graph,
 					Manifest: ManifestMetadata{Path: tt.manifest},
 				}}},
 			}
@@ -123,33 +129,43 @@ func TestFilterDetectionResultByScope_RepresentativeParserOutputs(t *testing.T) 
 			if err != nil {
 				t.Fatalf("FilterDetectionResultByScope() error = %v", err)
 			}
-			graph := filtered.Graphs.Entries[0].Graph
-			if _, ok := graph.Node(tt.ecosystem + "-runtime@1.0.0"); !ok {
-				t.Fatalf("expected runtime dependency for %s: %s", tt.name, graph.PrettyString())
+			filteredGraph := filtered.Graphs.Entries[0].Graph
+			if _, ok := filteredGraph.Node(runtimeID); !ok {
+				t.Fatalf("expected runtime dependency for %s: %s", tt.name, filteredGraph.PrettyString())
 			}
-			if _, ok := graph.Node(tt.ecosystem + "-dev@1.0.0"); ok {
-				t.Fatalf("expected development dependency to be filtered for %s: %s", tt.name, graph.PrettyString())
+			if _, ok := filteredGraph.Node(devID); ok {
+				t.Fatalf("expected development dependency to be filtered for %s: %s", tt.name, filteredGraph.PrettyString())
 			}
 		})
 	}
 }
 
-func representativeScopedGraph(t *testing.T, ecosystem Ecosystem) *Graph {
+func representativeScopedGraph(t *testing.T, ecosystem Ecosystem) (*Graph, string, string) {
 	t.Helper()
 	graph := New()
-	root := NewDependency(Dependency{Coordinates: Coordinates{Ecosystem: ecosystem, Name: string(ecosystem) + "-app", Version: "1.0.0"}})
-	runtimeDep := NewDependency(Dependency{Coordinates: Coordinates{Ecosystem: ecosystem, Name: string(ecosystem) + "-runtime", Version: "1.0.0"}, Scopes: ScopesOf(ScopeRuntime)})
-	devDep := NewDependency(Dependency{Coordinates: Coordinates{Ecosystem: ecosystem, Name: string(ecosystem) + "-dev", Version: "1.0.0"}, Scopes: ScopesOf(ScopeDevelopment)})
-	for _, dep := range []*Dependency{root, runtimeDep, devDep} {
+	coords := func(name string) Coordinates {
+		c := Coordinates{Ecosystem: ecosystem, Name: name, Version: "1.0.0"}
+		if ecosystem == EcosystemMaven || ecosystem == "packagist" {
+			// maven and composer PURLs require a namespace.
+			c.Org = "org.example"
+		}
+		return c
+	}
+	root := mustDep(t, coords(string(ecosystem)+"-app"))
+	runtimeDep := mustDep(t, coords(string(ecosystem)+"-runtime"))
+	runtimeDep.Scopes = ScopesOf(ScopeRuntime)
+	devDep := mustDep(t, coords(string(ecosystem)+"-dev"))
+	devDep.Scopes = ScopesOf(ScopeDevelopment)
+	for _, dep := range []*DependencyNode{root, runtimeDep, devDep} {
 		if err := graph.AddNode(dep); err != nil {
-			t.Fatalf("add %q: %v", dep.ID, err)
+			t.Fatalf("add %q: %v", dep.NodeID(), err)
 		}
 	}
-	if err := graph.AddEdge(root.ID, runtimeDep.ID); err != nil {
+	if err := graph.AddEdge(root.NodeID(), runtimeDep.NodeID()); err != nil {
 		t.Fatalf("add runtime edge: %v", err)
 	}
-	if err := graph.AddEdge(root.ID, devDep.ID); err != nil {
+	if err := graph.AddEdge(root.NodeID(), devDep.NodeID()); err != nil {
 		t.Fatalf("add development edge: %v", err)
 	}
-	return graph
+	return graph, runtimeDep.NodeID(), devDep.NodeID()
 }

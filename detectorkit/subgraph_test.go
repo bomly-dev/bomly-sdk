@@ -4,8 +4,10 @@ import (
 	"testing"
 
 	sdk "github.com/bomly-dev/bomly-sdk"
+	"github.com/bomly-dev/bomly-sdk/testkit"
 )
 
+// Node IDs are canonical package URLs now: pkg:generic/<name>.
 func subgraphFixture(t *testing.T, edges [][2]string) *sdk.Graph {
 	t.Helper()
 	g := sdk.New()
@@ -15,7 +17,7 @@ func subgraphFixture(t *testing.T, edges [][2]string) *sdk.Graph {
 			return
 		}
 		added[id] = struct{}{}
-		if err := g.AddNode(sdk.NewDependencyWithID(id, sdk.Dependency{Coordinates: sdk.Coordinates{Name: id}})); err != nil {
+		if err := g.AddNode(testkit.MustDependencyNode(t, id)); err != nil {
 			t.Fatalf("add node %q: %v", id, err)
 		}
 	}
@@ -31,21 +33,21 @@ func subgraphFixture(t *testing.T, edges [][2]string) *sdk.Graph {
 
 func TestSubgraphFromExtractsReachableSubtree(t *testing.T) {
 	g := subgraphFixture(t, [][2]string{
-		{"root", "a"}, {"a", "shared"},
-		{"module", "b"}, {"b", "shared"}, // diamond: shared reachable twice
-		{"unrelated", "c"},
+		{"pkg:generic/root", "pkg:generic/a"}, {"pkg:generic/a", "pkg:generic/shared"},
+		{"pkg:generic/module", "pkg:generic/b"}, {"pkg:generic/b", "pkg:generic/shared"}, // diamond: shared reachable twice
+		{"pkg:generic/unrelated", "pkg:generic/c"},
 	})
 
-	sub, err := SubgraphFrom(g, "module")
+	sub, err := SubgraphFrom(g, "pkg:generic/module")
 	if err != nil {
 		t.Fatalf("SubgraphFrom() error = %v", err)
 	}
-	for _, want := range []string{"module", "b", "shared"} {
+	for _, want := range []string{"pkg:generic/module", "pkg:generic/b", "pkg:generic/shared"} {
 		if _, ok := sub.Node(want); !ok {
 			t.Fatalf("expected node %q in subgraph", want)
 		}
 	}
-	for _, forbidden := range []string{"root", "a", "unrelated", "c"} {
+	for _, forbidden := range []string{"pkg:generic/root", "pkg:generic/a", "pkg:generic/unrelated", "pkg:generic/c"} {
 		if _, ok := sub.Node(forbidden); ok {
 			t.Fatalf("unexpected node %q in subgraph", forbidden)
 		}
@@ -53,17 +55,17 @@ func TestSubgraphFromExtractsReachableSubtree(t *testing.T) {
 	if sub.Size() != 3 {
 		t.Fatalf("expected 3 nodes, got %d", sub.Size())
 	}
-	deps, err := sub.DirectDependencies("b")
-	if err != nil || len(deps) != 1 || deps[0].ID != "shared" {
+	deps, err := sub.DirectDependencies("pkg:generic/b")
+	if err != nil || len(deps) != 1 || deps[0].NodeID() != "pkg:generic/shared" {
 		t.Fatalf("expected b -> shared edge, got %v (%v)", deps, err)
 	}
 }
 
 func TestSubgraphFromHandlesCycles(t *testing.T) {
 	g := subgraphFixture(t, [][2]string{
-		{"root", "a"}, {"a", "b"}, {"b", "a"},
+		{"pkg:generic/root", "pkg:generic/a"}, {"pkg:generic/a", "pkg:generic/b"}, {"pkg:generic/b", "pkg:generic/a"},
 	})
-	sub, err := SubgraphFrom(g, "root")
+	sub, err := SubgraphFrom(g, "pkg:generic/root")
 	if err != nil {
 		t.Fatalf("SubgraphFrom() error = %v", err)
 	}
@@ -73,11 +75,11 @@ func TestSubgraphFromHandlesCycles(t *testing.T) {
 }
 
 func TestSubgraphFromMissingRoot(t *testing.T) {
-	g := subgraphFixture(t, [][2]string{{"root", "a"}})
+	g := subgraphFixture(t, [][2]string{{"pkg:generic/root", "pkg:generic/a"}})
 	if _, err := SubgraphFrom(g, "nope"); err == nil {
 		t.Fatal("expected error for missing root")
 	}
-	if _, err := SubgraphFrom(nil, "root"); err == nil {
+	if _, err := SubgraphFrom(nil, "pkg:generic/root"); err == nil {
 		t.Fatal("expected error for nil graph")
 	}
 }

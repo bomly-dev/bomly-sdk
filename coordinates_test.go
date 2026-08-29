@@ -3,16 +3,14 @@ package sdk
 import "testing"
 
 func TestCoordinatesSharedView(t *testing.T) {
-	dep := NewDependency(Dependency{
-		Coordinates: Coordinates{
-			Ecosystem:      EcosystemMaven,
-			PackageManager: PackageManagerGradle,
-			Type:           PackageTypePackage,
-			Org:            "com.example",
-			Name:           "demo",
-			Version:        "1.2.3",
-			Language:       LanguageJava,
-		},
+	dep := mustDep(t, Coordinates{
+		Ecosystem:      EcosystemMaven,
+		PackageManager: PackageManagerGradle,
+		Type:           PackageTypePackage,
+		Org:            "com.example",
+		Name:           "demo",
+		Version:        "1.2.3",
+		Language:       LanguageJava,
 	})
 	pkg := &Package{
 		Coordinates: dep.Coordinates,
@@ -24,11 +22,13 @@ func TestCoordinatesSharedView(t *testing.T) {
 	if got, want := dep.Coordinates.QualifiedName(), "com.example:demo"; got != want {
 		t.Fatalf("QualifiedName() = %q, want %q", got, want)
 	}
-	if got, want := dep.Coordinates.StableID(), "com.example:demo@1.2.3"; got != want {
-		t.Fatalf("StableID() = %q, want %q", got, want)
+	// StableID is gone: the canonical package URL is the identity now.
+	if got, want := dep.NodeID(), "pkg:maven/com.example/demo@1.2.3"; got != want {
+		t.Fatalf("NodeID() = %q, want %q", got, want)
 	}
-	if dep.IdentityKey() != pkg.IdentityKey() {
-		t.Fatalf("identity keys differ: dep=%q pkg=%q", dep.IdentityKey(), pkg.IdentityKey())
+	seeded := PackageFromDependencyNode(dep)
+	if seeded.PURL != dep.NodeID() || seeded.IdentityKey() != pkg.IdentityKey() {
+		t.Fatalf("identity keys differ: seeded=%q pkg=%q", seeded.IdentityKey(), pkg.IdentityKey())
 	}
 }
 

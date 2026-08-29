@@ -14,13 +14,15 @@ func TestMergeGraphUnionsLocationsAcrossEntries(t *testing.T) {
 		AccessPath: "lib/build.gradle",
 		Position:   &SourcePosition{File: "lib/build.gradle", Line: 7},
 	}
+	// maven PURLs require the group-ID namespace, so the fixture carries one.
+	const mergedID = "pkg:maven/org.apache.commons/commons-text@1.9"
 	newEntry := func(withLocation bool) *Graph {
 		g := New()
-		dep := Dependency{Coordinates: Coordinates{Name: "commons-text", Version: "1.9", Ecosystem: EcosystemMaven}}
+		dep := mustDep(t, Coordinates{Org: "org.apache.commons", Name: "commons-text", Version: "1.9", Ecosystem: EcosystemMaven})
 		if withLocation {
 			dep.Locations = []PackageLocation{located}
 		}
-		if err := g.AddNode(NewDependencyWithID("commons-text@1.9", dep)); err != nil {
+		if err := g.AddNode(dep); err != nil {
 			t.Fatalf("AddNode: %v", err)
 		}
 		return g
@@ -37,7 +39,7 @@ func TestMergeGraphUnionsLocationsAcrossEntries(t *testing.T) {
 				t.Fatalf("%s: MergeGraph: %v", name, err)
 			}
 		}
-		node, ok := merged.Node("commons-text@1.9")
+		node, ok := merged.DependencyNode(mergedID)
 		if !ok || node == nil {
 			t.Fatalf("%s: merged node missing", name)
 		}
@@ -55,19 +57,16 @@ func TestMergeGraphUnionsLocationsAcrossEntries(t *testing.T) {
 // through the container-level view used by the scan/diff pipelines.
 func TestConsolidatedGraphKeepsDeclaringModuleLocation(t *testing.T) {
 	consumer := New()
-	if err := consumer.AddNode(NewDependencyWithID("commons-text@1.9", Dependency{
-		Coordinates: Coordinates{Name: "commons-text", Version: "1.9", Ecosystem: EcosystemMaven},
-	})); err != nil {
+	if err := consumer.AddNode(mustDep(t, Coordinates{Org: "org.apache.commons", Name: "commons-text", Version: "1.9", Ecosystem: EcosystemMaven})); err != nil {
 		t.Fatalf("AddNode: %v", err)
 	}
 	declaring := New()
-	if err := declaring.AddNode(NewDependencyWithID("commons-text@1.9", Dependency{
-		Coordinates: Coordinates{Name: "commons-text", Version: "1.9", Ecosystem: EcosystemMaven},
-		Locations: []PackageLocation{{
-			RealPath: "lib/build.gradle",
-			Position: &SourcePosition{File: "lib/build.gradle", Line: 7},
-		}},
-	})); err != nil {
+	locatedDep := mustDep(t, Coordinates{Org: "org.apache.commons", Name: "commons-text", Version: "1.9", Ecosystem: EcosystemMaven})
+	locatedDep.Locations = []PackageLocation{{
+		RealPath: "lib/build.gradle",
+		Position: &SourcePosition{File: "lib/build.gradle", Line: 7},
+	}}
+	if err := declaring.AddNode(locatedDep); err != nil {
 		t.Fatalf("AddNode: %v", err)
 	}
 
@@ -79,7 +78,7 @@ func TestConsolidatedGraphKeepsDeclaringModuleLocation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ConsolidatedGraph: %v", err)
 	}
-	node, ok := merged.Node("commons-text@1.9")
+	node, ok := merged.DependencyNode("pkg:maven/org.apache.commons/commons-text@1.9")
 	if !ok || node == nil {
 		t.Fatal("merged node missing")
 	}
