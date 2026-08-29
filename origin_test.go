@@ -497,3 +497,34 @@ func TestMergeGraphFillsOriginGaps(t *testing.T) {
 		}
 	})
 }
+
+func TestMergeOrigins(t *testing.T) {
+	registry := DependencyOrigin{ArtifactURL: "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz"}
+	registryUpperHost := DependencyOrigin{ArtifactURL: "https://REGISTRY.NPMJS.ORG/left-pad/-/left-pad-1.3.0.tgz"}
+	repo := DependencyOrigin{Repository: "https://github.com/left-pad/left-pad", Revision: "v1.3.0"}
+	invalid := DependencyOrigin{ArtifactURL: "file:///home/user/a.tgz"}
+
+	merged := MergeOrigins([]DependencyOrigin{registry}, []DependencyOrigin{registryUpperHost, repo, invalid, {}})
+	if len(merged) != 2 {
+		t.Fatalf("MergeOrigins = %+v, want the deduplicated pair", merged)
+	}
+	if merged[0].ArtifactURL != "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz" {
+		t.Fatalf("merged[0] = %+v — existing entries come first, normalized", merged[0])
+	}
+	if merged[1].Repository != "https://github.com/left-pad/left-pad" || merged[1].Revision != "v1.3.0" {
+		t.Fatalf("merged[1] = %+v", merged[1])
+	}
+	if MergeOrigins(nil, []DependencyOrigin{invalid}) != nil {
+		t.Fatal("a list of unpublishable origins must merge to nil")
+	}
+	if MergeOrigins(nil, nil) != nil {
+		t.Fatal("empty merge must be nil")
+	}
+	// Order stability: same inputs, same output.
+	again := MergeOrigins([]DependencyOrigin{registry}, []DependencyOrigin{registryUpperHost, repo, invalid, {}})
+	for i := range merged {
+		if merged[i] != again[i] {
+			t.Fatal("MergeOrigins is not deterministic")
+		}
+	}
+}

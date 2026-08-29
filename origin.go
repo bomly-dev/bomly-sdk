@@ -321,3 +321,37 @@ func isValidOriginRevision(revision string) bool {
 	}
 	return true
 }
+
+// MergeOrigins unions two origin lists into one, deduplicating by the
+// normalized value and dropping entries that do not survive validation — the
+// publication gates above remain the only door into a stored list. Merge
+// class: union keyed by the normalized origin; order is deterministic —
+// existing entries first, then new additions in arrival order. Two lists
+// asserting the same location in different spellings collapse to one entry
+// because the key is the normalized form, not the input bytes.
+func MergeOrigins(existing, additions []DependencyOrigin) []DependencyOrigin {
+	merged := make([]DependencyOrigin, 0, len(existing)+len(additions))
+	seen := make(map[string]struct{}, len(existing)+len(additions))
+	appendNormalized := func(origin DependencyOrigin) {
+		normalized := origin.Normalized()
+		if normalized == nil {
+			return
+		}
+		key := normalized.ArtifactURL + "\x00" + normalized.Repository + "\x00" + normalized.Revision
+		if _, duplicate := seen[key]; duplicate {
+			return
+		}
+		seen[key] = struct{}{}
+		merged = append(merged, *normalized)
+	}
+	for _, origin := range existing {
+		appendNormalized(origin)
+	}
+	for _, origin := range additions {
+		appendNormalized(origin)
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
+}

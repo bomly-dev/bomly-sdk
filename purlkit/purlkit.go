@@ -162,6 +162,13 @@ func normalizeAndRender(purl *packageurl.PackageURL) (string, error) {
 	if err := purl.Normalize(); err != nil {
 		return "", fmt.Errorf("%w: %v", ErrInvalidPURL, err)
 	}
+	// The whitespace boundary policy makes a blank-after-trim name invalid on
+	// Build; Parse must agree, or a parsed value fails to re-render and the
+	// Parse→String fixed point breaks (found by FuzzSplitIdentity on
+	// "pkg:A/ #").
+	if strings.TrimSpace(purl.Name) == "" {
+		return "", fmt.Errorf("%w: name is blank after trimming", ErrInvalidPURL)
+	}
 	rendered := purl.ToString()
 	if len(rendered) > maxInputSize {
 		return "", ErrInvalidPURL
