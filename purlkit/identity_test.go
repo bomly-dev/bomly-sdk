@@ -41,6 +41,16 @@ func TestSplitIdentity(t *testing.T) {
 			t.Fatalf("non-evidence key %q relocated", qualifier.Key)
 		}
 	}
+	// A hand-built value (PURL and Qualifier are exported) with a
+	// mixed-case evidence key must not bypass the partition.
+	handBuilt := PURL{Type: "npm", Name: "left-pad", Qualifiers: []Qualifier{
+		{Key: "DOWNLOAD_URL", Value: "https://e.com/a.tgz"},
+		{Key: "arch", Value: "x86_64"},
+	}}
+	handSplit := SplitIdentity(handBuilt)
+	if len(handSplit.Evidence) != 1 || len(handSplit.Identity.Qualifiers) != 1 {
+		t.Fatalf("mixed-case evidence key bypassed the partition: %+v", handSplit)
+	}
 	// Custom qualifiers on custom types are identity: the open vocabulary.
 	custom, err := Parse("pkg:pokemon/pikachu@25?region=kanto&shiny=true")
 	if err != nil {
