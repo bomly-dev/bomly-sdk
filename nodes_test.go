@@ -457,6 +457,10 @@ func TestFoldPreservesEveryWitnessAssertion(t *testing.T) {
 	second.Copyright = "Copyright (c) contributors"
 	second.ResolvedURL = "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz"
 	second.Metadata = map[string]any{"witness": "sbom"}
+	second.PackageManager = PackageManagerNPM
+	second.Language = Language("javascript")
+	second.Type = PackageTypePackage
+	second.Matched = true
 	survivor, err := graph.InsertNode(second)
 	if err != nil {
 		t.Fatal(err)
@@ -479,6 +483,14 @@ func TestFoldPreservesEveryWitnessAssertion(t *testing.T) {
 	}
 	if dep.Metadata["witness"] != "sbom" {
 		t.Errorf("metadata lost: %v", dep.Metadata)
+	}
+	// Classification the identity cannot project fills gaps too, and
+	// enrichment is an any-witness fact.
+	if dep.PackageManager != PackageManagerNPM || dep.Language != Language("javascript") || dep.Type != PackageTypePackage {
+		t.Errorf("classification gaps unfilled: manager=%q language=%q type=%q", dep.PackageManager, dep.Language, dep.Type)
+	}
+	if !dep.Matched {
+		t.Error("a matched witness must leave the folded record matched")
 	}
 	// Repeated identifiers do not accumulate.
 	if _, err := graph.InsertNode(second); err != nil {
