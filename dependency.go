@@ -192,6 +192,13 @@ func newDependencyNode(coords Coordinates, rawPURL string) (*DependencyNode, err
 
 	minted := strings.TrimSpace(rawPURL)
 	if minted == "" {
+		// A package URL on the coordinates is an assertion, not a hint:
+		// honored or refused, never quietly replaced by one the coordinate
+		// builder fabricates. Only coordinates that assert no package URL
+		// mint one from their parts.
+		minted = strings.TrimSpace(coords.PURL)
+	}
+	if minted == "" {
 		minted = scratch.CanonicalPURL()
 	}
 	if minted == "" {
