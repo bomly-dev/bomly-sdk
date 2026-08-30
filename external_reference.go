@@ -399,7 +399,19 @@ func isCPE23Locator(value string) bool {
 	if countUnescapedColons(value) != cpe23FieldCount-1 {
 		return false
 	}
-	return isCPEPart(fieldAt(lower, 2))
+	if !isCPEPart(fieldAt(lower, 2)) {
+		return false
+	}
+	// Every component carries a value: a literal, or the logical ANY ("*") or
+	// NA ("-"). An empty one is not "unspecified" in this binding -- the
+	// binding has spellings for that -- so "cpe:2.3:a::::::::::" is malformed
+	// however well it counts.
+	for _, component := range splitUnescaped(value)[2:] {
+		if component == "" {
+			return false
+		}
+	}
+	return true
 }
 
 // isCPE22Locator reports whether a value is a CPE 2.2 URI.
@@ -432,13 +444,29 @@ func isCPEPart(value string) bool {
 	}
 }
 
-// fieldAt returns the colon-separated field at index, or "" when absent.
+// fieldAt returns the field at index, or "" when absent.
 func fieldAt(value string, index int) string {
-	fields := strings.Split(value, ":")
+	fields := splitUnescaped(value)
 	if index >= len(fields) {
 		return ""
 	}
 	return fields[index]
+}
+
+// splitUnescaped splits on the colons that act as field separators, leaving
+// escaped ones ("\:") inside the component they belong to.
+func splitUnescaped(value string) []string {
+	fields := []string{}
+	current := strings.Builder{}
+	for i := 0; i < len(value); i++ {
+		if value[i] == ':' && (i == 0 || value[i-1] != '\\') {
+			fields = append(fields, current.String())
+			current.Reset()
+			continue
+		}
+		current.WriteByte(value[i])
+	}
+	return append(fields, current.String())
 }
 
 // countUnescapedColons counts the colons that act as field separators.
@@ -585,8 +613,14 @@ func reconcileComments(existing, incoming string) string {
 
 // referenceKey is the merge identity of an external reference: the triple the
 // formats treat as one assertion.
+// The type is compared as stored, not case-folded. Normalized has already
+// rewritten a recognized type to its specification's spelling, so those still
+// collapse; an unrecognized one keeps the spelling its source used, and
+// folding case here would merge "Acme-ID" with "acme-id" and then publish
+// whichever witness folded first. The open vocabulary has no case rule to
+// apply, so two spellings stay two assertions.
 func (r ExternalReference) referenceKey() string {
-	return string(r.Category) + "\x00" + normalizeReferenceType(r.Type) + "\x00" + r.Locator
+	return string(r.Category) + "\x00" + r.Type + "\x00" + r.Locator
 }
 
 // MergeExternalReferences unions reference sets, keeping the first record of

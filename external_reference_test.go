@@ -575,3 +575,62 @@ func TestCycloneDXTypeCasingIsCanonical(t *testing.T) {
 		t.Fatalf("SPDX reference normalized to %+v, want the SPDX spelling", spdxRef)
 	}
 }
+
+// TestCPE23RejectsEmptyComponents pins that every component carries a value.
+// The binding has spellings for "any" and "not applicable" — "*" and "-" — so
+// an empty component is malformed however well the separators count.
+func TestCPE23RejectsEmptyComponents(t *testing.T) {
+	for _, locator := range []string{
+		"cpe:2.3:a::::::::::",
+		"cpe:2.3:a:v::1.0:*:*:*:*:*:*:*",
+		"cpe:2.3:a:v:p:1.0:*:*:*:*:*:*:",
+	} {
+		reference := ExternalReference{Category: ExternalReferenceCategorySecurity, Type: "cpe23Type", Locator: locator}
+		if got, ok := reference.Normalized(); ok {
+			t.Errorf("%q was accepted with an empty component: %+v", locator, got)
+		}
+	}
+	// The logical values and an escaped colon inside a component are fine.
+	for _, locator := range []string{
+		"cpe:2.3:a:v:p:1.0:*:-:*:*:*:*:*",
+		`cpe:2.3:a:v:p\:1:1.0:*:*:*:*:*:*:*`,
+		// A trailing component that is itself an escaped colon: splitting
+		// without escape-awareness would produce an empty final field and
+		// reject a well-formed value.
+		`cpe:2.3:a:v:p:1.0:*:*:*:*:*:*:\:`,
+	} {
+		reference := ExternalReference{Category: ExternalReferenceCategorySecurity, Type: "cpe23Type", Locator: locator}
+		if _, ok := reference.Normalized(); !ok {
+			t.Errorf("%q was rejected, but it is well formed", locator)
+		}
+	}
+}
+
+// TestCustomReferenceTypesMergeCaseSensitively pins the open vocabulary's
+// merge rule. A recognized type is rewritten to its specification's spelling
+// before keying, so those still collapse — but an unrecognized type keeps the
+// spelling its source used, and folding case would merge two of them and then
+// publish whichever witness arrived first.
+func TestCustomReferenceTypesMergeCaseSensitively(t *testing.T) {
+	upper := ExternalReference{Type: "Acme-ID", Locator: "https://acme.test/x"}
+	lower := ExternalReference{Type: "acme-id", Locator: "https://acme.test/x"}
+
+	forward := MergeExternalReferences([]ExternalReference{upper}, []ExternalReference{lower})
+	reverse := MergeExternalReferences([]ExternalReference{lower}, []ExternalReference{upper})
+	if len(forward) != 2 || len(reverse) != 2 {
+		t.Fatalf("merged to %d and %d records; two spellings of an open-vocabulary type are two assertions", len(forward), len(reverse))
+	}
+	for i := range forward {
+		if forward[i].Type != reverse[i].Type {
+			t.Fatalf("published types depend on witness order: %+v vs %+v", forward, reverse)
+		}
+	}
+	// A recognized type still collapses, because it was canonicalized first.
+	known := MergeExternalReferences(
+		[]ExternalReference{{Category: ExternalReferenceCategorySecurity, Type: "ADVISORY", Locator: "https://a.test/x"}},
+		[]ExternalReference{{Category: ExternalReferenceCategorySecurity, Type: "advisory", Locator: "https://a.test/x"}},
+	)
+	if len(known) != 1 {
+		t.Fatalf("recognized type merged to %d records, want one", len(known))
+	}
+}
