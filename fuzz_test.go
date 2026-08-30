@@ -641,9 +641,13 @@ func assertPublishableReference(t *testing.T, reference ExternalReference) {
 		if err := purlkit.ValidateString(reference.Locator); err != nil {
 			t.Fatalf("purl locator %q is not a valid package URL: %v", reference.Locator, err)
 		}
-	case LocatorKindCPE:
-		if !isCPELocator(reference.Locator) {
-			t.Fatalf("cpe locator %q is not a CPE", reference.Locator)
+	case LocatorKindCPE23:
+		if !isCPE23Locator(reference.Locator) {
+			t.Fatalf("cpe23 locator %q is not a CPE 2.3 formatted string", reference.Locator)
+		}
+	case LocatorKindCPE22:
+		if !isCPE22Locator(reference.Locator) {
+			t.Fatalf("cpe22 locator %q is not a CPE 2.2 URI", reference.Locator)
 		}
 	default:
 		if !isBoundedToken(reference.Locator) {

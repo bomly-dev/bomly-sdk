@@ -102,8 +102,16 @@ const (
 	LocatorKindURL LocatorKind = "url"
 	// LocatorKindPURL is a package URL, held to purlkit.
 	LocatorKindPURL LocatorKind = "purl"
-	// LocatorKindCPE is a CPE 2.2 URI or 2.3 formatted string.
-	LocatorKindCPE LocatorKind = "cpe"
+	// LocatorKindCPE22 is a CPE 2.2 URI ("cpe:/a:vendor:product").
+	LocatorKindCPE22 LocatorKind = "cpe22"
+	// LocatorKindCPE23 is a CPE 2.3 formatted string
+	// ("cpe:2.3:a:vendor:product:...").
+	//
+	// The two bindings are separate kinds because the reference type names
+	// one of them. Collapsing them into a single "cpe" kind let a cpe23Type
+	// reference carry a 2.2 URI and vice versa, so an exporter would publish
+	// a reference whose declared type contradicts its own locator.
+	LocatorKindCPE23 LocatorKind = "cpe23"
 	// LocatorKindIdentifier is the bounded free-form fallback: a token with
 	// no whitespace or control characters and no grammar of its own.
 	LocatorKindIdentifier LocatorKind = "identifier"
@@ -124,8 +132,8 @@ const (
 // failing build rather than as a locator validated by the wrong grammar.
 var locatorKindByReference = map[ExternalReferenceCategory]map[string]LocatorKind{
 	ExternalReferenceCategorySecurity: {
-		normalizeReferenceType(spdxcommon.TypeSecurityCPE23Type): LocatorKindCPE,
-		normalizeReferenceType(spdxcommon.TypeSecurityCPE22Type): LocatorKindCPE,
+		normalizeReferenceType(spdxcommon.TypeSecurityCPE23Type): LocatorKindCPE23,
+		normalizeReferenceType(spdxcommon.TypeSecurityCPE22Type): LocatorKindCPE22,
 		normalizeReferenceType(spdxcommon.TypeSecurityAdvisory):  LocatorKindURL,
 		normalizeReferenceType(spdxcommon.TypeSecurityFix):       LocatorKindURL,
 		normalizeReferenceType(spdxcommon.TypeSecurityUrl):       LocatorKindURL,
@@ -309,8 +317,13 @@ func normalizeLocatorByKind(locator string, kind LocatorKind) (string, bool) {
 			return "", false
 		}
 		return parsed.String(), true
-	case LocatorKindCPE:
-		if !isCPELocator(locator) {
+	case LocatorKindCPE23:
+		if !isCPE23Locator(locator) {
+			return "", false
+		}
+		return locator, true
+	case LocatorKindCPE22:
+		if !isCPE22Locator(locator) {
 			return "", false
 		}
 		return locator, true
@@ -347,49 +360,64 @@ func isBoundedToken(value string) bool {
 // formatted string, counting the "cpe" and "2.3" prefix fields.
 const cpe23FieldCount = 13
 
-// isCPELocator reports whether a value is a CPE in either form the
-// specification defines: the 2.3 formatted string, or the 2.2 URI.
+// cpe22ComponentCount is the number of components a CPE 2.2 URI names after
+// the "cpe:/" prefix: part, vendor, product, version, update, edition,
+// language.
+const cpe22ComponentCount = 7
+
+// The CPE validators below are deliberately not delegated. Two CPE libraries
+// already in the CLI's dependency graph were probed against the exact inputs
+// under review, and neither is usable here:
 //
-// # Why this is not delegated
+//   - facebookincubator/nvdtools/wfn correctly rejects a mismatched binding,
+//     but accepts "cpe:2.3:x:..." and "cpe:/aardvark" (the part component is
+//     not validated) and silently TRUNCATES an overlong 2.2 URI:
+//     "cpe:/a:v:p:1:u:e:l:extra" parses without error and re-binds as
+//     "cpe:/a:v:p:1:u:e:l", dropping a component.
+//   - umisama/go-cpe rewrites the invalid part "x" to "*" and reduces
+//     "cpe:/aardvark" to "cpe:/".
 //
-// Two CPE libraries were probed before writing this, both already present in
-// the CLI's dependency graph. Neither rejects a malformed part component, and
-// one is actively worse than no library at all:
-//
-//   - facebookincubator/nvdtools/wfn accepts "cpe:2.3:x:..." and
-//     "cpe:/aardvark" without error, and pads a truncated 2.3 string out to
-//     full width rather than refusing it.
-//   - umisama/go-cpe silently rewrites the invalid part "x" to "*" and
-//     reduces "cpe:/aardvark" to "cpe:/" -- it corrupts the assertion into a
-//     valid-looking one, which is the worst possible outcome for a value
-//     Bomly publishes.
-//
-// The part vocabulary is three characters that have not changed since CPE
-// 2.3 was published, which is exactly the case the delegation rule leaves to
-// hand logic: data the library does not encode. Everything structural about
-// the component grammar is still left alone, because nothing in Bomly
-// interprets the components -- this only keeps a value that is plainly not a
-// CPE out of a field consumers read as one.
-func isCPELocator(value string) bool {
+// Both silently repair malformed input into valid-looking values, which is
+// the worst outcome for something Bomly publishes as an assertion. What is
+// checked here is the part vocabulary and the component count -- fixed since
+// CPE 2.3 was published, and small enough to state -- while the component
+// grammar itself is left alone, because nothing in Bomly interprets the
+// components. This only keeps a value that is plainly not a CPE out of a
+// field consumers read as one.
+
+// isCPE23Locator reports whether a value is a CPE 2.3 formatted string.
+func isCPE23Locator(value string) bool {
 	if !isBoundedToken(value) {
 		return false
 	}
 	lower := strings.ToLower(value)
-	switch {
-	case strings.HasPrefix(lower, "cpe:2.3:"):
-		// Escaped colons ("\:") are part of a component, not separators.
-		if countUnescapedColons(value) != cpe23FieldCount-1 {
-			return false
-		}
-		return isCPEPart(fieldAt(lower, 2))
-	case strings.HasPrefix(lower, "cpe:/"):
-		// The 2.2 URI names up to seven components after the prefix; trailing
-		// components may be omitted, and the part itself may be empty.
-		part := strings.SplitN(lower[len("cpe:/"):], ":", 2)[0]
-		return part == "" || isCPEPart(part)
-	default:
+	if !strings.HasPrefix(lower, "cpe:2.3:") {
 		return false
 	}
+	// Escaped colons ("\:") are part of a component, not separators.
+	if countUnescapedColons(value) != cpe23FieldCount-1 {
+		return false
+	}
+	return isCPEPart(fieldAt(lower, 2))
+}
+
+// isCPE22Locator reports whether a value is a CPE 2.2 URI.
+func isCPE22Locator(value string) bool {
+	if !isBoundedToken(value) {
+		return false
+	}
+	lower := strings.ToLower(value)
+	if !strings.HasPrefix(lower, "cpe:/") {
+		return false
+	}
+	// The binding names at most seven components, and trailing ones may be
+	// omitted. An eighth is not a CPE -- and must not be quietly dropped to
+	// make it one, which is what the library does.
+	components := strings.Split(lower[len("cpe:/"):], ":")
+	if len(components) > cpe22ComponentCount {
+		return false
+	}
+	return components[0] == "" || isCPEPart(components[0])
 }
 
 // isCPEPart reports whether a value is a CPE part component: one of the three

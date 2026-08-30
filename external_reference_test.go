@@ -16,8 +16,8 @@ func TestLocatorKindComesFromThePair(t *testing.T) {
 		refType  string
 		want     LocatorKind
 	}{
-		{ExternalReferenceCategorySecurity, "cpe23Type", LocatorKindCPE},
-		{ExternalReferenceCategorySecurity, "cpe22Type", LocatorKindCPE},
+		{ExternalReferenceCategorySecurity, "cpe23Type", LocatorKindCPE23},
+		{ExternalReferenceCategorySecurity, "cpe22Type", LocatorKindCPE22},
 		{ExternalReferenceCategorySecurity, "advisory", LocatorKindURL},
 		{ExternalReferenceCategorySecurity, "fix", LocatorKindURL},
 		{ExternalReferenceCategorySecurity, "swid", LocatorKindIdentifier},
@@ -33,7 +33,7 @@ func TestLocatorKindComesFromThePair(t *testing.T) {
 		{ExternalReferenceCategoryUnknown, "website", LocatorKindURL},
 		{ExternalReferenceCategoryUnknown, "vcs", LocatorKindURL},
 		// The type vocabulary is compared case-insensitively.
-		{ExternalReferenceCategorySecurity, "CPE23TYPE", LocatorKindCPE},
+		{ExternalReferenceCategorySecurity, "CPE23TYPE", LocatorKindCPE23},
 	} {
 		if got := LocatorKindFor(tc.category, tc.refType); got != tc.want {
 			t.Errorf("LocatorKindFor(%q, %q) = %q, want %q", tc.category, tc.refType, got, tc.want)
@@ -368,7 +368,11 @@ func TestCPELocatorValidatesThePartComponent(t *testing.T) {
 		"cpe:/x:v:p",
 		"cpe:2.3:a:vendor", // truncated
 	} {
-		reference := ExternalReference{Category: ExternalReferenceCategorySecurity, Type: "cpe23Type", Locator: locator}
+		refType := "cpe23Type"
+		if strings.HasPrefix(locator, "cpe:/") {
+			refType = "cpe22Type"
+		}
+		reference := ExternalReference{Category: ExternalReferenceCategorySecurity, Type: refType, Locator: locator}
 		if got, ok := reference.Normalized(); ok {
 			t.Errorf("%q was accepted as a CPE: %+v", locator, got)
 		}
@@ -383,7 +387,11 @@ func TestCPELocatorValidatesThePartComponent(t *testing.T) {
 		"cpe:/o:vendor",
 		"cpe:/",
 	} {
-		reference := ExternalReference{Category: ExternalReferenceCategorySecurity, Type: "cpe22Type", Locator: locator}
+		refType := "cpe22Type"
+		if strings.HasPrefix(locator, "cpe:2.3:") {
+			refType = "cpe23Type"
+		}
+		reference := ExternalReference{Category: ExternalReferenceCategorySecurity, Type: refType, Locator: locator}
 		if _, ok := reference.Normalized(); !ok {
 			t.Errorf("%q was rejected, but it is a well-formed CPE", locator)
 		}
@@ -476,5 +484,65 @@ func TestLocatorBoundAppliesToTheNormalizedForm(t *testing.T) {
 		if !stillOK || again.Locator != normalized.Locator {
 			t.Fatalf("normalizing twice changed the locator")
 		}
+	}
+}
+
+// TestCPEBindingMustMatchItsDeclaredType pins that the declared type decides
+// which binding is validated. A single "cpe" kind let a cpe23Type reference
+// carry a 2.2 URI and vice versa, so an exporter would publish a reference
+// whose declared type contradicts its own locator.
+func TestCPEBindingMustMatchItsDeclaredType(t *testing.T) {
+	const uri = "cpe:/a:vendor:product:1.0"
+	const formatted = "cpe:2.3:a:vendor:product:1.0:*:*:*:*:*:*:*"
+
+	for _, tc := range []struct {
+		refType string
+		locator string
+		want    bool
+	}{
+		{"cpe22Type", uri, true},
+		{"cpe23Type", formatted, true},
+		// Crossed: each locator is well formed, but not for the binding its
+		// type declares.
+		{"cpe22Type", formatted, false},
+		{"cpe23Type", uri, false},
+		// Values that are not CPEs at all but would slip past the shape
+		// checks if the binding prefix were not required: the 2.2 branch
+		// slices a fixed prefix length, and the 2.3 branch counts fields.
+		{"cpe22Type", "cpe:a", false},
+		{"cpe22Type", "cpe:2", false},
+		{"cpe22Type", "xxxxx", false},
+		{"cpe23Type", "foo:2.3:a:v:p:1:*:*:*:*:*:*:*", false},
+	} {
+		reference := ExternalReference{
+			Category: ExternalReferenceCategorySecurity,
+			Type:     tc.refType,
+			Locator:  tc.locator,
+		}
+		if _, ok := reference.Normalized(); ok != tc.want {
+			t.Errorf("%s with %q: ok = %v, want %v", tc.refType, tc.locator, ok, tc.want)
+		}
+	}
+}
+
+// TestCPE22RejectsOverlongBindings pins the component cap. The binding names
+// seven components; an eighth is not a CPE. nvdtools accepts such a value and
+// silently re-binds it without the extra component, which is why this is
+// checked here rather than delegated — a dropped component is a changed
+// assertion.
+func TestCPE22RejectsOverlongBindings(t *testing.T) {
+	for _, locator := range []string{
+		"cpe:/a:v:p:1:u:e:l:extra",
+		"cpe:/a:v:p:1:u:e:l:x:y",
+	} {
+		reference := ExternalReference{Category: ExternalReferenceCategorySecurity, Type: "cpe22Type", Locator: locator}
+		if got, ok := reference.Normalized(); ok {
+			t.Errorf("%q was accepted as a CPE 2.2 URI: %+v", locator, got)
+		}
+	}
+	// Exactly seven components is the full binding and must be accepted.
+	full := ExternalReference{Category: ExternalReferenceCategorySecurity, Type: "cpe22Type", Locator: "cpe:/a:v:p:1:u:e:l"}
+	if _, ok := full.Normalized(); !ok {
+		t.Fatal("a complete seven-component CPE 2.2 URI was rejected")
 	}
 }
