@@ -1,0 +1,609 @@
+package sdk
+
+import (
+	"encoding/json"
+	"errors"
+	"testing"
+)
+
+// mustDepPURL constructs a dependency node from a raw package URL, failing
+// the test on constructor error.
+func mustDepPURL(t testing.TB, raw string) *DependencyNode {
+	t.Helper()
+	node, err := NewDependencyNodeFromPURL(raw)
+	if err != nil {
+		t.Fatalf("NewDependencyNodeFromPURL(%q): %v", raw, err)
+	}
+	return node
+}
+
+// mustDep constructs a dependency node from coordinates, failing the test
+// on constructor error.
+func mustDep(t testing.TB, coords Coordinates) *DependencyNode {
+	t.Helper()
+	node, err := NewDependencyNode(coords)
+	if err != nil {
+		t.Fatalf("NewDependencyNode(%+v): %v", coords, err)
+	}
+	return node
+}
+
+// mustModule constructs a module node, failing the test on constructor error.
+func mustModule(t testing.TB, manifestPath string, coords Coordinates) *ModuleNode {
+	t.Helper()
+	node, err := NewModuleNode(manifestPath, coords)
+	if err != nil {
+		t.Fatalf("NewModuleNode(%q, %+v): %v", manifestPath, coords, err)
+	}
+	return node
+}
+
+// mustManifest constructs a manifest node, failing the test on constructor
+// error.
+func mustManifest(t testing.TB, path string) *ManifestNode {
+	t.Helper()
+	node, err := NewManifestNode(path, "")
+	if err != nil {
+		t.Fatalf("NewManifestNode(%q): %v", path, err)
+	}
+	return node
+}
+
+func TestAddNodeRejectsTypedNilPointers(t *testing.T) {
+	// A failed constructor's zero return is a typed nil: a non-nil
+	// interface whose methods would panic. Insertion must report
+	// ErrNilNode instead of crashing.
+	graph := New()
+	var dep *DependencyNode
+	var module *ModuleNode
+	var manifest *ManifestNode
+	for _, node := range []GraphNode{dep, module, manifest, nil} {
+		if err := graph.AddNode(node); !errors.Is(err, ErrNilNode) {
+			t.Fatalf("AddNode(%T nil) = %v, want ErrNilNode", node, err)
+		}
+		if _, err := graph.InsertNode(node); !errors.Is(err, ErrNilNode) {
+			t.Fatalf("InsertNode(%T nil) = %v, want ErrNilNode", node, err)
+		}
+	}
+}
+
+func TestDependencyIdentityOverridesContradictingCoordinates(t *testing.T) {
+	// Coordinates are the identity's projection, never a second opinion:
+	// contradicting name and version are replaced by the identity's split,
+	// so presentation and registry seeding cannot disagree with the key.
+	node, err := NewDependencyNode(Coordinates{PURL: "pkg:npm/foo@1.0.0", Name: "bar", Version: "2.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node.NodeID() != "pkg:npm/foo@1.0.0" {
+		t.Fatalf("identity = %q", node.NodeID())
+	}
+	if node.Name != "foo" || node.Version != "1.0.0" {
+		t.Fatalf("coordinates still contradict the identity: %s@%s", node.Name, node.Version)
+	}
+	if pkg := PackageFromDependencyNode(node); pkg.Name != "foo" || pkg.Version != "1.0.0" {
+		t.Fatalf("seeded package contradicts the identity: %s@%s", pkg.Name, pkg.Version)
+	}
+	// An ecosystem-native spelling that re-mints the same identity survives:
+	// a Go module keeps its whole path in Name even though the package URL
+	// splits the trailing segment off.
+	goNode, err := NewDependencyNode(Coordinates{Ecosystem: EcosystemGo, Name: "github.com/example/lib/v2", Version: "v2.1.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Coordinates project from the identity, which splits a Go module path
+	// at its trailing segment; the ecosystem-native form comes back through
+	// the accessors, which is what external lookups must use (ADR-0021).
+	if got := goNode.EcosystemName(); got != "github.com/example/lib/v2" {
+		t.Fatalf("EcosystemName() = %q, want the rejoined module path", got)
+	}
+}
+
+func TestDependencyFromPURLResolvesDirectEcosystemTypes(t *testing.T) {
+	// Direct purl types (npm, apk, …) are absent from the type→ecosystem
+	// table by design; without the alias lookup a node built from a bare
+	// package URL would carry no ecosystem and lose ecosystem-specific
+	// behavior — the npm scope in EcosystemName(), for one.
+	cases := map[string]struct {
+		ecosystem Ecosystem
+		name      string
+	}{
+		"pkg:npm/%40scope/name@1.0.0":     {EcosystemNPM, "@scope/name"},
+		"pkg:apk/alpine/musl@1.2.5":       {Ecosystem("apk"), "musl"},
+		"pkg:golang/example.com/m@v1.0.0": {EcosystemGo, "example.com/m"},
+	}
+	for raw, want := range cases {
+		node, err := NewDependencyNodeFromPURL(raw)
+		if err != nil {
+			t.Fatalf("NewDependencyNodeFromPURL(%q): %v", raw, err)
+		}
+		if node.Ecosystem != want.ecosystem {
+			t.Errorf("%s: ecosystem = %q, want %q", raw, node.Ecosystem, want.ecosystem)
+		}
+		if got := node.EcosystemName(); got != want.name {
+			t.Errorf("%s: EcosystemName() = %q, want %q", raw, got, want.name)
+		}
+	}
+}
+
+func TestStructuralNodesAreNotDependencyHops(t *testing.T) {
+	// manifest → module → dependency is a direct dependency of that module:
+	// structural nodes are not hops, so the manifest projection must not
+	// turn direct dependencies into transitive ones.
+	manifest := mustManifest(t, "package.json")
+	module := mustModule(t, "package.json", Coordinates{Name: "app"})
+	direct := mustDepPURL(t, "pkg:npm/left-pad@1.3.0")
+	transitive := mustDepPURL(t, "pkg:npm/deep@2.0.0")
+	graph := New()
+	for _, node := range []GraphNode{manifest, module, direct, transitive} {
+		if err := graph.AddNode(node); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, edge := range [][2]string{
+		{manifest.NodeID(), module.NodeID()},
+		{module.NodeID(), direct.NodeID()},
+		{direct.NodeID(), transitive.NodeID()},
+	} {
+		if err := graph.AddEdge(edge[0], edge[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := RelationshipForPath([]GraphNode{manifest, module, direct}); got != DependencyRelationshipDirect {
+		t.Fatalf("path relationship = %q, want direct", got)
+	}
+	if got := RelationshipForPath([]GraphNode{manifest, module, direct, transitive}); got != DependencyRelationshipTransitive {
+		t.Fatalf("nested path relationship = %q, want transitive", got)
+	}
+	relationships := dependencyRelationshipsForGraph(graph)
+	if relationships[direct.NodeID()] != DependencyRelationshipDirect {
+		t.Fatalf("graph-derived relationship for the module's own dependency = %q, want direct", relationships[direct.NodeID()])
+	}
+	if relationships[transitive.NodeID()] != DependencyRelationshipTransitive {
+		t.Fatalf("graph-derived nested relationship = %q, want transitive", relationships[transitive.NodeID()])
+	}
+}
+
+func TestManifestFileKindSurvivesTheWire(t *testing.T) {
+	manifest, err := NewManifestNode("pom.xml", ManifestKindPackageJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph := New()
+	if err := graph.AddNode(manifest); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(graph)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Graph
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	node, ok := decoded.Node(manifest.NodeID())
+	if !ok {
+		t.Fatal("manifest node lost")
+	}
+	if got := node.(*ManifestNode).FileKind; got != ManifestKindPackageJSON {
+		t.Fatalf("manifest kind = %q, want it to survive the round trip", got)
+	}
+}
+
+func TestPackageCloneAndMergeCarryDetectedOrigins(t *testing.T) {
+	origin := DependencyOrigin{ArtifactURL: "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz"}
+	repo := DependencyOrigin{Repository: "https://github.com/left-pad/left-pad"}
+	pkg := &Package{Coordinates: Coordinates{PURL: "pkg:npm/left-pad@1.3.0"}, DetectedOrigins: []DependencyOrigin{origin}}
+	clone := pkg.Clone()
+	clone.DetectedOrigins[0] = repo
+	if pkg.DetectedOrigins[0] != origin {
+		t.Fatal("Clone shares the detected-origins backing array")
+	}
+	// Merge unions rather than dropping: a package seeded from two nodes
+	// keeps every vetted origin regardless of seeding order.
+	target := &Package{Coordinates: Coordinates{PURL: "pkg:npm/left-pad@1.3.0"}, DetectedOrigins: []DependencyOrigin{origin}}
+	target.MergeFrom(&Package{DetectedOrigins: []DependencyOrigin{origin, repo}})
+	if len(target.DetectedOrigins) != 2 {
+		t.Fatalf("MergeFrom detected origins = %+v, want the deduplicated union", target.DetectedOrigins)
+	}
+}
+
+func TestScopeFilterAppliesToUnattachedDependencies(t *testing.T) {
+	// Roots are not a rescue: in an edgeless graph every node has no
+	// incoming edge, so seeding the allow-set from Roots() would return the
+	// graph unfiltered and hand a runtime caller the development
+	// dependencies too. Only structural nodes are retained by kind.
+	graph := New()
+	module := mustModule(t, "package.json", Coordinates{Name: "app"})
+	runtimeDep := mustDepPURL(t, "pkg:npm/react@18.2.0")
+	runtimeDep.Scopes = ScopesOf(ScopeRuntime)
+	devDep := mustDepPURL(t, "pkg:npm/vitest@2.0.0")
+	devDep.Scopes = ScopesOf(ScopeDevelopment)
+	orphanDev := mustDepPURL(t, "pkg:npm/orphan@1.0.0")
+	orphanDev.Scopes = ScopesOf(ScopeDevelopment)
+	for _, node := range []GraphNode{module, runtimeDep, devDep, orphanDev} {
+		if err := graph.AddNode(node); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	filtered, err := FilterGraphByScope(graph, ScopeRuntime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := filtered.Node(devDep.NodeID()); ok {
+		t.Error("edgeless graph: development dependency survived a runtime filter")
+	}
+	if _, ok := filtered.Node(orphanDev.NodeID()); ok {
+		t.Error("orphan development dependency survived a runtime filter")
+	}
+	if _, ok := filtered.Node(runtimeDep.NodeID()); !ok {
+		t.Error("runtime dependency was dropped")
+	}
+	if _, ok := filtered.Node(module.NodeID()); !ok {
+		t.Error("structural module node must be retained by kind")
+	}
+}
+
+func TestRelationshipDepthDoesNotResetBelowADependency(t *testing.T) {
+	// A structural node beneath a dependency does not reset the depth: the
+	// dependency under it stays transitive, even though the chain passes
+	// through a module node.
+	graph := New()
+	module := mustModule(t, "package.json", Coordinates{Name: "app"})
+	direct := mustDepPURL(t, "pkg:npm/direct@1.0.0")
+	nested := mustModule(t, "vendor/package.json", Coordinates{Name: "vendored"})
+	deep := mustDepPURL(t, "pkg:npm/deep@1.0.0")
+	for _, node := range []GraphNode{module, direct, nested, deep} {
+		if err := graph.AddNode(node); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, edge := range [][2]string{
+		{module.NodeID(), direct.NodeID()},
+		{direct.NodeID(), nested.NodeID()},
+		{nested.NodeID(), deep.NodeID()},
+	} {
+		if err := graph.AddEdge(edge[0], edge[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	relationships := dependencyRelationshipsForGraph(graph)
+	if relationships[direct.NodeID()] != DependencyRelationshipDirect {
+		t.Fatalf("module's own dependency = %q, want direct", relationships[direct.NodeID()])
+	}
+	if relationships[deep.NodeID()] != DependencyRelationshipTransitive {
+		t.Fatalf("dependency below a dependency = %q, want transitive", relationships[deep.NodeID()])
+	}
+}
+
+func TestDependencyRejectsAssertedInvalidPURL(t *testing.T) {
+	// A package URL on the coordinates is an assertion: honored or refused,
+	// never replaced by one the coordinate builder fabricates. Without this
+	// gate {PURL: "not-a-purl", Name: "foo"} was accepted as
+	// pkg:generic/foo — an identity no producer claimed — bypassing the
+	// strict gate that NewDependencyNodeFromPURL and wire decoding use.
+	for _, asserted := range []string{"not-a-purl", "pkg:maven/commons-text@1.10.0"} {
+		if node, err := NewDependencyNode(Coordinates{PURL: asserted, Name: "foo", Version: "1.0.0"}); err == nil {
+			t.Errorf("NewDependencyNode(%q) = %q, want rejection", asserted, node.NodeID())
+		}
+	}
+	// Coordinates that assert nothing still mint from their parts.
+	node, err := NewDependencyNode(Coordinates{Ecosystem: EcosystemNPM, Name: "foo", Version: "1.0.0"})
+	if err != nil || node.NodeID() != "pkg:npm/foo@1.0.0" {
+		t.Fatalf("coordinate minting = %v, %v", node, err)
+	}
+}
+
+func TestModuleRejectsAssertedInvalidPURL(t *testing.T) {
+	// An explicitly asserted package URL is a claim the constructor must
+	// honor or refuse — never replace with a fabricated one. Both the
+	// unparseable and the profile-invalid cases fail, matching the
+	// dependency gate.
+	for _, asserted := range []string{"not-a-purl", "pkg:maven/commons-text@1.10.0"} {
+		if node, err := NewModuleNode("package.json", Coordinates{PURL: asserted, Name: "app"}); err == nil {
+			t.Errorf("NewModuleNode(%q) = %q, want rejection", asserted, node.NodeID())
+		}
+	}
+	// A module with no asserted package URL still falls back to path and
+	// name, and a valid assertion is honored.
+	if node, err := NewModuleNode("package.json", Coordinates{Name: "app"}); err != nil || node.NodeID() != "module:package.json#app" {
+		t.Fatalf("path fallback = %v, %v", node, err)
+	}
+	node, err := NewModuleNode("package.json", Coordinates{PURL: "pkg:npm/app@1.0.0"})
+	if err != nil || node.PURL() != "pkg:npm/app@1.0.0" {
+		t.Fatalf("valid assertion = %v, %v", node, err)
+	}
+}
+
+func TestEcosystemProjectsFromTheIdentity(t *testing.T) {
+	// A contradicting ecosystem cannot survive: it would seed the registry
+	// package into the wrong family and take the wrong name handling.
+	node, err := NewDependencyNode(Coordinates{PURL: "pkg:npm/foo@1.0.0", Ecosystem: EcosystemMaven, Name: "foo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node.Ecosystem != EcosystemNPM {
+		t.Fatalf("ecosystem = %q, want the identity's npm", node.Ecosystem)
+	}
+	if pkg := PackageFromDependencyNode(node); pkg.Ecosystem != EcosystemNPM {
+		t.Fatalf("seeded package ecosystem = %q, want npm", pkg.Ecosystem)
+	}
+	// A custom purl type resolves to no known ecosystem, so a detector's
+	// own token survives — the open vocabulary keeps its say.
+	custom, err := NewDependencyNode(Coordinates{PURL: "pkg:pokemon/pikachu@25", Ecosystem: Ecosystem("pokemon"), Name: "pikachu"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if custom.Ecosystem != Ecosystem("pokemon") {
+		t.Fatalf("custom ecosystem token = %q, want it preserved", custom.Ecosystem)
+	}
+}
+
+func TestPathRelationshipAgreesWithGraphDerivation(t *testing.T) {
+	// The path's first node is the owner, never a hop — including the
+	// legacy dependency-only shape, where a root dependency's immediate
+	// child must stay direct. Both derivations must agree, or Compare and
+	// explain would classify the same edge differently.
+	module := mustModule(t, "package.json", Coordinates{Name: "app"})
+	rootDep := mustDepPURL(t, "pkg:npm/root@1.0.0")
+	child := mustDepPURL(t, "pkg:npm/child@1.0.0")
+	grandchild := mustDepPURL(t, "pkg:npm/grandchild@1.0.0")
+
+	cases := []struct {
+		name string
+		path []GraphNode
+		want DependencyRelationship
+	}{
+		{"lone target", []GraphNode{child}, DependencyRelationshipDirect},
+		{"legacy root then child", []GraphNode{rootDep, child}, DependencyRelationshipDirect},
+		{"legacy root then two hops", []GraphNode{rootDep, child, grandchild}, DependencyRelationshipTransitive},
+		{"module owner", []GraphNode{module, child}, DependencyRelationshipDirect},
+		{"module owner then hop", []GraphNode{module, child, grandchild}, DependencyRelationshipTransitive},
+	}
+	for _, tc := range cases {
+		if got := RelationshipForPath(tc.path); got != tc.want {
+			t.Errorf("%s: RelationshipForPath = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+
+	// The graph-wide derivation must reach the same verdict for the legacy
+	// dependency-only shape that motivated this rule.
+	graph := New()
+	for _, node := range []GraphNode{rootDep, child, grandchild} {
+		if err := graph.AddNode(node); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, edge := range [][2]string{
+		{rootDep.NodeID(), child.NodeID()},
+		{child.NodeID(), grandchild.NodeID()},
+	} {
+		if err := graph.AddEdge(edge[0], edge[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	relationships := dependencyRelationshipsForGraph(graph)
+	if relationships[child.NodeID()] != DependencyRelationshipDirect {
+		t.Errorf("graph derivation for a root dependency's child = %q, want direct", relationships[child.NodeID()])
+	}
+	if relationships[grandchild.NodeID()] != DependencyRelationshipTransitive {
+		t.Errorf("graph derivation two hops down = %q, want transitive", relationships[grandchild.NodeID()])
+	}
+}
+
+func TestDecodeKeepsWireIDMappingsOverCanonicalAliases(t *testing.T) {
+	// A legacy node's arbitrary wire ID can equal another node's newly
+	// minted identity. The wire ID a payload actually used must win, or
+	// edges referencing the first node are silently redirected to the
+	// second — and reversing the node order would change the result.
+	raw := `{"nodes":[
+	  {"id":"pkg:npm/foo@1.0.0","ecosystem":"npm","name":"bar","version":"1.0.0"},
+	  {"id":"legacy-b","ecosystem":"npm","name":"foo","version":"1.0.0"},
+	  {"id":"root","first_party":true,"name":"app","locations":[{"real_path":"package.json"}]}
+	],"edges":[{"fromId":"root","toId":"pkg:npm/foo@1.0.0"}]}`
+	var graph Graph
+	if err := json.Unmarshal([]byte(raw), &graph); err != nil {
+		t.Fatal(err)
+	}
+	modules := graph.ModuleNodes()
+	if len(modules) != 1 {
+		t.Fatalf("want one module root, got %v", modules)
+	}
+	children, err := graph.DirectDependencies(modules[0].NodeID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(children) != 1 || children[0].NodeID() != "pkg:npm/bar@1.0.0" {
+		t.Fatalf("edge followed the wrong node: %v — the wire ID names the record that carried it", idsOf(children))
+	}
+}
+
+func TestModuleProjectsCoordinatesFromAssertedIdentity(t *testing.T) {
+	// A module keyed by an asserted package URL must not present an empty
+	// or contradictory name, version, or ecosystem — consumers read those
+	// fields, and they travel on the wire.
+	node, err := NewModuleNode("package.json", Coordinates{PURL: "pkg:npm/app@1.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node.Name != "app" || node.Version != "1.0.0" || node.Ecosystem != EcosystemNPM {
+		t.Fatalf("coordinates not projected: name=%q version=%q ecosystem=%q", node.Name, node.Version, node.Ecosystem)
+	}
+	contradicting, err := NewModuleNode("package.json", Coordinates{PURL: "pkg:npm/app@1.0.0", Name: "other", Version: "9.9.9"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contradicting.Name != "app" || contradicting.Version != "1.0.0" {
+		t.Fatalf("contradicting coordinates survived: name=%q version=%q", contradicting.Name, contradicting.Version)
+	}
+}
+
+func TestFoldPreservesEveryWitnessAssertion(t *testing.T) {
+	// Two SBOM witnesses of one package must not lose security identifiers,
+	// integrity claims, or detection metadata to insertion order.
+	graph := New()
+	first := mustDepPURL(t, "pkg:npm/left-pad@1.3.0")
+	first.CPEs = []string{"cpe:2.3:a:left-pad:left-pad:1.3.0:*:*:*:*:*:*:*"}
+	first.Digests = []Digest{{Algorithm: DigestAlgorithmSHA256, Value: "aaa"}}
+	first.FoundBy = "node"
+	if err := graph.AddNode(first); err != nil {
+		t.Fatal(err)
+	}
+
+	second := mustDepPURL(t, "pkg:npm/left-pad@1.3.0")
+	second.CPEs = []string{"cpe:2.3:a:other:left-pad:1.3.0:*:*:*:*:*:*:*"}
+	second.Digests = []Digest{{Algorithm: DigestAlgorithmSHA256, Value: "bbb"}}
+	second.Copyright = "Copyright (c) contributors"
+	second.FoundBy = "sbom"
+	second.ResolvedURL = "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz"
+	second.Metadata = map[string]any{"witness": "sbom"}
+	second.PackageManager = PackageManagerNPM
+	second.Language = Language("javascript")
+	second.Type = PackageTypePackage
+	second.Matched = true
+	survivor, err := graph.InsertNode(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, ok := survivor.(*DependencyNode)
+	if !ok {
+		t.Fatalf("survivor is %T", survivor)
+	}
+	if len(dep.CPEs) != 2 {
+		t.Errorf("CPEs = %v, want both witnesses' identifiers", dep.CPEs)
+	}
+	if len(dep.Digests) != 2 {
+		t.Errorf("Digests = %v, want both witnesses' claims", dep.Digests)
+	}
+	if dep.Copyright == "" || dep.ResolvedURL == "" {
+		t.Errorf("scalar gaps were not filled: copyright=%q resolvedURL=%q", dep.Copyright, dep.ResolvedURL)
+	}
+	// The witness carries a different FoundBy, so this pins gap-filling
+	// rather than passing vacuously against an empty value.
+	if dep.FoundBy != "node" {
+		t.Errorf("surviving scalar was overwritten: %q", dep.FoundBy)
+	}
+	if dep.Metadata["witness"] != "sbom" {
+		t.Errorf("metadata lost: %v", dep.Metadata)
+	}
+	// Classification the identity cannot project fills gaps too, and
+	// enrichment is an any-witness fact.
+	if dep.PackageManager != PackageManagerNPM || dep.Language != Language("javascript") || dep.Type != PackageTypePackage {
+		t.Errorf("classification gaps unfilled: manager=%q language=%q type=%q", dep.PackageManager, dep.Language, dep.Type)
+	}
+	if !dep.Matched {
+		t.Error("a matched witness must leave the folded record matched")
+	}
+	// Repeated identifiers do not accumulate.
+	if _, err := graph.InsertNode(second); err != nil {
+		t.Fatal(err)
+	}
+	if len(dep.CPEs) != 2 || len(dep.Digests) != 2 {
+		t.Errorf("re-folding the same witness duplicated entries: %v %v", dep.CPEs, dep.Digests)
+	}
+}
+
+func TestManifestFoldFillsClassificationGap(t *testing.T) {
+	// A manifest's kind lives only on the node, so an unclassified first
+	// witness must not block a later classified one.
+	graph := New()
+	unclassified, err := NewManifestNode("pom.xml", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.AddNode(unclassified); err != nil {
+		t.Fatal(err)
+	}
+	classified, err := NewManifestNode("pom.xml", ManifestKindPackageJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	survivor, err := graph.InsertNode(classified)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := survivor.(*ManifestNode).FileKind; got != ManifestKindPackageJSON {
+		t.Fatalf("manifest kind = %q, want the later witness's classification", got)
+	}
+}
+
+func TestDecodeRejectsConflictingWireIDs(t *testing.T) {
+	// One wire ID minting two identities makes every edge referencing it
+	// order-dependent; the pre-union decoder rejected duplicate graph IDs
+	// and that guarantee is kept where it still means something.
+	raw := `{"nodes":[
+	  {"id":"dup","ecosystem":"npm","name":"foo","version":"1.0.0"},
+	  {"id":"dup","ecosystem":"npm","name":"bar","version":"1.0.0"}
+	]}`
+	var graph Graph
+	if err := json.Unmarshal([]byte(raw), &graph); err == nil {
+		t.Fatal("a wire id minting two identities must be a decode error")
+	}
+	// The same wire ID minting one identity still folds.
+	same := `{"nodes":[
+	  {"id":"dup","ecosystem":"npm","name":"foo","version":"1.0.0"},
+	  {"id":"dup","ecosystem":"npm","name":"Foo","version":"1.0.0"}
+	]}`
+	var folded Graph
+	if err := json.Unmarshal([]byte(same), &folded); err != nil {
+		t.Fatalf("agreeing duplicate wire ids must fold: %v", err)
+	}
+	if folded.Size() != 1 {
+		t.Fatalf("size = %d, want the witnesses folded", folded.Size())
+	}
+}
+
+func TestModuleFoldFillsScalarGaps(t *testing.T) {
+	// A module identified by path and name carries no version in its
+	// identity, so a versionless witness and a versioned one fold — and
+	// without gap-filling, insertion order would decide what is published.
+	graph := New()
+	bare, err := NewModuleNode("go.mod", Coordinates{Name: "app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.AddNode(bare); err != nil {
+		t.Fatal(err)
+	}
+	detailed, err := NewModuleNode("go.mod", Coordinates{Name: "app", Version: "1.2.0", Language: Language("go")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	survivor, err := graph.InsertNode(detailed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	module, ok := survivor.(*ModuleNode)
+	if !ok {
+		t.Fatalf("survivor is %T", survivor)
+	}
+	if module.Version != "1.2.0" || module.Language != Language("go") {
+		t.Fatalf("module scalar gaps unfilled: version=%q language=%q", module.Version, module.Language)
+	}
+}
+
+func TestAssertedPURLRecordsNoNormalizationBreadcrumbs(t *testing.T) {
+	// The identity came from the assertion, not from the caller's
+	// coordinates, so normalization rules that shaped nothing observable
+	// must not surface as provenance — irrelevant caller fields would
+	// otherwise change a node's metadata.
+	// The ecosystem is set so the npm lowercase rule genuinely fires: with
+	// an unclassified coordinate set no rule applies and the assertion
+	// would pass for the wrong reason.
+	node, err := NewDependencyNode(Coordinates{PURL: "pkg:npm/left-pad@1.3.0", Ecosystem: EcosystemNPM, Name: "Left-Pad", Version: "1.3.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, recorded := node.Metadata[normMetadataAppliedKey]; recorded {
+		t.Fatalf("asserted identity recorded normalization breadcrumbs: %v", node.Metadata)
+	}
+	// Coordinates that genuinely mint the identity still record them.
+	minted, err := NewDependencyNode(Coordinates{Ecosystem: EcosystemNPM, Name: "Left-Pad", Version: "1.3.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, recorded := minted.Metadata[normMetadataAppliedKey]; !recorded {
+		t.Fatalf("coordinate-minted identity lost its breadcrumbs: %v", minted.Metadata)
+	}
+}

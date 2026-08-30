@@ -15,9 +15,9 @@ import (
 // cross-detector position test: each detector module keeps its own lockfile
 // fixture and asserts its own position extraction with one call.
 //
-// wantPositionKeys entries are graph node IDs, typically "name@version" (or
-// "org:name@version" for org-scoped ecosystems). A missing node or a node
-// without a position fails the test with the offending key.
+// wantPositionKeys entries are graph node IDs — canonical package URLs such
+// as "pkg:npm/left-pad@1.3.0" (ADR-0041). A missing node or a node without a
+// position fails the test with the offending key.
 func RequireLockfilePositions(t *testing.T, detector sdk.Detector, fixtureDir string, wantPositionKeys []string) {
 	t.Helper()
 	if detector == nil {
@@ -58,15 +58,15 @@ func RequireLockfilePositions(t *testing.T, detector sdk.Detector, fixtureDir st
 			continue
 		}
 		if !hasSourcePosition(node) {
-			t.Errorf("package %q has no source position; locations = %#v", key, node.Locations)
+			t.Errorf("package %q has no source position; locations = %#v", key, node.NodeLocations())
 		}
 	}
 }
 
 // hasSourcePosition reports whether at least one location on the node carries
 // a position with a file and a 1-based line.
-func hasSourcePosition(node *sdk.Dependency) bool {
-	for _, location := range node.Locations {
+func hasSourcePosition(node sdk.GraphNode) bool {
+	for _, location := range node.NodeLocations() {
 		position := location.Position
 		if position != nil && strings.TrimSpace(position.File) != "" && position.Line >= 1 {
 			return true

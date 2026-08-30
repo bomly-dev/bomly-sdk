@@ -16,14 +16,6 @@ type Coordinates struct {
 	Name           string         `json:"name,omitempty"`
 	Version        string         `json:"version,omitempty"`
 	Language       Language       `json:"language,omitempty"`
-
-	// FirstParty marks a node as the scanned project's own artifact (its root
-	// package, a workspace member, a reactor module) rather than a consumed
-	// third-party package. Only detectors set it, when synthesizing or matching
-	// nodes they know belong to the build itself; imported documents (SBOM
-	// scans) never do, because a component's declared type is an artifact kind,
-	// not proof of ownership. Enrichment skips first-party nodes.
-	FirstParty bool `json:"first_party,omitempty"`
 }
 
 // QualifiedName returns the package name prefixed with its organization when present.
@@ -106,21 +98,4 @@ func (i Coordinates) displayEcosystem() Ecosystem {
 		}
 	}
 	return i.Ecosystem
-}
-
-// StableID returns a graph-friendly identifier derived from name and version.
-func (i Coordinates) StableID() string {
-	base := i.QualifiedName()
-	if i.Version == "" {
-		return base
-	}
-	if base == "" {
-		return i.Version
-	}
-	return base + "@" + i.Version
-}
-
-// IdentityKey returns a stable package identity without version information.
-func (i Coordinates) IdentityKey() string {
-	return strings.Join([]string{string(i.Ecosystem), i.PackageManager.Name(), string(i.Type), i.Org, i.Name}, "\x00")
 }

@@ -49,7 +49,7 @@ type MatchRequest struct {
 	Query           PackageQuery     `json:"query"`
 	Graph           *Graph           `json:"graph,omitempty"`
 	Registry        *PackageRegistry `json:"registry,omitempty"`
-	Target          *Dependency      `json:"target,omitempty"`
+	Target          *DependencyNode  `json:"target,omitempty"`
 	MatcherFilter   MatcherFilter    `json:"matcherFilter"`
 	// AcceptPackageUpdates signals that the host understands
 	// MatchResult.PackageUpdates. Matchers advertising

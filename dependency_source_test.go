@@ -3,26 +3,44 @@ package sdk
 import "testing"
 
 func TestDependencyRegistryMatchEligible(t *testing.T) {
+	// Eligibility is a DependencyNode method now: ownership and structure are
+	// the node kind, so the old first-party and manifest rows cannot exist —
+	// module and manifest nodes never reach this method. Only the source
+	// classification (plus the Swift source-control special case) decides.
+	newDep := func(source DependencySource) *DependencyNode {
+		node := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "example", Version: "1.0.0"})
+		node.Source = source
+		return node
+	}
+	newSwiftDep := func(source DependencySource) *DependencyNode {
+		node := mustDepPURL(t, "pkg:swift/github.com/acme/example@1.0.0")
+		node.Source = source
+		return node
+	}
+	mirror := newDep(DependencySourceRegistry)
+	mirror.ResolvedURL = "https://mirror.example.test/pkg.tgz"
+	imported := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "bundled-app", Version: "2.0.0", Type: PackageTypeApplication})
+	imported.Source = DependencySourceRegistry
+
 	for _, tc := range []struct {
 		name string
-		dep  *Dependency
+		dep  *DependencyNode
 		want bool
 	}{
-		{name: "registry release", dep: &Dependency{Source: DependencySourceRegistry}, want: true},
-		{name: "registry mirror", dep: &Dependency{Source: DependencySourceRegistry, ResolvedURL: "https://mirror.example.test/pkg.tgz"}, want: true},
-		{name: "legacy unspecified", dep: &Dependency{}, want: true},
-		{name: "plugin custom unspecified semantics", dep: &Dependency{Source: DependencySource("custom")}, want: true},
-		{name: "project", dep: &Dependency{Source: DependencySourceProject}},
-		{name: "workspace", dep: &Dependency{Source: DependencySourceWorkspace}},
-		{name: "file", dep: &Dependency{Source: DependencySourceFile}},
-		{name: "git", dep: &Dependency{Source: DependencySourceGit}},
-		{name: "Swift source control", dep: &Dependency{Coordinates: Coordinates{Ecosystem: EcosystemSwift}, Source: DependencySourceGit}, want: true},
-		{name: "Swift local path", dep: &Dependency{Coordinates: Coordinates{Ecosystem: EcosystemSwift}, Source: DependencySourceFile}},
-		{name: "url", dep: &Dependency{Source: DependencySourceURL}},
-		{name: "first-party application", dep: &Dependency{Coordinates: Coordinates{Type: PackageTypeApplication, FirstParty: true}, Source: DependencySourceRegistry}},
-		{name: "imported application", dep: &Dependency{Coordinates: Coordinates{Type: PackageTypeApplication}, Source: DependencySourceRegistry}, want: true},
-		{name: "manifest regardless of source", dep: &Dependency{Coordinates: Coordinates{Type: PackageTypeManifest}, Source: DependencySourceRegistry}},
-		{name: "first-party untyped", dep: &Dependency{Coordinates: Coordinates{FirstParty: true}, Source: DependencySourceRegistry}},
+		{name: "registry release", dep: newDep(DependencySourceRegistry), want: true},
+		{name: "registry mirror", dep: mirror, want: true},
+		{name: "legacy unspecified", dep: newDep(""), want: true},
+		{name: "plugin custom unspecified semantics", dep: newDep(DependencySource("custom")), want: true},
+		{name: "project", dep: newDep(DependencySourceProject)},
+		{name: "workspace", dep: newDep(DependencySourceWorkspace)},
+		{name: "file", dep: newDep(DependencySourceFile)},
+		{name: "git", dep: newDep(DependencySourceGit)},
+		{name: "Swift source control", dep: newSwiftDep(DependencySourceGit), want: true},
+		{name: "Swift local path", dep: newSwiftDep(DependencySourceFile)},
+		{name: "url", dep: newDep(DependencySourceURL)},
+		// An application type imported from an SBOM is an artifact kind, not
+		// an ownership signal: it is a dependency node and stays eligible.
+		{name: "imported application", dep: imported, want: true},
 		{name: "nil"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

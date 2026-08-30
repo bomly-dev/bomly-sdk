@@ -5,6 +5,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/bomly-dev/bomly-sdk/purlkit"
 )
 
 const maxFuzzInputSize = 1 << 20
@@ -27,8 +29,8 @@ func FuzzCanonicalizePackageURL(f *testing.F) {
 		if canonical == "" {
 			return
 		}
-		if reparsed := ParsePackageURL(canonical); reparsed == nil {
-			t.Fatalf("canonical package URL does not parse: %q", canonical)
+		if _, err := purlkit.Parse(canonical); err != nil {
+			t.Fatalf("canonical package URL does not parse: %q: %v", canonical, err)
 		}
 		if again := CanonicalizePackageURL(canonical); again != canonical {
 			t.Fatalf("package URL canonicalization is not stable: %q then %q", canonical, again)
@@ -41,6 +43,9 @@ func FuzzGraphJSON(f *testing.F) {
 		`null`,
 		`{"nodes":[{"id":"app","name":"app","version":"1.0.0"},{"id":"dep","name":"dep","version":"2.0.0"}],"edges":[{"fromId":"app","toId":"dep"}]}`,
 		`{"nodes":[{"id":"pkg:npm/react@18.2.0","purl":"pkg:npm/react@18.2.0","name":"react","version":"18.2.0"}]}`,
+		`{"nodes":[{"kind":"manifest","id":"manifest:package.json"},{"kind":"module","id":"module:package.json#app","name":"app","declaring_manifest_path":"package.json"},{"kind":"dependency","id":"pkg:npm/left-pad@1.3.0","purl":"pkg:npm/left-pad@1.3.0","name":"left-pad","version":"1.3.0"}],"edges":[{"fromId":"module:package.json#app","toId":"pkg:npm/left-pad@1.3.0"}]}`,
+		`{"nodes":[{"id":"a","ecosystem":"npm","name":"left-pad","version":"1.3.0"},{"id":"b","ecosystem":"npm","name":"Left-Pad","version":"1.3.0"}],"edges":[{"fromId":"a","toId":"b"}]}`,
+		`{"nodes":[{"kind":"dependency","id":"legacy-opaque","version":"1.0.0"}]}`,
 	} {
 		f.Add([]byte(seed))
 	}
@@ -51,6 +56,8 @@ func FuzzGraphJSON(f *testing.F) {
 		}
 		var graph Graph
 		if err := json.Unmarshal(raw, &graph); err != nil {
+			// Decode is strict under the typed union: a dependency payload
+			// that cannot mint a valid package URL legitimately errors.
 			return
 		}
 		requireFuzzGraphValid(t, &graph)
@@ -130,20 +137,20 @@ func requireFuzzGraphValid(t *testing.T, graph *Graph) {
 	if graph == nil {
 		t.Fatal("nil graph")
 	}
-	graph.WalkNodes(func(node *Dependency) bool {
+	graph.WalkNodes(func(node GraphNode) bool {
 		if node == nil {
 			t.Fatal("graph contains nil node")
 		}
-		if node.ID == "" {
+		if node.NodeID() == "" {
 			t.Fatalf("graph contains node with empty ID: %+v", node)
 		}
 		return true
 	})
-	graph.WalkEdges(func(from, to *Dependency) bool {
+	graph.WalkEdges(func(from, to GraphNode) bool {
 		if from == nil || to == nil {
 			t.Fatalf("graph contains nil edge endpoint: from=%+v to=%+v", from, to)
 		}
-		if from.ID == "" || to.ID == "" {
+		if from.NodeID() == "" || to.NodeID() == "" {
 			t.Fatalf("graph contains edge with empty endpoint ID: from=%+v to=%+v", from, to)
 		}
 		return true
@@ -240,4 +247,78 @@ func sameOrigin(left, right *DependencyOrigin) bool {
 	default:
 		return *left == *right
 	}
+}
+
+func FuzzCanonicalRepoPath(f *testing.F) {
+	for _, seed := range []string{
+		"package.json",
+		"pkg/sub/package.json",
+		"pkg\\sub\\package.json",
+		"./pkg/../pkg/package.json",
+		"/abs/package.json",
+		"C:\\repo\\package.json",
+		"../escape/package.json",
+		"a#b",
+		"",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, raw string) {
+		if len(raw) > maxFuzzInputSize {
+			return
+		}
+		canonical, err := CanonicalRepoPath(raw)
+		if again, againErr := CanonicalRepoPath(raw); again != canonical || (err == nil) != (againErr == nil) {
+			t.Fatalf("CanonicalRepoPath is not deterministic on %q", raw)
+		}
+		if err != nil {
+			return
+		}
+		// Canonical outputs are idempotent, relative, slash-separated, and
+		// free of the reserved bytes the module-ID grammar depends on.
+		if again, err := CanonicalRepoPath(canonical); err != nil || again != canonical {
+			t.Fatalf("CanonicalRepoPath is not idempotent: %q -> %q (%v)", canonical, again, err)
+		}
+		if strings.ContainsAny(canonical, "#\\") || strings.HasPrefix(canonical, "/") || strings.HasPrefix(canonical, "../") {
+			t.Fatalf("non-canonical output %q", canonical)
+		}
+	})
+}
+
+func FuzzDependencyNodeWire(f *testing.F) {
+	for _, seed := range []string{
+		`{"id":"pkg:npm/left-pad@1.3.0","purl":"pkg:npm/left-pad@1.3.0","name":"left-pad","version":"1.3.0"}`,
+		`{"kind":"dependency","id":"pkg:apk/alpine/musl@1.2.5","purl":"pkg:apk/alpine/musl@1.2.5?arch=x86_64","origins":[{"artifact_url":"https://e.com/a.tgz"}]}`,
+		`{"id":"x","version":"1"}`,
+		`{"kind":"module","id":"module:package.json#app"}`,
+		`{"kind":"bogus","id":"x"}`,
+		`null`,
+	} {
+		f.Add([]byte(seed))
+	}
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		if len(raw) > maxFuzzInputSize {
+			return
+		}
+		var node DependencyNode
+		if err := json.Unmarshal(raw, &node); err != nil {
+			return
+		}
+		// Every accepted payload yields a valid identity, and the codec is a
+		// fixed point: re-encoding and re-decoding reproduces the node.
+		if node.NodeID() == "" {
+			t.Fatalf("decoded dependency node with empty identity from %q", raw)
+		}
+		encoded, err := json.Marshal(&node)
+		if err != nil {
+			t.Fatalf("re-encode failed: %v", err)
+		}
+		var again DependencyNode
+		if err := json.Unmarshal(encoded, &again); err != nil {
+			t.Fatalf("re-decode failed for %s: %v", encoded, err)
+		}
+		if again.NodeID() != node.NodeID() {
+			t.Fatalf("identity not stable across the codec: %q -> %q", node.NodeID(), again.NodeID())
+		}
+	})
 }

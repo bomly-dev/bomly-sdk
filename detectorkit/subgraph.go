@@ -24,21 +24,21 @@ func SubgraphFrom(g *sdk.Graph, rootID string) (*sdk.Graph, error) {
 
 	out := sdk.New()
 	visited := map[string]struct{}{}
-	var walk func(pkg *sdk.Dependency) error
-	walk = func(pkg *sdk.Dependency) error {
+	var walk func(pkg sdk.GraphNode) error
+	walk = func(pkg sdk.GraphNode) error {
 		if pkg == nil {
 			return nil
 		}
-		if _, ok := visited[pkg.ID]; ok {
+		if _, ok := visited[pkg.NodeID()]; ok {
 			return nil
 		}
-		visited[pkg.ID] = struct{}{}
+		visited[pkg.NodeID()] = struct{}{}
 		if err := out.AddNode(pkg); err != nil {
-			return fmt.Errorf("add subgraph node %q: %w", pkg.ID, err)
+			return fmt.Errorf("add subgraph node %q: %w", pkg.NodeID(), err)
 		}
-		deps, err := g.DirectDependencies(pkg.ID)
+		deps, err := g.DirectDependencies(pkg.NodeID())
 		if err != nil {
-			return fmt.Errorf("subgraph dependencies of %q: %w", pkg.ID, err)
+			return fmt.Errorf("subgraph dependencies of %q: %w", pkg.NodeID(), err)
 		}
 		for _, dep := range deps {
 			if dep == nil {
@@ -47,8 +47,8 @@ func SubgraphFrom(g *sdk.Graph, rootID string) (*sdk.Graph, error) {
 			if err := walk(dep); err != nil {
 				return err
 			}
-			if err := out.AddEdge(pkg.ID, dep.ID); err != nil && !errors.Is(err, sdk.ErrSelfDependency) {
-				return fmt.Errorf("add subgraph edge %q -> %q: %w", pkg.ID, dep.ID, err)
+			if err := out.AddEdge(pkg.NodeID(), dep.NodeID()); err != nil && !errors.Is(err, sdk.ErrSelfDependency) {
+				return fmt.Errorf("add subgraph edge %q -> %q: %w", pkg.NodeID(), dep.NodeID(), err)
 			}
 		}
 		return nil

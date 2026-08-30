@@ -1,7 +1,5 @@
 package sdk
 
-import "errors"
-
 // ManifestKind identifies the manifest family represented by one graph entry.
 type ManifestKind string
 
@@ -140,8 +138,8 @@ func MergeGraph(dst, src *Graph) error {
 		return nil
 	}
 	var mergeErr error
-	src.WalkNodes(func(node *Dependency) bool {
-		if err := addNodeIfMissing(dst, node); err != nil {
+	src.WalkNodes(func(node GraphNode) bool {
+		if _, err := dst.InsertNode(node.CloneNode()); err != nil {
 			mergeErr = err
 			return false
 		}
@@ -150,47 +148,14 @@ func MergeGraph(dst, src *Graph) error {
 	if mergeErr != nil {
 		return mergeErr
 	}
-	src.WalkEdges(func(from, to *Dependency) bool {
-		if err := dst.AddEdge(from.ID, to.ID); err != nil {
+	src.WalkEdges(func(from, to GraphNode) bool {
+		if err := dst.AddEdge(from.NodeID(), to.NodeID()); err != nil {
 			mergeErr = err
 			return false
 		}
 		return true
 	})
 	return mergeErr
-}
-
-func addNodeIfMissing(g *Graph, node *Dependency) error {
-	if node == nil {
-		return nil
-	}
-	clone := node.Clone()
-	err := g.AddNode(clone)
-	if errors.Is(err, ErrNodeAlreadyExist) {
-		if existing, ok := g.Node(node.ID); ok && existing != nil {
-			existing.Relationship = MergeDependencyRelationship(existing.Relationship, node.Relationship)
-			mergeDependencyLocations(existing, clone.Locations)
-			// Merging fills gaps rather than resolving conflicts: locations
-			// union, and an origin fills in from whichever record has one, so
-			// it survives regardless of manifest order. Where both records
-			// assert different origins -- rare -- the existing one stays,
-			// deterministically.
-			if existing.Origin.Empty() {
-				existing.Origin = clone.Origin
-			}
-		}
-		return nil
-	}
-	return err
-}
-
-// mergeDependencyLocations appends the locations dst does not already carry.
-func mergeDependencyLocations(dst *Dependency, locations []PackageLocation) {
-	for _, loc := range locations {
-		if !hasDependencyLocation(dst.Locations, loc) {
-			dst.Locations = append(dst.Locations, loc)
-		}
-	}
 }
 
 func hasDependencyLocation(existing []PackageLocation, loc PackageLocation) bool {

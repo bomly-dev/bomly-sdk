@@ -3,28 +3,8 @@ package sdk
 import (
 	"strings"
 
-	"github.com/anchore/packageurl-go"
-
 	"github.com/bomly-dev/bomly-sdk/purlkit"
 )
-
-// ParsePackageURL parses a package URL string.
-//
-// Deprecated: use purlkit.Parse, which returns a structured PURL with
-// qualifiers and subpath and reports errors instead of returning nil. This
-// function is kept only because its signature exposes the third-party
-// packageurl type; it is removed in the next coordinated breaking release.
-func ParsePackageURL(value string) *packageurl.PackageURL {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return nil
-	}
-	parsed, err := packageurl.FromString(value)
-	if err != nil {
-		return nil
-	}
-	return &parsed
-}
 
 // CanonicalizePackageURL normalizes a package URL string when possible.
 // It delegates to purlkit, the single home for package-URL behavior.
@@ -43,26 +23,12 @@ func BuildPackageURL(purlType, namespace, name, version string) string {
 	}
 	built, err := purlkit.Build(purlkit.PURL{Type: purlType, Namespace: namespace, Name: name, Version: version})
 	if err != nil {
-		return buildPackageURLFallback(purlType, namespace, name, version)
+		// The library rejected the parts: there is no valid package URL to
+		// mint, and emitting a hand-concatenated one the library refused
+		// would put an invalid identity on the wire.
+		return ""
 	}
 	return built
-}
-
-func buildPackageURLFallback(purlType, namespace, name, version string) string {
-	var builder strings.Builder
-	builder.WriteString("pkg:")
-	builder.WriteString(purlType)
-	builder.WriteString("/")
-	if namespace != "" {
-		builder.WriteString(namespace)
-		builder.WriteString("/")
-	}
-	builder.WriteString(name)
-	if version != "" {
-		builder.WriteString("@")
-		builder.WriteString(version)
-	}
-	return builder.String()
 }
 
 // PackageURLTypeForValues maps ecosystem/build-system values to a package-url type.
@@ -212,14 +178,6 @@ func (i Coordinates) CanonicalPURL() string {
 	}
 
 	return BuildPackageURL(purlType, namespace, name, i.Version)
-}
-
-// CanonicalPackageURLFromDependency returns the canonical package URL for dep.
-func CanonicalPackageURLFromDependency(dep *Dependency) string {
-	if dep == nil {
-		return ""
-	}
-	return dep.CanonicalPURL()
 }
 
 // PackageURLBase strips version, qualifiers, and subpath from a package URL.

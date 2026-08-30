@@ -8,15 +8,15 @@ import (
 
 func TestGraphJSONRoundTrip(t *testing.T) {
 	graph := New()
-	app := NewDependencyRefWithID("app@1.0.0", "app", "1.0.0")
-	dep := NewDependencyRefWithID("dep@2.0.0", "dep", "2.0.0")
+	app := mustDep(t, Coordinates{Name: "app", Version: "1.0.0"})
+	dep := mustDep(t, Coordinates{Name: "dep", Version: "2.0.0"})
 	if err := graph.AddNode(app); err != nil {
 		t.Fatalf("AddNode(app): %v", err)
 	}
 	if err := graph.AddNode(dep); err != nil {
 		t.Fatalf("AddNode(dep): %v", err)
 	}
-	if err := graph.AddEdge(app.ID, dep.ID); err != nil {
+	if err := graph.AddEdge(app.NodeID(), dep.NodeID()); err != nil {
 		t.Fatalf("AddEdge(): %v", err)
 	}
 
@@ -32,12 +32,12 @@ func TestGraphJSONRoundTrip(t *testing.T) {
 	if decoded.Size() != 2 {
 		t.Fatalf("decoded graph size = %d, want 2", decoded.Size())
 	}
-	deps, err := decoded.DirectDependencies(app.ID)
+	deps, err := decoded.DirectDependencies(app.NodeID())
 	if err != nil {
 		t.Fatalf("DirectDependencies(): %v", err)
 	}
-	if len(deps) != 1 || deps[0].ID != dep.ID {
-		t.Fatalf("decoded dependencies = %#v, want %q", deps, dep.ID)
+	if len(deps) != 1 || deps[0].NodeID() != dep.NodeID() {
+		t.Fatalf("decoded dependencies = %#v, want %q", deps, dep.NodeID())
 	}
 }
 
@@ -139,8 +139,10 @@ func TestPluginRequestResponseRegistryJSON(t *testing.T) {
 		t.Fatalf("match result registry package = %#v, ok=%v", pkg, ok)
 	}
 
-	before := NewDependencyWithID("before", Dependency{Source: DependencySourceRegistry})
-	after := NewDependencyWithID("after", Dependency{Source: DependencySourceGit})
+	before := mustDep(t, Coordinates{Name: "before"})
+	before.Source = DependencySourceRegistry
+	after := mustDep(t, Coordinates{Name: "after"})
+	after.Source = DependencySourceGit
 	auditData, err := json.Marshal(AuditRequest{
 		Registry: registry,
 		DependencyDetailChanges: []DependencyDetailTransition{{

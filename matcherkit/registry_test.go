@@ -4,26 +4,26 @@ import (
 	"testing"
 
 	sdk "github.com/bomly-dev/bomly-sdk"
+	"github.com/bomly-dev/bomly-sdk/testkit"
 )
 
 func TestRegistryPackagesForGraphSkipsFirstPartyNodes(t *testing.T) {
 	graph := sdk.New()
-	app := sdk.NewDependency(sdk.Dependency{Coordinates: sdk.Coordinates{
+	// First-party ownership and manifest structure are node kinds now:
+	// module and manifest nodes never reach matching.
+	app := testkit.MustModuleNode(t, "pom.xml", sdk.Coordinates{
 		Ecosystem: sdk.EcosystemMaven, PackageManager: sdk.PackageManagerMaven,
 		Org: "com.acme", Name: "my-module", Version: "1.0.0",
-		Type: sdk.PackageTypeApplication, FirstParty: true, PURL: "pkg:maven/com.acme/my-module@1.0.0",
-	}})
-	manifest := sdk.NewDependency(sdk.Dependency{Coordinates: sdk.Coordinates{
-		Name: "pom.xml", Type: sdk.PackageTypeManifest,
-	}})
-	pkg := sdk.NewDependency(sdk.Dependency{Coordinates: sdk.Coordinates{
-		Ecosystem: sdk.EcosystemMaven, PackageManager: sdk.PackageManagerMaven,
-		Org: "com.guava", Name: "guava", Version: "31.0",
-		PURL: "pkg:maven/com.guava/guava@31.0",
-	}})
-	for _, node := range []*sdk.Dependency{app, manifest, pkg} {
+		Type: sdk.PackageTypeApplication,
+	})
+	manifest, err := sdk.NewManifestNode("pom.xml", sdk.ManifestKindPomXML)
+	if err != nil {
+		t.Fatalf("NewManifestNode: %v", err)
+	}
+	pkg := testkit.MustDependencyNode(t, "pkg:maven/com.guava/guava@31.0")
+	for _, node := range []sdk.GraphNode{app, manifest, pkg} {
 		if err := graph.AddNode(node); err != nil {
-			t.Fatalf("add node %q: %v", node.Name, err)
+			t.Fatalf("add node %q: %v", node.NodeID(), err)
 		}
 	}
 
@@ -36,22 +36,19 @@ func TestRegistryPackagesForGraphSkipsFirstPartyNodes(t *testing.T) {
 	if _, ok := registry.Get("pkg:maven/com.acme/my-module@1.0.0"); ok {
 		t.Fatal("first-party application package must not be seeded for enrichment")
 	}
-	if app.PackageRef != "" {
-		t.Fatalf("first-party node must not be linked to an enrichment package, got PackageRef %q", app.PackageRef)
-	}
 }
 
 // TestRegistryPackagesForGraphKeepsImportedApplicationComponents locks in
-// that ownership is the FirstParty marker, never the component type: an
+// that ownership is the module kind, never the component type: an
 // application-typed component imported from an SBOM document is an artifact
 // kind (CycloneDX/SPDX), not proof it belongs to the scanned project, and
 // must keep flowing to enrichment.
 func TestRegistryPackagesForGraphKeepsImportedApplicationComponents(t *testing.T) {
 	graph := sdk.New()
-	imported := sdk.NewDependency(sdk.Dependency{Coordinates: sdk.Coordinates{
+	imported := testkit.MustDependencyCoords(t, sdk.Coordinates{
 		Ecosystem: sdk.EcosystemNPM, Name: "bundled-app", Version: "2.0.0",
-		Type: sdk.PackageTypeApplication, PURL: "pkg:npm/bundled-app@2.0.0",
-	}})
+		Type: sdk.PackageTypeApplication,
+	})
 	if err := graph.AddNode(imported); err != nil {
 		t.Fatalf("add node: %v", err)
 	}
@@ -63,20 +60,27 @@ func TestRegistryPackagesForGraphKeepsImportedApplicationComponents(t *testing.T
 	}
 }
 
-func TestRegistryPackagesForGraphTargetRespectsFirstParty(t *testing.T) {
+// The target parameter is typed *sdk.DependencyNode now, so a first-party
+// module can no longer be passed as a target at all — the old runtime
+// first-party guard became a compile-time guarantee. What remains observable
+// is that a set target limits enrichment to that dependency alone.
+func TestRegistryPackagesForGraphTargetLimitsToTarget(t *testing.T) {
 	graph := sdk.New()
-	app := sdk.NewDependency(sdk.Dependency{Coordinates: sdk.Coordinates{
-		Ecosystem: sdk.EcosystemNPM, PackageManager: sdk.PackageManagerNPM,
-		Name: "my-app", Version: "1.0.0",
-		Type: sdk.PackageTypeApplication, FirstParty: true, PURL: "pkg:npm/my-app@1.0.0",
-	}})
-	if err := graph.AddNode(app); err != nil {
-		t.Fatalf("add node: %v", err)
+	target := testkit.MustDependencyNode(t, "pkg:npm/left-pad@1.3.0")
+	other := testkit.MustDependencyNode(t, "pkg:npm/lodash@4.17.21")
+	for _, node := range []sdk.GraphNode{target, other} {
+		if err := graph.AddNode(node); err != nil {
+			t.Fatalf("add node: %v", err)
+		}
 	}
 
 	registry := sdk.NewPackageRegistry()
-	if packages := RegistryPackagesForGraph(graph, registry, app); len(packages) != 0 {
-		t.Fatalf("expected first-party target to yield no enrichable packages, got %#v", packages)
+	packages := RegistryPackagesForGraph(graph, registry, target)
+	if len(packages) != 1 || packages[0].PURL != "pkg:npm/left-pad@1.3.0" {
+		t.Fatalf("expected only the target package, got %#v", packages)
+	}
+	if _, ok := registry.Get("pkg:npm/lodash@4.17.21"); ok {
+		t.Fatal("non-target packages must not be seeded when a target is set")
 	}
 }
 

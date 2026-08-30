@@ -54,7 +54,7 @@ type AnalyzeRequest struct {
 	Query           PackageQuery     `json:"query"`
 	Graph           *Graph           `json:"graph,omitempty"`
 	Registry        *PackageRegistry `json:"registry,omitempty"`
-	Target          *Dependency      `json:"target,omitempty"`
+	Target          *DependencyNode  `json:"target,omitempty"`
 	AnalyzerFilter  AnalyzerFilter   `json:"analyzerFilter"`
 	// AcceptPackageUpdates signals that the host understands
 	// AnalyzeResult.PackageUpdates. Analyzers advertising

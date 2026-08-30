@@ -3,34 +3,32 @@ package matcherkit
 import sdk "github.com/bomly-dev/bomly-sdk"
 
 // RegistryPackagesForGraph seeds the PURL-keyed package registry from the
-// dependency graph and returns the registry packages that matchers should
-// enrich. Each dependency node is linked to its package via PackageRef (PURL);
-// packages are deduplicated by PURL so a matcher enriches each unique package
-// once regardless of how many dependency instances reference it. First-party
-// nodes (sdk.NodeIsEnrichable is false) are never returned: they are absent
-// from external sources, and querying them risks coincidental name matches.
+// graph's dependency nodes and returns the registry packages that matchers
+// should enrich. Under the typed union only dependency nodes exist to
+// matching — module and manifest nodes are structural and never reach
+// external sources — and a dependency node's ID is its canonical package
+// URL, so PackageRef is set to it directly. Packages are deduplicated by
+// PURL so a matcher enriches each unique package once regardless of how
+// many dependency records reference it.
 //
 // When a target is set, only the target dependency is considered.
-func RegistryPackagesForGraph(g *sdk.Graph, reg *sdk.PackageRegistry, target *sdk.Dependency) []*sdk.Package {
+func RegistryPackagesForGraph(g *sdk.Graph, reg *sdk.PackageRegistry, target *sdk.DependencyNode) []*sdk.Package {
 	if g == nil || reg == nil {
 		return nil
 	}
 
-	deps := g.Nodes()
+	deps := g.DependencyNodes()
 	if target != nil {
-		deps = []*sdk.Dependency{target}
+		deps = []*sdk.DependencyNode{target}
 	}
 
 	seen := make(map[string]struct{}, len(deps))
 	out := make([]*sdk.Package, 0, len(deps))
 	for _, dep := range deps {
-		if !sdk.NodeIsEnrichable(dep) {
+		if dep == nil {
 			continue
 		}
-		purl := sdk.CanonicalPackageURLFromDependency(dep)
-		if purl == "" {
-			continue
-		}
+		purl := dep.NodeID()
 		dep.PackageRef = purl
 
 		if _, alreadySeen := seen[purl]; alreadySeen {
@@ -38,10 +36,12 @@ func RegistryPackagesForGraph(g *sdk.Graph, reg *sdk.PackageRegistry, target *sd
 		}
 		seen[purl] = struct{}{}
 
-		pkg, ok := reg.Get(purl)
-		if !ok {
-			pkg = reg.Add(sdk.PackageFromDependency(dep))
-		}
+		// Always seed through Add: it merges into an existing record rather
+		// than replacing it, so a package the registry already holds (from
+		// GraphEntry.Packages, say) still receives this node's detected
+		// origins — the repository signal that replaced the URL-valued purl
+		// qualifiers.
+		pkg := reg.Add(sdk.PackageFromDependencyNode(dep))
 		if pkg != nil {
 			out = append(out, pkg)
 		}

@@ -9,44 +9,50 @@ func FilterGraphByScope(src *Graph, scope Scope) (*Graph, error) {
 		return src, nil
 	}
 
+	// Manifest and module nodes are structural and are always retained;
+	// scope filtering applies to dependency nodes only, and only
+	// structural nodes are retained unconditionally. Seeding from
+	// Roots() would disable filtering entirely for an edgeless graph (every
+	// node is a root there) and would retain any orphan dependency
+	// regardless of scope — a caller asking for runtime would receive
+	// development dependencies too.
 	allowed := make(map[string]struct{}, src.Size())
-	for _, root := range src.Roots() {
-		if root == nil {
-			continue
-		}
-		allowed[root.ID] = struct{}{}
-	}
-	src.WalkNodes(func(dep *Dependency) bool {
-		if dep != nil && dep.PrimaryScope() == scope {
-			allowed[dep.ID] = struct{}{}
+	src.WalkNodes(func(node GraphNode) bool {
+		switch n := node.(type) {
+		case *DependencyNode:
+			if n.PrimaryScope() == scope {
+				allowed[n.NodeID()] = struct{}{}
+			}
+		default:
+			allowed[node.NodeID()] = struct{}{}
 		}
 		return true
 	})
 
 	filtered := NewWithCapacity(len(allowed))
 	for id := range allowed {
-		dep, ok := src.Node(id)
+		node, ok := src.Node(id)
 		if !ok {
 			continue
 		}
-		if err := filtered.AddNode(dep.Clone()); err != nil {
+		if err := filtered.AddNode(node.CloneNode()); err != nil {
 			return nil, err
 		}
 	}
 
 	var mergeErr error
-	src.WalkEdges(func(from, to *Dependency) bool {
+	src.WalkEdges(func(from, to GraphNode) bool {
 		if from == nil || to == nil {
 			return true
 		}
-		if _, ok := allowed[from.ID]; !ok {
+		if _, ok := allowed[from.NodeID()]; !ok {
 			return true
 		}
-		if _, ok := allowed[to.ID]; !ok {
+		if _, ok := allowed[to.NodeID()]; !ok {
 			return true
 		}
-		if err := filtered.AddEdge(from.ID, to.ID); err != nil {
-			mergeErr = fmt.Errorf("add filtered edge %q -> %q: %w", from.ID, to.ID, err)
+		if err := filtered.AddEdge(from.NodeID(), to.NodeID()); err != nil {
+			mergeErr = fmt.Errorf("add filtered edge %q -> %q: %w", from.NodeID(), to.NodeID(), err)
 			return false
 		}
 		return true
@@ -87,13 +93,8 @@ func filterEntryPackagesByGraph(packages []*Package, graph *Graph) []*Package {
 		return packages
 	}
 	allowed := make(map[string]struct{}, graph.Size())
-	graph.WalkNodes(func(dep *Dependency) bool {
-		if dep == nil {
-			return true
-		}
-		if purl := CanonicalPackageURLFromDependency(dep); purl != "" {
-			allowed[purl] = struct{}{}
-		}
+	graph.WalkDependencyNodes(func(dep *DependencyNode) bool {
+		allowed[dep.NodeID()] = struct{}{}
 		return true
 	})
 	if len(allowed) == 0 {

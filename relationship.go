@@ -31,22 +31,29 @@ func ParseDependencyRelationship(value string) DependencyRelationship {
 
 // RelationshipForPath returns the explicit target relationship when present,
 // otherwise derives directness from a root-to-target path.
-func RelationshipForPath(path []*Dependency) DependencyRelationship {
+func RelationshipForPath(path []GraphNode) DependencyRelationship {
 	if len(path) == 0 {
 		return ""
 	}
-	target := path[len(path)-1]
-	depth := len(path) - 1
-	if depth == 0 {
-		// Preserve the historical interpretation of a one-node path as a
-		// direct target. Graph-wide classification uses unknown for a root
-		// occurrence because no owning edge is available there.
-		depth = 1
+	target, _ := path[len(path)-1].(*DependencyNode)
+	// The path's first node is the owner — a manifest, a module, or (in a
+	// dependency-only graph) the root dependency itself — so it is never a
+	// hop. Between owner and target only dependency nodes count: structural
+	// nodes are not hops either, which keeps manifest → module → dependency
+	// direct while leaving the legacy root → child path direct as well, so
+	// this agrees with the graph-wide derivation.
+	depth := 1
+	if len(path) > 2 {
+		for _, node := range path[1 : len(path)-1] {
+			if _, ok := node.(*DependencyNode); ok {
+				depth++
+			}
+		}
 	}
 	return relationshipForDepth(target, depth)
 }
 
-func relationshipForDepth(target *Dependency, depth int) DependencyRelationship {
+func relationshipForDepth(target *DependencyNode, depth int) DependencyRelationship {
 	if target != nil && target.Relationship != "" {
 		return target.Relationship
 	}

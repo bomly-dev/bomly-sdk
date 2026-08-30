@@ -4,21 +4,21 @@ import (
 	"testing"
 
 	sdk "github.com/bomly-dev/bomly-sdk"
+	"github.com/bomly-dev/bomly-sdk/testkit"
 )
 
 func TestBuildRemediationHintsResolvesRawDetectionCoordinates(t *testing.T) {
 	graph := sdk.New()
-	dependency := sdk.NewDependencyWithID("raw-lockfile-id", sdk.Dependency{
-		Coordinates: sdk.Coordinates{
-			Name:      "example",
-			Version:   "1.0.0",
-			Ecosystem: sdk.EcosystemNPM,
-			Type:      sdk.PackageTypePackage,
-		},
-		ID:           "raw-lockfile-id",
-		Relationship: sdk.DependencyRelationshipDirect,
-		Source:       sdk.DependencySourceRegistry,
+	// Node IDs are canonical package URLs now: a raw detection record without
+	// PackageRef resolves through its NodeID.
+	dependency := testkit.MustDependencyCoords(t, sdk.Coordinates{
+		Name:      "example",
+		Version:   "1.0.0",
+		Ecosystem: sdk.EcosystemNPM,
+		Type:      sdk.PackageTypePackage,
 	})
+	dependency.Relationship = sdk.DependencyRelationshipDirect
+	dependency.Source = sdk.DependencySourceRegistry
 	if dependency.PackageRef != "" {
 		t.Fatalf("test requires a raw dependency without PackageRef: %#v", dependency)
 	}
@@ -50,7 +50,7 @@ func TestBuildRemediationHintsResolvesRawDetectionCoordinates(t *testing.T) {
 		sdk.RemediationActionDirectBump,
 		sdk.RemediationActionTransitiveOverride,
 	}, nil)
-	if len(response.Hints) != 1 || response.Hints[0].DependencyRef != dependency.ID {
+	if len(response.Hints) != 1 || response.Hints[0].DependencyRef != dependency.NodeID() {
 		t.Fatalf("BuildRemediationHints() = %#v", response)
 	}
 	if !containsHintAction(response.Hints[0].Strategies, sdk.RemediationActionDirectBump) {
@@ -60,15 +60,12 @@ func TestBuildRemediationHintsResolvesRawDetectionCoordinates(t *testing.T) {
 
 func TestBuildRemediationHintsUsesDetectorAdvice(t *testing.T) {
 	graph := sdk.New()
-	dependency := sdk.NewDependencyWithID("example.com/lib", sdk.Dependency{
-		Coordinates: sdk.Coordinates{
-			PURL: "pkg:golang/example.com/lib@1.0.0", Name: "example.com/lib",
-			Version: "1.0.0", PackageManager: sdk.PackageManagerGoMod,
-		},
-		ID:         "example.com/lib",
-		PackageRef: "pkg:golang/example.com/lib@1.0.0",
-		Source:     sdk.DependencySourceRegistry,
+	dependency := testkit.MustDependencyCoords(t, sdk.Coordinates{
+		PURL: "pkg:golang/example.com/lib@1.0.0", Name: "example.com/lib",
+		Version: "1.0.0", PackageManager: sdk.PackageManagerGoMod,
 	})
+	dependency.PackageRef = "pkg:golang/example.com/lib@1.0.0"
+	dependency.Source = sdk.DependencySourceRegistry
 	if err := graph.AddNode(dependency); err != nil {
 		t.Fatal(err)
 	}

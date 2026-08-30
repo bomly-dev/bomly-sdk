@@ -6,39 +6,44 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/bomly-dev/bomly-sdk/purlkit"
 )
 
 var (
-	ErrNilNode          = errors.New("dependency node is nil")
-	ErrEmptyNodeID      = errors.New("dependency node id is empty")
-	ErrNodeAlreadyExist = errors.New("dependency node already exists")
-	ErrNodeNotFound     = errors.New("dependency node not found")
+	ErrNilNode          = errors.New("graph node is nil")
+	ErrEmptyNodeID      = errors.New("graph node id is empty")
+	ErrNodeAlreadyExist = errors.New("graph node already exists")
+	ErrNodeNotFound     = errors.New("graph node not found")
 	ErrSelfDependency   = errors.New("self dependency is not allowed")
 	ErrCycleDetected    = errors.New("dependency creates a cycle")
 )
 
-// Path describes one dependency path through the graph.
+// Path describes one path through the graph. Paths are heterogeneous: they
+// traverse manifest and module nodes on their way to dependencies.
 type Path struct {
-	Nodes   []*Dependency
+	Nodes   []GraphNode
 	Cyclic  bool
 	CycleTo string
 }
 
-// Diff summarizes the dependency changes between two graphs.
+// Diff summarizes the dependency changes between two graphs. Diffs are
+// dependency-only: manifest and module nodes are structural and do not
+// participate.
 type Diff struct {
-	Added       []*Dependency
-	Removed     []*Dependency
+	Added       []*DependencyNode
+	Removed     []*DependencyNode
 	Updated     []VersionChange
 	Transitions []DependencyDetailTransition
 }
 
 // VersionChange captures a dependency identity that changed versions.
 type VersionChange struct {
-	Before *Dependency
-	After  *Dependency
+	Before *DependencyNode
+	After  *DependencyNode
 }
 
-// DependencyDetailField identifies one occurrence property that changed
+// DependencyDetailField identifies one dependency property that changed
 // independently of package identity or version.
 type DependencyDetailField string
 
@@ -54,11 +59,11 @@ const (
 	DependencyDetailRegistryEligibility DependencyDetailField = "registry_eligibility"
 )
 
-// DependencyDetailTransition captures same-identity occurrence detail changes.
+// DependencyDetailTransition captures same-identity dependency detail changes.
 // Version changes remain represented separately by VersionChange.
 type DependencyDetailTransition struct {
-	Before                 *Dependency             `json:"before"`
-	After                  *Dependency             `json:"after"`
+	Before                 *DependencyNode         `json:"before"`
+	After                  *DependencyNode         `json:"after"`
 	ChangedFields          []DependencyDetailField `json:"changedFields"`
 	BeforeRelationship     DependencyRelationship  `json:"beforeRelationship,omitempty"`
 	AfterRelationship      DependencyRelationship  `json:"afterRelationship,omitempty"`
@@ -131,10 +136,12 @@ func dependencyDetailFieldIncluded(fields []DependencyDetailField, wanted Depend
 	return false
 }
 
-// Graph stores dependency nodes as a directed graph.
+// Graph stores the typed graph nodes as a directed graph, keyed by NodeID.
+// A node's ID is its identity (ADR-0041), so the ID index doubles as the
+// identity index: two nodes are the same node exactly when their IDs match.
 type Graph struct {
 	indexByID map[string]int
-	nodes     []*Dependency
+	nodes     []GraphNode
 	alive     []bool
 	outgoing  []map[int]struct{}
 	incoming  []map[int]struct{}
@@ -142,32 +149,33 @@ type Graph struct {
 	size      int
 }
 
-// New creates an empty dependency graph.
+// New creates an empty graph.
 func New() *Graph {
 	return NewWithCapacity(0)
 }
 
-// NewWithCapacity creates an empty dependency graph sized for the expected node count.
+// NewWithCapacity creates an empty graph sized for the expected node count.
 func NewWithCapacity(nodeCount int) *Graph {
 	return &Graph{
 		indexByID: make(map[string]int, nodeCount),
-		nodes:     make([]*Dependency, 0, nodeCount),
+		nodes:     make([]GraphNode, 0, nodeCount),
 		alive:     make([]bool, 0, nodeCount),
 		outgoing:  make([]map[int]struct{}, 0, nodeCount),
 		incoming:  make([]map[int]struct{}, 0, nodeCount),
 	}
 }
 
-// AddNode inserts a dependency node.
-func (g *Graph) AddNode(node *Dependency) error {
-	if node == nil {
+// AddNode inserts a node, rejecting a duplicate identity. Use InsertNode
+// for fold-by-identity insertion.
+func (g *Graph) AddNode(node GraphNode) error {
+	if isNilNode(node) {
 		return ErrNilNode
 	}
-	if node.ID == "" {
+	if node.NodeID() == "" {
 		return ErrEmptyNodeID
 	}
-	if _, exists := g.indexByID[node.ID]; exists {
-		return fmt.Errorf("%w: %s", ErrNodeAlreadyExist, node.ID)
+	if _, exists := g.indexByID[node.NodeID()]; exists {
+		return fmt.Errorf("%w: %s", ErrNodeAlreadyExist, node.NodeID())
 	}
 
 	idx := g.nextSlot()
@@ -175,13 +183,231 @@ func (g *Graph) AddNode(node *Dependency) error {
 	g.alive[idx] = true
 	g.outgoing[idx] = make(map[int]struct{})
 	g.incoming[idx] = make(map[int]struct{})
-	g.indexByID[node.ID] = idx
+	g.indexByID[node.NodeID()] = idx
 	g.size++
 	return nil
 }
 
-// Node returns a dependency node by ID.
-func (g *Graph) Node(id string) (*Dependency, bool) {
+// InsertNode is fold-by-identity insertion (ADR-0041): a node whose
+// identity already exists in the graph unions into the existing record and
+// the survivor is returned. Identity is the node ID, and IDs are disjoint
+// across kinds, so a fold always joins records of one kind. Dependency
+// folds union scopes, locations, and origins, merge the relationship, and
+// fold registry-match eligibility toward eligible (any-witness: when
+// exactly one witness is eligible, its source survives — withholding
+// enrichment from a package a registry release genuinely uses would hide
+// vulnerabilities). Module folds union locations; manifest folds are
+// no-ops beyond the identity match.
+func (g *Graph) InsertNode(node GraphNode) (GraphNode, error) {
+	if isNilNode(node) {
+		return nil, ErrNilNode
+	}
+	if node.NodeID() == "" {
+		return nil, ErrEmptyNodeID
+	}
+	existing, ok := g.Node(node.NodeID())
+	if !ok {
+		if err := g.AddNode(node); err != nil {
+			return nil, err
+		}
+		return node, nil
+	}
+	foldNodes(existing, node)
+	return existing, nil
+}
+
+// isNilNode reports whether a GraphNode is absent — including a typed nil
+// such as (*DependencyNode)(nil), which is a non-nil interface value whose
+// methods would panic. A failed constructor's zero return must surface as
+// ErrNilNode, not a crash.
+func isNilNode(node GraphNode) bool {
+	switch n := node.(type) {
+	case nil:
+		return true
+	case *ManifestNode:
+		return n == nil
+	case *ModuleNode:
+		return n == nil
+	case *DependencyNode:
+		return n == nil
+	default:
+		return false
+	}
+}
+
+// foldNodes unions one witness into the surviving record of the same
+// identity. Kinds always match because IDs are kind-disjoint.
+func foldNodes(surviving, witness GraphNode) {
+	switch survivor := surviving.(type) {
+	case *DependencyNode:
+		incoming, ok := witness.(*DependencyNode)
+		if !ok {
+			return
+		}
+		survivor.Relationship = MergeDependencyRelationship(survivor.Relationship, incoming.Relationship)
+		for _, scope := range incoming.Scopes {
+			survivor.AddScope(scope)
+		}
+		mergeNodeLocations(&survivor.Locations, incoming.Locations)
+		survivor.Origins = MergeOrigins(survivor.Origins, incoming.Origins)
+		mergeDependencySources(survivor, incoming)
+		// Every witness's assertions about one package survive the fold:
+		// security identifiers and integrity claims union, detection
+		// scalars and metadata fill gaps. Dropping them would lose CPEs or
+		// digests from a second SBOM witness on insertion order alone.
+		survivor.CPEs = mergeStringSet(survivor.CPEs, incoming.CPEs)
+		survivor.Digests = mergeDigestSet(survivor.Digests, incoming.Digests)
+		if survivor.Copyright == "" {
+			survivor.Copyright = incoming.Copyright
+		}
+		if survivor.FoundBy == "" {
+			survivor.FoundBy = incoming.FoundBy
+		}
+		if survivor.ResolvedURL == "" {
+			survivor.ResolvedURL = incoming.ResolvedURL
+		}
+		if survivor.PackageRef == "" {
+			survivor.PackageRef = incoming.PackageRef
+		}
+		// Classification the identity cannot project also fills gaps: a
+		// bare-package-URL witness folded first would otherwise leave the
+		// node with an unknown package manager, which manager-specific
+		// consumers (remediation hints, most of all) key on.
+		if survivor.PackageManager == PackageManagerUnknown {
+			survivor.PackageManager = incoming.PackageManager
+		}
+		if survivor.Language == "" {
+			survivor.Language = incoming.Language
+		}
+		if survivor.Type == "" {
+			survivor.Type = incoming.Type
+		}
+		// Enrichment is an any-witness fact: one witness having been
+		// matched is true of the folded record.
+		survivor.Matched = survivor.Matched || incoming.Matched
+		survivor.Metadata = mergeMetadata(survivor.Metadata, incoming.Metadata)
+	case *ModuleNode:
+		incoming, ok := witness.(*ModuleNode)
+		if !ok {
+			return
+		}
+		// A module identified by path and name carries no version in its
+		// identity, so two witnesses of one module — one versionless —
+		// fold, and without this the survivor's empty version would let
+		// insertion order decide what gets published.
+		if survivor.Version == "" {
+			survivor.Version = incoming.Version
+		}
+		if survivor.Ecosystem == "" {
+			survivor.Ecosystem = incoming.Ecosystem
+		}
+		if survivor.PackageManager == PackageManagerUnknown {
+			survivor.PackageManager = incoming.PackageManager
+		}
+		if survivor.Language == "" {
+			survivor.Language = incoming.Language
+		}
+		mergeNodeLocations(&survivor.Locations, incoming.Locations)
+		survivor.Metadata = mergeMetadata(survivor.Metadata, incoming.Metadata)
+	case *ManifestNode:
+		incoming, ok := witness.(*ManifestNode)
+		if !ok {
+			return
+		}
+		// A manifest's classification lives only on the node, so an
+		// unclassified first witness must not block a later classified one
+		// — otherwise consolidation order decides whether the POM,
+		// lockfile, or workflow kind survives.
+		if survivor.FileKind == "" {
+			survivor.FileKind = incoming.FileKind
+		}
+		survivor.Metadata = mergeMetadata(survivor.Metadata, incoming.Metadata)
+	}
+}
+
+// mergeStringSet unions two string slices, preserving order and dropping
+// duplicates.
+func mergeStringSet(existing, additions []string) []string {
+	if len(additions) == 0 {
+		return existing
+	}
+	seen := make(map[string]struct{}, len(existing)+len(additions))
+	for _, value := range existing {
+		seen[value] = struct{}{}
+	}
+	for _, value := range additions {
+		if _, duplicate := seen[value]; duplicate {
+			continue
+		}
+		seen[value] = struct{}{}
+		existing = append(existing, value)
+	}
+	return existing
+}
+
+// mergeDigestSet unions two digest slices. Digests compare by whole value:
+// algorithm, value, and subject together, since a digest of a different
+// subject is a different claim.
+func mergeDigestSet(existing, additions []Digest) []Digest {
+	if len(additions) == 0 {
+		return existing
+	}
+	seen := make(map[Digest]struct{}, len(existing)+len(additions))
+	for _, digest := range existing {
+		seen[digest] = struct{}{}
+	}
+	for _, digest := range additions {
+		if _, duplicate := seen[digest]; duplicate {
+			continue
+		}
+		seen[digest] = struct{}{}
+		existing = append(existing, digest)
+	}
+	return existing
+}
+
+// mergeMetadata fills the gaps in existing from additions. Keys the
+// survivor already carries win, so a fold never rewrites an assertion the
+// surviving record made.
+func mergeMetadata(existing, additions map[string]any) map[string]any {
+	if len(additions) == 0 {
+		return existing
+	}
+	if existing == nil {
+		existing = make(map[string]any, len(additions))
+	}
+	for key, value := range additions {
+		if _, present := existing[key]; present {
+			continue
+		}
+		existing[key] = value
+	}
+	return existing
+}
+
+// mergeDependencySources folds registry-match eligibility toward eligible:
+// when the surviving record is ineligible and the witness is eligible, the
+// witness's source survives. Eligibility is computed per witness, so the
+// Swift source-control special case and the unknown-source rule apply
+// unchanged.
+func mergeDependencySources(surviving, witness *DependencyNode) {
+	if surviving.RegistryMatchEligible() || !witness.RegistryMatchEligible() {
+		return
+	}
+	surviving.Source = witness.Source
+}
+
+// mergeNodeLocations appends the locations dst does not already carry.
+func mergeNodeLocations(dst *[]PackageLocation, additions []PackageLocation) {
+	for _, location := range additions {
+		if !hasDependencyLocation(*dst, location) {
+			*dst = append(*dst, location)
+		}
+	}
+}
+
+// Node returns a node by ID.
+func (g *Graph) Node(id string) (GraphNode, bool) {
 	idx, ok := g.indexByID[id]
 	if !ok {
 		return nil, false
@@ -189,12 +415,57 @@ func (g *Graph) Node(id string) (*Dependency, bool) {
 	return g.nodes[idx], ok
 }
 
-// Nodes returns all dependency nodes sorted by ID.
-func (g *Graph) Nodes() []*Dependency {
+// DependencyNode returns the dependency node with the given ID, or false
+// when the ID is absent or names a different kind.
+func (g *Graph) DependencyNode(id string) (*DependencyNode, bool) {
+	node, ok := g.Node(id)
+	if !ok {
+		return nil, false
+	}
+	dep, ok := node.(*DependencyNode)
+	return dep, ok
+}
+
+// Nodes returns all nodes sorted by ID.
+func (g *Graph) Nodes() []GraphNode {
 	indices := g.sortedIndices()
-	out := make([]*Dependency, 0, len(indices))
+	out := make([]GraphNode, 0, len(indices))
 	for _, idx := range indices {
 		out = append(out, g.nodes[idx])
+	}
+	return out
+}
+
+// DependencyNodes returns all dependency nodes sorted by ID — the iteration
+// surface for matching, enrichment, and diffing, which are dependency-only.
+func (g *Graph) DependencyNodes() []*DependencyNode {
+	out := make([]*DependencyNode, 0, g.size)
+	for _, idx := range g.sortedIndices() {
+		if dep, ok := g.nodes[idx].(*DependencyNode); ok {
+			out = append(out, dep)
+		}
+	}
+	return out
+}
+
+// ModuleNodes returns all module nodes sorted by ID.
+func (g *Graph) ModuleNodes() []*ModuleNode {
+	out := make([]*ModuleNode, 0, g.size)
+	for _, idx := range g.sortedIndices() {
+		if module, ok := g.nodes[idx].(*ModuleNode); ok {
+			out = append(out, module)
+		}
+	}
+	return out
+}
+
+// ManifestNodes returns all manifest nodes sorted by ID.
+func (g *Graph) ManifestNodes() []*ManifestNode {
+	out := make([]*ManifestNode, 0, g.size)
+	for _, idx := range g.sortedIndices() {
+		if manifest, ok := g.nodes[idx].(*ManifestNode); ok {
+			out = append(out, manifest)
+		}
 	}
 	return out
 }
@@ -262,7 +533,7 @@ func (g *Graph) RemoveNode(id string) bool {
 }
 
 // DirectDependencies returns direct dependencies for a node, sorted by ID.
-func (g *Graph) DirectDependencies(id string) ([]*Dependency, error) {
+func (g *Graph) DirectDependencies(id string) ([]GraphNode, error) {
 	idx, err := g.requireIndex(id)
 	if err != nil {
 		return nil, err
@@ -271,7 +542,7 @@ func (g *Graph) DirectDependencies(id string) ([]*Dependency, error) {
 }
 
 // Dependents returns direct dependents for a node, sorted by ID.
-func (g *Graph) Dependents(id string) ([]*Dependency, error) {
+func (g *Graph) Dependents(id string) ([]GraphNode, error) {
 	idx, err := g.requireIndex(id)
 	if err != nil {
 		return nil, err
@@ -280,8 +551,8 @@ func (g *Graph) Dependents(id string) ([]*Dependency, error) {
 }
 
 // Roots returns nodes with no incoming relationships.
-func (g *Graph) Roots() []*Dependency {
-	out := make([]*Dependency, 0, g.size)
+func (g *Graph) Roots() []GraphNode {
+	out := make([]GraphNode, 0, g.size)
 	for _, idx := range g.sortedIndices() {
 		if len(g.incoming[idx]) == 0 {
 			out = append(out, g.nodes[idx])
@@ -291,8 +562,8 @@ func (g *Graph) Roots() []*Dependency {
 }
 
 // Leaves returns nodes with no outgoing relationships.
-func (g *Graph) Leaves() []*Dependency {
-	out := make([]*Dependency, 0, g.size)
+func (g *Graph) Leaves() []GraphNode {
+	out := make([]GraphNode, 0, g.size)
 	for _, idx := range g.sortedIndices() {
 		if len(g.outgoing[idx]) == 0 {
 			out = append(out, g.nodes[idx])
@@ -301,7 +572,7 @@ func (g *Graph) Leaves() []*Dependency {
 	return out
 }
 
-// CollectPathsTo returns deterministic root-to-target dependency paths.
+// CollectPathsTo returns deterministic root-to-target paths.
 func (g *Graph) CollectPathsTo(targetID string) ([]Path, error) {
 	targetIdx, err := g.requireIndex(targetID)
 	if err != nil {
@@ -328,7 +599,7 @@ func (g *Graph) CollectPathsTo(targetID string) ([]Path, error) {
 // TopologicalSort returns a topological ordering for the acyclic portion of the
 // graph. If cycles remain, the returned slice contains the ordered prefix and
 // ErrCycleDetected.
-func (g *Graph) TopologicalSort() ([]*Dependency, error) {
+func (g *Graph) TopologicalSort() ([]GraphNode, error) {
 	inDeg := make([]int, len(g.nodes))
 	ready := &idIndexHeap{g: g, items: make([]int, 0, g.size)}
 	for idx, node := range g.nodes {
@@ -341,7 +612,7 @@ func (g *Graph) TopologicalSort() ([]*Dependency, error) {
 		}
 	}
 
-	ordered := make([]*Dependency, 0, g.size)
+	ordered := make([]GraphNode, 0, g.size)
 	for ready.Len() > 0 {
 		idx := heap.Pop(ready).(int)
 		ordered = append(ordered, g.nodes[idx])
@@ -365,7 +636,7 @@ func (g *Graph) Size() int {
 }
 
 // WalkNodes iterates all live nodes. Returning false from fn stops iteration.
-func (g *Graph) WalkNodes(fn func(*Dependency) bool) {
+func (g *Graph) WalkNodes(fn func(GraphNode) bool) {
 	if fn == nil {
 		return
 	}
@@ -379,9 +650,24 @@ func (g *Graph) WalkNodes(fn func(*Dependency) bool) {
 	}
 }
 
+// WalkDependencyNodes iterates all live dependency nodes. Returning false
+// from fn stops iteration.
+func (g *Graph) WalkDependencyNodes(fn func(*DependencyNode) bool) {
+	if fn == nil {
+		return
+	}
+	g.WalkNodes(func(node GraphNode) bool {
+		dep, ok := node.(*DependencyNode)
+		if !ok {
+			return true
+		}
+		return fn(dep)
+	})
+}
+
 // WalkEdges iterates all dependency relationships (from -> to). Returning false
 // stops iteration.
-func (g *Graph) WalkEdges(fn func(from, to *Dependency) bool) {
+func (g *Graph) WalkEdges(fn func(from, to GraphNode) bool) {
 	if fn == nil {
 		return
 	}
@@ -409,14 +695,14 @@ func (g *Graph) PrettyString() string {
 	nodes := g.Nodes()
 	var b strings.Builder
 	for i, node := range nodes {
-		deps, _ := g.DirectDependencies(node.ID)
-		b.WriteString(node.ID)
+		deps, _ := g.DirectDependencies(node.NodeID())
+		b.WriteString(node.NodeID())
 		b.WriteString(" -> [")
 		for j, dep := range deps {
 			if j > 0 {
 				b.WriteString(", ")
 			}
-			b.WriteString(dep.ID)
+			b.WriteString(dep.NodeID())
 		}
 		b.WriteString("]")
 		if i < len(nodes)-1 {
@@ -440,7 +726,7 @@ func (g *Graph) PrettyTree() string {
 	expanded := make(map[int]struct{}, g.size)
 	var b strings.Builder
 	for _, root := range roots {
-		rootIdx := g.indexByID[root.ID]
+		rootIdx := g.indexByID[root.NodeID()]
 		b.WriteString(nodeDisplayLabel(root))
 		b.WriteByte('\n')
 		expanded[rootIdx] = struct{}{}
@@ -451,14 +737,14 @@ func (g *Graph) PrettyTree() string {
 }
 
 // Compare returns added, removed, version-changed, and detail-changed
-// dependencies between base and head. Synthetic consolidated subproject nodes
-// are ignored.
+// dependencies between base and head. Only dependency nodes participate:
+// manifest and module nodes are structural.
 func Compare(base, head *Graph) Diff {
 	baseExact, headExact := indexDiffableNodes(base), indexDiffableNodes(head)
 	baseRelationships := dependencyRelationshipsForGraph(base)
 	headRelationships := dependencyRelationshipsForGraph(head)
-	baseRemainder := make(map[string]*Dependency)
-	headRemainder := make(map[string]*Dependency)
+	baseRemainder := make(map[string]*DependencyNode)
+	headRemainder := make(map[string]*DependencyNode)
 	transitions := make([]DependencyDetailTransition, 0)
 
 	for id, node := range baseExact {
@@ -488,8 +774,8 @@ func Compare(base, head *Graph) Diff {
 	}
 
 	diff := Diff{
-		Added:       make([]*Dependency, 0),
-		Removed:     make([]*Dependency, 0),
+		Added:       make([]*DependencyNode, 0),
+		Removed:     make([]*DependencyNode, 0),
 		Updated:     make([]VersionChange, 0),
 		Transitions: transitions,
 	}
@@ -524,8 +810,8 @@ func Compare(base, head *Graph) Diff {
 	sort.Slice(diff.Updated, func(i, j int) bool {
 		left := diff.Updated[i]
 		right := diff.Updated[j]
-		if left.Before.IdentityKey() != right.Before.IdentityKey() {
-			return left.Before.IdentityKey() < right.Before.IdentityKey()
+		if lk, rk := diffIdentityKey(left.Before), diffIdentityKey(right.Before); lk != rk {
+			return lk < rk
 		}
 		if left.Before.Version != right.Before.Version {
 			return left.Before.Version < right.Before.Version
@@ -533,17 +819,17 @@ func Compare(base, head *Graph) Diff {
 		if left.After.Version != right.After.Version {
 			return left.After.Version < right.After.Version
 		}
-		return left.Before.ID < right.Before.ID
+		return left.Before.NodeID() < right.Before.NodeID()
 	})
 	SortDependencyDetailTransitions(diff.Transitions)
 	return diff
 }
 
 // CompareDependencyDetails returns a transition when relationship, source, or
-// registry-matching eligibility differs between two occurrences. It is
+// registry-matching eligibility differs between two dependency records. It is
 // exported so trusted fuzzy identity reconciliation can use the same canonical
 // classifier as Compare.
-func CompareDependencyDetails(baseGraph, headGraph *Graph, before, after *Dependency) (DependencyDetailTransition, bool) {
+func CompareDependencyDetails(baseGraph, headGraph *Graph, before, after *DependencyNode) (DependencyDetailTransition, bool) {
 	return compareDependencyDetails(
 		before,
 		after,
@@ -552,7 +838,7 @@ func CompareDependencyDetails(baseGraph, headGraph *Graph, before, after *Depend
 	)
 }
 
-func compareDependencyDetails(before, after *Dependency, beforeRelationships, afterRelationships map[string]DependencyRelationship) (DependencyDetailTransition, bool) {
+func compareDependencyDetails(before, after *DependencyNode, beforeRelationships, afterRelationships map[string]DependencyRelationship) (DependencyDetailTransition, bool) {
 	if before == nil || after == nil {
 		return DependencyDetailTransition{}, false
 	}
@@ -587,11 +873,11 @@ func compareDependencyDetails(before, after *Dependency, beforeRelationships, af
 	}, true
 }
 
-func dependencyRelationshipFromMap(relationships map[string]DependencyRelationship, node *Dependency) DependencyRelationship {
+func dependencyRelationshipFromMap(relationships map[string]DependencyRelationship, node *DependencyNode) DependencyRelationship {
 	if node == nil {
 		return DependencyRelationshipUnknown
 	}
-	if relationship := relationships[node.ID]; relationship != "" {
+	if relationship := relationships[node.NodeID()]; relationship != "" {
 		return relationship
 	}
 	return relationshipForDepth(node, 0)
@@ -604,15 +890,39 @@ func dependencyRelationshipsForGraph(graph *Graph) map[string]DependencyRelation
 	}
 	roots := graph.Roots()
 	hasUsableEdges := len(roots) > 0 && len(roots) != graph.Size()
+	// A dependency is direct when it hangs off a root, or off a structural
+	// node the traversal reached without passing through a dependency:
+	// manifest and module nodes are not dependency hops, so
+	// manifest → module → dependency is direct, while a dependency's own
+	// structural descendant does not reset the depth beneath it.
 	direct := make(map[int]struct{})
 	if hasUsableEdges {
+		owners := make([]int, 0, len(roots))
+		seen := make(map[int]struct{}, len(roots))
 		for _, root := range roots {
-			rootIndex, ok := graph.indexByID[root.ID]
-			if !ok {
-				continue
+			if index, ok := graph.indexByID[root.NodeID()]; ok {
+				if _, dup := seen[index]; !dup {
+					seen[index] = struct{}{}
+					owners = append(owners, index)
+				}
 			}
-			for childIndex := range graph.outgoing[rootIndex] {
+		}
+		for cursor := 0; cursor < len(owners); cursor++ {
+			ownerIndex := owners[cursor]
+			for childIndex := range graph.outgoing[ownerIndex] {
 				direct[childIndex] = struct{}{}
+				child := graph.nodes[childIndex]
+				if child == nil || !graph.alive[childIndex] {
+					continue
+				}
+				if _, isDependency := child.(*DependencyNode); isDependency {
+					continue
+				}
+				if _, dup := seen[childIndex]; dup {
+					continue
+				}
+				seen[childIndex] = struct{}{}
+				owners = append(owners, childIndex)
 			}
 		}
 	}
@@ -621,8 +931,12 @@ func dependencyRelationshipsForGraph(graph *Graph) map[string]DependencyRelation
 		if node == nil || !graph.alive[index] {
 			continue
 		}
-		if node.Relationship != "" {
-			relationships[node.ID] = relationshipForDepth(node, 0)
+		dep, ok := node.(*DependencyNode)
+		if !ok {
+			continue
+		}
+		if dep.Relationship != "" {
+			relationships[dep.NodeID()] = relationshipForDepth(dep, 0)
 			continue
 		}
 		depth := 0
@@ -632,7 +946,7 @@ func dependencyRelationshipsForGraph(graph *Graph) map[string]DependencyRelation
 				depth = 1
 			}
 		}
-		relationships[node.ID] = relationshipForDepth(node, depth)
+		relationships[dep.NodeID()] = relationshipForDepth(dep, depth)
 	}
 	return relationships
 }
@@ -642,8 +956,8 @@ func SortDependencyDetailTransitions(transitions []DependencyDetailTransition) {
 	sort.Slice(transitions, func(i, j int) bool {
 		left := transitions[i]
 		right := transitions[j]
-		if left.Before.IdentityKey() != right.Before.IdentityKey() {
-			return left.Before.IdentityKey() < right.Before.IdentityKey()
+		if lk, rk := diffIdentityKey(left.Before), diffIdentityKey(right.Before); lk != rk {
+			return lk < rk
 		}
 		if left.Before.Version != right.Before.Version {
 			return left.Before.Version < right.Before.Version
@@ -651,94 +965,67 @@ func SortDependencyDetailTransitions(transitions []DependencyDetailTransition) {
 		if left.After.Version != right.After.Version {
 			return left.After.Version < right.After.Version
 		}
-		if left.Before.ID != right.Before.ID {
-			return left.Before.ID < right.Before.ID
+		if left.Before.NodeID() != right.Before.NodeID() {
+			return left.Before.NodeID() < right.Before.NodeID()
 		}
-		return left.After.ID < right.After.ID
+		return left.After.NodeID() < right.After.NodeID()
 	})
 }
 
-func indexDiffableNodes(g *Graph) map[string]*Dependency {
-	indexed := make(map[string]*Dependency)
+func indexDiffableNodes(g *Graph) map[string]*DependencyNode {
+	indexed := make(map[string]*DependencyNode)
 	if g == nil {
 		return indexed
 	}
-	g.WalkNodes(func(node *Dependency) bool {
-		if node == nil || !NodeIsDiffable(node) {
-			return true
-		}
-		indexed[node.ID] = node
+	g.WalkDependencyNodes(func(node *DependencyNode) bool {
+		indexed[node.NodeID()] = node
 		return true
 	})
 	return indexed
 }
 
-// NodeIsDiffable reports whether node should participate in dependency diffs.
-func NodeIsDiffable(node *Dependency) bool {
-	if node == nil || strings.HasPrefix(node.ID, "subproject:") || strings.HasPrefix(node.ID, "manifest:") {
-		return false
+// diffIdentityKey is the version-less grouping key for version-change
+// detection: the canonical package URL with its version stripped and its
+// qualifiers kept, so two architectures of one package never read as a
+// version pair.
+func diffIdentityKey(node *DependencyNode) string {
+	if node == nil {
+		return ""
 	}
-	switch node.Type {
-	case PackageTypeManifest, PackageTypeApplication:
-		return false
+	if key := purlkit.WithoutVersion(node.NodeID()); key != "" {
+		return key
 	}
-	name := strings.ToLower(strings.TrimSpace(node.Name))
-	switch name {
-	case "root", "package-lock.json", "yarn.lock", "pubspec.lock", "poetry.lock", "pipfile.lock", "mix.lock", "conan.lock", "requirements.txt", "requirements-dev.txt", "requirements.in", "requirements.lock":
-		return false
-	}
-	if strings.HasSuffix(name, ".sbom.json") || strings.HasSuffix(name, ".spdx.json") || strings.HasSuffix(name, ".cdx.json") {
-		return false
-	}
-	return true
+	return node.NodeID()
 }
 
-// NodeIsEnrichable reports whether node should be queried against external
-// enrichment sources (advisory databases, package registries, scorecards).
-// Manifest-typed structural nodes and first-party artifacts (workspace
-// members, reactor modules, the project's own package — marked FirstParty by
-// the detector that synthesized them) are not published to public sources, so
-// querying them wastes lookups and risks coincidental name matches; they
-// remain in the packages inventory and in generated SBOMs, just without
-// external enrichment. Ownership is the FirstParty marker, never the package
-// type: an application-typed component imported from an SBOM is an artifact
-// kind, not proof it belongs to the scanned project, and stays enrichable.
-// External plugin matchers should apply the same predicate to the nodes they
-// iterate.
-func NodeIsEnrichable(node *Dependency) bool {
-	if node == nil || node.FirstParty {
-		return false
-	}
-	return node.Type != PackageTypeManifest
-}
-
-func groupNodesByIdentity(nodes map[string]*Dependency) map[string][]*Dependency {
-	grouped := make(map[string][]*Dependency)
+func groupNodesByIdentity(nodes map[string]*DependencyNode) map[string][]*DependencyNode {
+	grouped := make(map[string][]*DependencyNode)
 	for _, node := range nodes {
-		grouped[node.IdentityKey()] = append(grouped[node.IdentityKey()], node)
+		key := diffIdentityKey(node)
+		grouped[key] = append(grouped[key], node)
 	}
 	return grouped
 }
 
-func sortNodesForDiff(nodes []*Dependency) {
+func sortNodesForDiff(nodes []*DependencyNode) {
 	sort.Slice(nodes, func(i, j int) bool {
 		if nodes[i].Version != nodes[j].Version {
 			return nodes[i].Version < nodes[j].Version
 		}
-		return nodes[i].ID < nodes[j].ID
+		return nodes[i].NodeID() < nodes[j].NodeID()
 	})
 }
 
-func (g *Graph) lookupSorted(ids map[int]struct{}) []*Dependency {
+func (g *Graph) lookupSorted(ids map[int]struct{}) []GraphNode {
 	indices := make([]int, 0, len(ids))
 	for idx := range ids {
 		indices = append(indices, idx)
 	}
 	sort.Slice(indices, func(i, j int) bool {
-		return g.nodes[indices[i]].ID < g.nodes[indices[j]].ID
+		return g.nodes[indices[i]].NodeID() < g.nodes[indices[j]].NodeID()
 	})
 
-	out := make([]*Dependency, 0, len(indices))
+	out := make([]GraphNode, 0, len(indices))
 	for _, idx := range indices {
 		out = append(out, g.nodes[idx])
 	}
@@ -780,12 +1067,16 @@ func (g *Graph) writeTree(b *strings.Builder, nodeIdx int, prefix string, expand
 	}
 }
 
-func nodeDisplayLabel(node *Dependency) string {
+func nodeDisplayLabel(node GraphNode) string {
 	if node == nil {
 		return ""
 	}
-	label := node.StableID()
-	scope := node.PrimaryScope()
+	dep, ok := node.(*DependencyNode)
+	if !ok {
+		return node.NodeID()
+	}
+	label := dep.NodeID()
+	scope := dep.PrimaryScope()
 	if scope == ScopeUnknown {
 		return label
 	}
@@ -815,7 +1106,7 @@ func (g *Graph) collectPathsTo(currentIdx, targetIdx int, relevant map[int]struc
 		if _, seen := active[childIdx]; seen {
 			if childIdx == targetIdx {
 				cycleStack := append(append([]int(nil), stack...), childIdx)
-				*paths = append(*paths, g.buildPath(cycleStack, true, g.nodes[childIdx].ID))
+				*paths = append(*paths, g.buildPath(cycleStack, true, g.nodes[childIdx].NodeID()))
 			}
 			continue
 		}
@@ -824,7 +1115,7 @@ func (g *Graph) collectPathsTo(currentIdx, targetIdx int, relevant map[int]struc
 }
 
 func (g *Graph) buildPath(indices []int, cyclic bool, cycleTo string) Path {
-	nodes := make([]*Dependency, 0, len(indices))
+	nodes := make([]GraphNode, 0, len(indices))
 	for _, idx := range indices {
 		nodes = append(nodes, g.nodes[idx])
 	}
@@ -875,15 +1166,15 @@ func (g *Graph) sortedRelevantIndices(relevant map[int]struct{}) []int {
 		indices = append(indices, idx)
 	}
 	sort.Slice(indices, func(i, j int) bool {
-		return g.nodes[indices[i]].ID < g.nodes[indices[j]].ID
+		return g.nodes[indices[i]].NodeID() < g.nodes[indices[j]].NodeID()
 	})
 	return indices
 }
 
-func pathNodesKey(nodes []*Dependency) string {
+func pathNodesKey(nodes []GraphNode) string {
 	ids := make([]string, 0, len(nodes))
 	for _, node := range nodes {
-		ids = append(ids, node.ID)
+		ids = append(ids, node.NodeID())
 	}
 	return strings.Join(ids, "/")
 }
@@ -894,7 +1185,7 @@ func (g *Graph) sortedAdjacent(adj map[int]struct{}) []int {
 		indices = append(indices, idx)
 	}
 	sort.Slice(indices, func(i, j int) bool {
-		return g.nodes[indices[i]].ID < g.nodes[indices[j]].ID
+		return g.nodes[indices[i]].NodeID() < g.nodes[indices[j]].NodeID()
 	})
 	return indices
 }
@@ -905,7 +1196,7 @@ func (g *Graph) sortedIndices() []int {
 		indices = append(indices, idx)
 	}
 	sort.Slice(indices, func(i, j int) bool {
-		return g.nodes[indices[i]].ID < g.nodes[indices[j]].ID
+		return g.nodes[indices[i]].NodeID() < g.nodes[indices[j]].NodeID()
 	})
 	return indices
 }
@@ -942,7 +1233,7 @@ func (h *idIndexHeap) Len() int {
 }
 
 func (h *idIndexHeap) Less(i, j int) bool {
-	return h.g.nodes[h.items[i]].ID < h.g.nodes[h.items[j]].ID
+	return h.g.nodes[h.items[i]].NodeID() < h.g.nodes[h.items[j]].NodeID()
 }
 
 func (h *idIndexHeap) Swap(i, j int) {
