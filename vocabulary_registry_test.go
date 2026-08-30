@@ -159,6 +159,26 @@ func TestExternalReferenceVocabularyMatchesTheLibraries(t *testing.T) {
 	}
 }
 
+// TestCycloneDXReferenceTypesAreCanonicalized fails when cyclonedx-go
+// declares a reference type the canonical registry does not hold. A constant
+// reference makes a rename a compile error; only this catches an addition,
+// and an uncanonicalized type publishes whichever spelling folded first.
+func TestCycloneDXReferenceTypesAreCanonicalized(t *testing.T) {
+	declared := declaredConstants(t, "github.com/CycloneDX/cyclonedx-go", "ExternalReferenceType")
+	for constName, spelling := range declared {
+		// CycloneDX references carry no category, which is how the model
+		// records that the source had no such axis.
+		got := canonicalReferenceType(ExternalReferenceCategoryUnknown, spelling)
+		if got != spelling {
+			t.Errorf("%s = %q canonicalizes to %q; it is missing from the registry", constName, spelling, got)
+		}
+		// And an upper-cased spelling must fold to the library's own.
+		if got := canonicalReferenceType(ExternalReferenceCategoryUnknown, strings.ToUpper(spelling)); got != spelling {
+			t.Errorf("%s: upper-cased %q canonicalizes to %q, want %q", constName, spelling, got, spelling)
+		}
+	}
+}
+
 // categoryForTypeConstant maps the library's constant-naming convention to the
 // category the type belongs to.
 func categoryForTypeConstant(constName string) ExternalReferenceCategory {

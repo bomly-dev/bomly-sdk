@@ -546,3 +546,32 @@ func TestCPE22RejectsOverlongBindings(t *testing.T) {
 		t.Fatal("a complete seven-component CPE 2.2 URI was rejected")
 	}
 }
+
+// TestCycloneDXTypeCasingIsCanonical pins the case the SPDX-only registry
+// missed. The type comparison is case-insensitive, so "WEBSITE" and "website"
+// are one reference — without canonicalizing, which spelling reached the
+// document depended on which witness folded first.
+func TestCycloneDXTypeCasingIsCanonical(t *testing.T) {
+	upper := ExternalReference{Type: "WEBSITE", Locator: "https://example.test"}
+	lower := ExternalReference{Type: "website", Locator: "https://example.test"}
+
+	normalized, ok := upper.Normalized()
+	if !ok || normalized.Type != "website" {
+		t.Fatalf("normalized = %+v, want the library's own spelling", normalized)
+	}
+	forward := MergeExternalReferences([]ExternalReference{upper}, []ExternalReference{lower})
+	reverse := MergeExternalReferences([]ExternalReference{lower}, []ExternalReference{upper})
+	if len(forward) != 1 || len(reverse) != 1 {
+		t.Fatalf("merged to %d and %d records, want one each", len(forward), len(reverse))
+	}
+	if forward[0].Type != reverse[0].Type {
+		t.Fatalf("published type depends on witness order: %q vs %q", forward[0].Type, reverse[0].Type)
+	}
+	// An SPDX-categorised reference still uses the SPDX registry.
+	spdxRef, ok := ExternalReference{
+		Category: ExternalReferenceCategorySecurity, Type: "ADVISORY", Locator: "https://advisories.test/x",
+	}.Normalized()
+	if !ok || spdxRef.Type != "advisory" {
+		t.Fatalf("SPDX reference normalized to %+v, want the SPDX spelling", spdxRef)
+	}
+}

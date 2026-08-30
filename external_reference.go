@@ -8,6 +8,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	cdx "github.com/CycloneDX/cyclonedx-go"
 	spdxcommon "github.com/spdx/tools-golang/spdx/v2/common"
 
 	"github.com/bomly-dev/bomly-sdk/purlkit"
@@ -458,20 +459,33 @@ func countUnescapedColons(value string) int {
 // canonicalReferenceType returns the specification's own spelling of a type
 // the vocabulary recognizes, and the value as given otherwise -- the type
 // vocabulary is open, so an unrecognized type is carried, not corrected.
+//
+// Which specification is decided by the category, because that is what says
+// where the reference came from: a categorised reference is SPDX's, and a
+// category-less one is CycloneDX's. Looking in one registry only meant a
+// CycloneDX "WEBSITE" was carried as typed, so it merged with "website" --
+// the comparison is case-insensitive -- but published whichever spelling
+// folded first.
 func canonicalReferenceType(category ExternalReferenceCategory, referenceType string) string {
-	if canonical, ok := canonicalReferenceTypes[normalizeReferenceType(referenceType)]; ok {
+	registry := canonicalCycloneDXReferenceTypes
+	if category != ExternalReferenceCategoryUnknown {
+		registry = canonicalSPDXReferenceTypes
+	}
+	if canonical, ok := registry[normalizeReferenceType(referenceType)]; ok {
 		return canonical
 	}
 	return referenceType
 }
 
-// canonicalReferenceTypes indexes every reference type the SPDX
-// specification names by its comparison form. The values are
-// spdx/tools-golang's constants, so the canonical spelling is the library's.
-var canonicalReferenceTypes = buildCanonicalReferenceTypes()
-
-func buildCanonicalReferenceTypes() map[string]string {
-	spellings := []string{
+// canonicalSPDXReferenceTypes and canonicalCycloneDXReferenceTypes index each
+// specification's reference types by their comparison form. The values are
+// the libraries' own constants, so the canonical spelling is theirs and a
+// rename upstream is a compile error here.
+//
+// vocabulary_registry_test.go diffs both against the libraries' declarations,
+// which is what catches a type added upstream -- a constant reference cannot.
+var (
+	canonicalSPDXReferenceTypes = indexReferenceTypes(
 		spdxcommon.TypeSecurityCPE23Type, spdxcommon.TypeSecurityCPE22Type,
 		spdxcommon.TypeSecurityAdvisory, spdxcommon.TypeSecurityFix,
 		spdxcommon.TypeSecurityUrl, spdxcommon.TypeSecuritySwid,
@@ -479,12 +493,73 @@ func buildCanonicalReferenceTypes() map[string]string {
 		spdxcommon.TypePackageManagerNpm, spdxcommon.TypePackageManagerNuGet,
 		spdxcommon.TypePackageManagerBower,
 		spdxcommon.TypePersistentIdSwh, spdxcommon.TypePersistentIdGitoid,
-	}
+	)
+	canonicalCycloneDXReferenceTypes = indexCycloneDXReferenceTypes()
+)
+
+func indexReferenceTypes(spellings ...string) map[string]string {
 	index := make(map[string]string, len(spellings))
 	for _, spelling := range spellings {
 		index[normalizeReferenceType(spelling)] = spelling
 	}
 	return index
+}
+
+func indexCycloneDXReferenceTypes() map[string]string {
+	types := []cdx.ExternalReferenceType{
+		cdx.ERTypeAdversaryModel,
+		cdx.ERTypeAdvisories,
+		cdx.ERTypeAttestation,
+		cdx.ERTypeBOM,
+		cdx.ERTypeBuildMeta,
+		cdx.ERTypeBuildSystem,
+		cdx.ERTypeCertificationReport,
+		cdx.ERTypeChat,
+		cdx.ERTypeConfiguration,
+		cdx.ERTypeCodifiedInfrastructure,
+		cdx.ERTypeComponentAnalysisReport,
+		cdx.ERTypeDistribution,
+		cdx.ERTypeDistributionIntake,
+		cdx.ERTypeDocumentation,
+		cdx.ERTypeDynamicAnalysisReport,
+		cdx.ERTypeDigitalSignature,
+		cdx.ERTypeElectronicSignature,
+		cdx.ERTypeEvidence,
+		cdx.ERTypeExploitabilityStatement,
+		cdx.ERTypeFormulation,
+		cdx.ERTypeIssueTracker,
+		cdx.ERTypeLicense,
+		cdx.ERTypeLog,
+		cdx.ERTypeMailingList,
+		cdx.ERTypeMaturityReport,
+		cdx.ERTypeModelCard,
+		cdx.ERTypeOther,
+		cdx.ERTypePentestReport,
+		cdx.ERTypePOAM,
+		cdx.ERTypeQualityMetrics,
+		cdx.ERTypeReleaseNotes,
+		cdx.ERTypeRiskAssessment,
+		cdx.ERTypeRFC9116,
+		cdx.ERTypeRuntimeAnalysisReport,
+		cdx.ERTypeSecurityContact,
+		cdx.ERTypeSocial,
+		cdx.ERTypeSourceDistribution,
+		cdx.ERTypeStaticAnalysisReport,
+		cdx.ERTypeSupport,
+		cdx.ERTypeThreatModel,
+		cdx.ERTypeVCS,
+		cdx.ERTypeVulnerabilityAssertion,
+		cdx.ERTypeWebsite,
+		cdx.ERTypePatent,
+		cdx.ERTypePatentFamily,
+		cdx.ERTypePatentAssertion,
+		cdx.ERTypeCitation,
+	}
+	spellings := make([]string, 0, len(types))
+	for _, referenceType := range types {
+		spellings = append(spellings, string(referenceType))
+	}
+	return indexReferenceTypes(spellings...)
 }
 
 // reconcileComments picks one comment for a reference two witnesses both
