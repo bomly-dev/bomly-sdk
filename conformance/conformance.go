@@ -140,6 +140,31 @@ func testGraphWireRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal graph: %v", err)
 	}
+	// Assert the discriminator on the encoded bytes, before decoding: the
+	// decoder's legacy inference would reconstruct these same three kinds
+	// from the manifest package type, the first-party marker, and the
+	// dependency default, so a codec that stopped emitting "kind" would
+	// still round-trip here while misclassifying ambiguous nodes.
+	var emitted struct {
+		Nodes []struct {
+			ID   string       `json:"id"`
+			Kind sdk.NodeKind `json:"kind"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal(encoded, &emitted); err != nil {
+		t.Fatalf("inspect encoded graph: %v", err)
+	}
+	if len(emitted.Nodes) != 3 {
+		t.Fatalf("encoded %d nodes, want 3", len(emitted.Nodes))
+	}
+	emittedKinds := make(map[string]sdk.NodeKind, len(emitted.Nodes))
+	for _, node := range emitted.Nodes {
+		if node.Kind == "" {
+			t.Fatalf("node %q was encoded without a kind discriminator", node.ID)
+		}
+		emittedKinds[node.ID] = node.Kind
+	}
+
 	var decoded sdk.Graph
 	if err := json.Unmarshal(encoded, &decoded); err != nil {
 		t.Fatalf("unmarshal graph: %v", err)
@@ -159,10 +184,24 @@ func testGraphWireRoundTrip(t *testing.T) {
 		if !ok || node.Kind() != want.kind {
 			t.Fatalf("node %q lost or re-kinded across the wire: %#v", want.id, node)
 		}
+		if emittedKinds[want.id] != want.kind {
+			t.Fatalf("node %q encoded kind %q, want %q", want.id, emittedKinds[want.id], want.kind)
+		}
 	}
-	children, err := decoded.DirectDependencies(module.NodeID())
-	if err != nil || len(children) != 1 || children[0].NodeID() != dep.NodeID() {
-		t.Fatalf("edges lost across the wire: %v, %v", children, err)
+	// Both edges, not just the dependency one: the manifest-to-module edge
+	// is the structural half of the topology, and a codec that dropped only
+	// that half would otherwise pass.
+	for _, edge := range []struct{ parent, child string }{
+		{manifest.NodeID(), module.NodeID()},
+		{module.NodeID(), dep.NodeID()},
+	} {
+		children, err := decoded.DirectDependencies(edge.parent)
+		if err != nil {
+			t.Fatalf("edges of %q lost across the wire: %v", edge.parent, err)
+		}
+		if len(children) != 1 || children[0].NodeID() != edge.child {
+			t.Fatalf("edge %q -> %q lost across the wire: got %v", edge.parent, edge.child, children)
+		}
 	}
 }
 
