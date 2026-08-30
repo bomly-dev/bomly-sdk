@@ -430,15 +430,34 @@ func normalizeIRIReference(locator string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	// A relative reference has no meaning to a consumer that does not know
-	// the base the document was written against, and nothing records one.
-	if parsed.Scheme == "" {
+	// Checked before the scheme branch, so it covers a relative form too: an
+	// empty authority ("//@") leaves parsed.Host empty while still carrying
+	// userinfo.
+	if parsed.User != nil {
 		return "", false
+	}
+	if parsed.Scheme == "" {
+		// A relative reference resolves against the document it was written
+		// in. ADR-0037 scopes the fixed-point promise to single-source flows,
+		// and for those the base is that same document -- so carrying the
+		// reference is faithful, while dropping it loses an assertion the
+		// source made. (A merged export inherits the wider question that ADR
+		// already answers by linking sources rather than re-asserting them.)
+		//
+		// The exception is a network-path reference, "//host/path": it has no
+		// scheme but it does name an authority, so it resolves somewhere
+		// other than the document's own host. That is the redirection concern
+		// the scheme policy exists for, wearing a relative form.
+		//
+		// Detected by the "//" prefix, which is what the grammar defines it
+		// as -- not by a non-empty host, since "//@" is a network-path
+		// reference whose authority is empty.
+		if strings.HasPrefix(locator, "//") {
+			return "", false
+		}
+		return locator, true
 	}
 	if _, sensitive := sensitiveIRISchemes[strings.ToLower(parsed.Scheme)]; sensitive {
-		return "", false
-	}
-	if parsed.User != nil {
 		return "", false
 	}
 	// A value in the cdx namespace is a BOM-Link or it is malformed. It has

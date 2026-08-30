@@ -652,8 +652,10 @@ func assertPublishableReference(t *testing.T, reference ExternalReference) {
 		if err != nil {
 			t.Fatalf("iri locator %q does not parse", reference.Locator)
 		}
-		if parsed.Scheme == "" {
-			t.Fatalf("iri locator %q is a relative reference", reference.Locator)
+		// A relative reference is permitted; a network-path one is not,
+		// because it names an authority other than the document's own.
+		if parsed.Scheme == "" && strings.HasPrefix(reference.Locator, "//") {
+			t.Fatalf("iri locator %q is a network-path reference", reference.Locator)
 		}
 		if parsed.User != nil {
 			t.Fatalf("iri locator %q carries credentials", reference.Locator)

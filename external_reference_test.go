@@ -706,7 +706,9 @@ func TestIRILocatorsPreserveTheWiderGrammar(t *testing.T) {
 		"data:text/plain;base64,aGk=",
 		"mailto:security@example.test",
 		"ftp://user:pw@ftp.example.test/pkg.tgz",
-		"/relative/path",
+		// A network-path reference names another authority without a scheme,
+		// so it resolves somewhere other than the document's own host.
+		"//evil.test/x",
 	} {
 		reference := ExternalReference{Type: "distribution", Locator: locator}
 		if got, ok := reference.Normalized(); ok {
@@ -800,5 +802,42 @@ func TestCPEEscapedBackslashesCountAsSeparators(t *testing.T) {
 	}
 	if _, ok := (ExternalReference{Category: ExternalReferenceCategorySecurity, Type: "cpe23Type", Locator: odd}).Normalized(); ok {
 		t.Fatalf("%s was accepted, but its escaped colon leaves it a component short", odd)
+	}
+}
+
+// TestRelativeIRIReferencesArePreserved pins that a relative locator survives.
+// It resolves against the document it was written in, which for the
+// single-source flows ADR-0037 scopes its fixed-point promise to is exactly
+// the right base — so carrying it is faithful and dropping it loses an
+// assertion the source made.
+func TestRelativeIRIReferencesArePreserved(t *testing.T) {
+	for _, locator := range []string{
+		"../advisories/CVE-1234",
+		"advisories/CVE-1234",
+		"/advisories/CVE-1234",
+		"#security",
+	} {
+		reference := ExternalReference{Type: "advisories", Locator: locator}
+		normalized, ok := reference.Normalized()
+		if !ok {
+			t.Errorf("%q was dropped, but its schema permits a relative reference", locator)
+			continue
+		}
+		if normalized.Locator != locator {
+			t.Errorf("%q was rewritten to %q", locator, normalized.Locator)
+		}
+	}
+	// A network-path reference is the one relative form that changes the
+	// authority, so it stays refused.
+	for _, locator := range []string{"//evil.test/x", "//user:pw@evil.test/x", "//@", "//"} {
+		if got, ok := (ExternalReference{Type: "advisories", Locator: locator}).Normalized(); ok {
+			t.Errorf("%q was accepted: %+v", locator, got)
+		}
+	}
+	// An SPDX url-typed reference is still web-only; only the CycloneDX field
+	// is typed as an IRI reference.
+	spdxRel := ExternalReference{Category: ExternalReferenceCategorySecurity, Type: "advisory", Locator: "../x"}
+	if _, ok := spdxRel.Normalized(); ok {
+		t.Fatal("a relative locator was accepted for an SPDX advisory reference")
 	}
 }
