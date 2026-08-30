@@ -380,10 +380,16 @@ func TestWireV1NodeFieldsAreOmitEmpty(t *testing.T) {
 	// Fields each kind leaves zero and must therefore omit. A module node
 	// always carries a declaring manifest path (it is identity), so that
 	// key is expected there and forbidden elsewhere.
+	//
+	// The ADR-0037 component assertions are additive and optional on every
+	// kind, so an unset one must not appear either: a reader on an older
+	// build would see a key it does not know, and an explicit null supplier
+	// is not the same statement as an absent one.
+	assertions := []string{"licenses", "description", "homepage", "supplier", "originator"}
 	forbidden := map[NodeKind][]string{
-		NodeKindManifest:   {"manifest_kind", "declaring_manifest_path", "origins", "origin", "purl", "scopes", "package_ref"},
-		NodeKindModule:     {"manifest_kind", "origins", "origin", "scopes", "package_ref"},
-		NodeKindDependency: {"manifest_kind", "declaring_manifest_path", "origins", "origin", "scopes", "package_ref"},
+		NodeKindManifest:   append([]string{"manifest_kind", "declaring_manifest_path", "origins", "origin", "purl", "scopes", "package_ref"}, assertions...),
+		NodeKindModule:     append([]string{"manifest_kind", "origins", "origin", "scopes", "package_ref"}, assertions...),
+		NodeKindDependency: append([]string{"manifest_kind", "declaring_manifest_path", "origins", "origin", "scopes", "package_ref"}, assertions...),
 	}
 
 	graph := New()
