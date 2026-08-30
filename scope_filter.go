@@ -9,12 +9,9 @@ func FilterGraphByScope(src *Graph, scope Scope) (*Graph, error) {
 		return src, nil
 	}
 
-	// Manifest and module nodes are structural and are always retained —
-	// under the union that is explicit rather than "whatever has no
-	// incoming edge". Roots stay retained too, matching the historical
-	// contract for dependency-shaped roots. Scope filtering applies to
-	// dependency nodes only.
-	// Only structural nodes are retained unconditionally. Seeding from
+	// Manifest and module nodes are structural and are always retained;
+	// scope filtering applies to dependency nodes only, and only
+	// structural nodes are retained unconditionally. Seeding from
 	// Roots() would disable filtering entirely for an edgeless graph (every
 	// node is a root there) and would retain any orphan dependency
 	// regardless of scope — a caller asking for runtime would receive
