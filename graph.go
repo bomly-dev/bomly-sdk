@@ -765,28 +765,39 @@ func dependencyRelationshipsForGraph(graph *Graph) map[string]DependencyRelation
 	}
 	roots := graph.Roots()
 	hasUsableEdges := len(roots) > 0 && len(roots) != graph.Size()
-	// A dependency is direct when it hangs off a root or off any structural
-	// node — manifest and module nodes are not dependency hops, so a
-	// manifest → module → dependency chain must not read as transitive.
+	// A dependency is direct when it hangs off a root, or off a structural
+	// node the traversal reached without passing through a dependency:
+	// manifest and module nodes are not dependency hops, so
+	// manifest → module → dependency is direct, while a dependency's own
+	// structural descendant does not reset the depth beneath it.
 	direct := make(map[int]struct{})
 	if hasUsableEdges {
-		owners := make(map[int]struct{}, len(roots))
+		owners := make([]int, 0, len(roots))
+		seen := make(map[int]struct{}, len(roots))
 		for _, root := range roots {
 			if index, ok := graph.indexByID[root.NodeID()]; ok {
-				owners[index] = struct{}{}
+				if _, dup := seen[index]; !dup {
+					seen[index] = struct{}{}
+					owners = append(owners, index)
+				}
 			}
 		}
-		for index, node := range graph.nodes {
-			if node == nil || !graph.alive[index] {
-				continue
-			}
-			if _, isDependency := node.(*DependencyNode); !isDependency {
-				owners[index] = struct{}{}
-			}
-		}
-		for ownerIndex := range owners {
+		for cursor := 0; cursor < len(owners); cursor++ {
+			ownerIndex := owners[cursor]
 			for childIndex := range graph.outgoing[ownerIndex] {
 				direct[childIndex] = struct{}{}
+				child := graph.nodes[childIndex]
+				if child == nil || !graph.alive[childIndex] {
+					continue
+				}
+				if _, isDependency := child.(*DependencyNode); isDependency {
+					continue
+				}
+				if _, dup := seen[childIndex]; dup {
+					continue
+				}
+				seen[childIndex] = struct{}{}
+				owners = append(owners, childIndex)
 			}
 		}
 	}

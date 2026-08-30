@@ -14,13 +14,12 @@ func FilterGraphByScope(src *Graph, scope Scope) (*Graph, error) {
 	// incoming edge". Roots stay retained too, matching the historical
 	// contract for dependency-shaped roots. Scope filtering applies to
 	// dependency nodes only.
+	// Only structural nodes are retained unconditionally. Seeding from
+	// Roots() would disable filtering entirely for an edgeless graph (every
+	// node is a root there) and would retain any orphan dependency
+	// regardless of scope — a caller asking for runtime would receive
+	// development dependencies too.
 	allowed := make(map[string]struct{}, src.Size())
-	for _, root := range src.Roots() {
-		if root == nil {
-			continue
-		}
-		allowed[root.NodeID()] = struct{}{}
-	}
 	src.WalkNodes(func(node GraphNode) bool {
 		switch n := node.(type) {
 		case *DependencyNode:

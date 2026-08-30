@@ -131,10 +131,14 @@ func TestWireV1NewFieldsAreOmitEmpty(t *testing.T) {
 		if err := json.Unmarshal(data, &decoded); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
+		// Node-level additions (origins, declaring_manifest_path,
+		// manifest_kind) are asserted by TestWireV1NodeFieldsAreOmitEmpty
+		// instead: they live inside encoded node objects, which this
+		// top-level key check never reaches, so listing them here would
+		// assert nothing.
 		for _, forbidden := range []string{
 			"acceptPackageUpdates", "packageUpdates", "capabilities", "configSchema",
-			// Identity-phase additions must vanish when zero-valued.
-			"origins", "declaring_manifest_path", "detected_origins",
+			"detected_origins",
 		} {
 			if _, ok := decoded[forbidden]; ok {
 				t.Errorf("%s: zero-valued %q must be omitted from the wire", name, forbidden)
