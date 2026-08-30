@@ -115,7 +115,13 @@ func testGraphWireRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManifestNode: %v", err)
 	}
-	module, err := sdk.NewModuleNode("package.json", sdk.Coordinates{Name: "app"})
+	// Coordinates that mint a package URL, so the module's legacy purl
+	// field carries something a pre-union peer would otherwise lose.
+	module, err := sdk.NewModuleNode("package.json", sdk.Coordinates{
+		Ecosystem: sdk.EcosystemNPM,
+		Name:      "app",
+		Version:   "1.0.0",
+	})
 	if err != nil {
 		t.Fatalf("NewModuleNode: %v", err)
 	}
@@ -180,6 +186,11 @@ func testGraphWireRoundTrip(t *testing.T) {
 		case sdk.NodeKindModule:
 			if !node.FirstParty {
 				t.Errorf("module node %q lost its legacy first-party marker", node.ID)
+			}
+			// A pre-union peer reads the module's identity from purl; the
+			// kind-qualified node ID means nothing to it.
+			if node.PURL != module.PURL() {
+				t.Errorf("module node %q encoded purl %q, want %q", node.ID, node.PURL, module.PURL())
 			}
 			if node.Type == sdk.PackageTypeManifest {
 				t.Errorf("module node %q carries the manifest type, which outranks the first-party marker in legacy inference", node.ID)
