@@ -444,6 +444,9 @@ func normalizeIRIReference(locator string) (string, bool) {
 	if !hasValidPercentEscapes(locator) {
 		return "", false
 	}
+	if !hasLegalIRICharacters(locator) {
+		return "", false
+	}
 	parsed, err := url.Parse(locator)
 	if err != nil {
 		return "", false
@@ -509,6 +512,31 @@ func isWebScheme(locator string) bool {
 	default:
 		return false
 	}
+}
+
+// excludedIRIBytes are the ASCII characters RFC 3986 excludes from a URI, and
+// which RFC 3987 does not add back: they are legal only percent-encoded.
+//
+// This is a fixed list from the specification, not a grammar -- non-ASCII is
+// deliberately absent, because an IRI is exactly the thing that may carry it.
+// Whitespace and control characters are already refused by isBoundedToken.
+// Together those two cover the character-level rule completely, so a further
+// character finding is answered by extending this list rather than by
+// another pass over the parser.
+var excludedIRIBytes = [...]bool{
+	'"': true, '<': true, '>': true, '\\': true,
+	'^': true, '`': true, '{': true, '|': true, '}': true,
+}
+
+// hasLegalIRICharacters reports whether every ASCII byte in a value is one an
+// IRI may carry unescaped.
+func hasLegalIRICharacters(value string) bool {
+	for i := 0; i < len(value); i++ {
+		if b := value[i]; int(b) < len(excludedIRIBytes) && excludedIRIBytes[b] {
+			return false
+		}
+	}
+	return true
 }
 
 // hasValidPercentEscapes reports whether every "%" in a value introduces a

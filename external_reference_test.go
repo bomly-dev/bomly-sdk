@@ -891,3 +891,37 @@ func TestWebSchemesDoNotFallBackToTheIRIPath(t *testing.T) {
 		t.Fatal("a non-web IRI was rejected")
 	}
 }
+
+// TestIRILocatorsRejectExcludedCharacters pins RFC 3986's excluded set. These
+// are legal only percent-encoded, so publishing them unescaped emits a
+// locator that violates the schema's iri-reference type.
+func TestIRILocatorsRejectExcludedCharacters(t *testing.T) {
+	for _, locator := range []string{
+		"urn:example:{value}",
+		"urn:example:a|b",
+		`urn:example:a\b`,
+		"urn:example:a^b",
+		"urn:example:a`b",
+		`urn:example:a"b`,
+		"urn:example:a<b>",
+		"../advisories/{id}",
+	} {
+		if got, ok := (ExternalReference{Type: "distribution", Locator: locator}).Normalized(); ok {
+			t.Errorf("%q was accepted with an excluded character: %+v", locator, got)
+		}
+	}
+	// Percent-encoded, they are legal.
+	if _, ok := (ExternalReference{Type: "distribution", Locator: "urn:example:%7Bvalue%7D"}).Normalized(); !ok {
+		t.Fatal("a percent-encoded brace was rejected")
+	}
+	// Non-ASCII stays legal: an IRI is exactly the thing that may carry it.
+	if _, ok := (ExternalReference{Type: "distribution", Locator: "ftp://例え.テスト/資料"}).Normalized(); !ok {
+		t.Fatal("a Unicode IRI was rejected by the character rule")
+	}
+	// And the sub-delimiters an IRI may carry unescaped are unaffected.
+	for _, locator := range []string{"urn:example:a+b", "urn:example:a,b", "urn:example:a$b", "urn:example:a!b"} {
+		if _, ok := (ExternalReference{Type: "distribution", Locator: locator}).Normalized(); !ok {
+			t.Errorf("%q was rejected, but its characters are legal unescaped", locator)
+		}
+	}
+}
