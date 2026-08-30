@@ -52,8 +52,14 @@ func TestNormalizePackageIdentityNPMScopedName(t *testing.T) {
 func TestNormalizePackageIdentityGoPath(t *testing.T) {
 	pkg := mustDep(t, Coordinates{Ecosystem: EcosystemGo, Name: "github.com\\Example\\lib//v2", Version: "V2.1.0-RC1"})
 
-	if pkg.Name != "github.com/Example/lib/v2" {
-		normReturnNameMismatch(t, pkg.Name, "github.com/Example/lib/v2")
+	// The identity splits a Go module path at its trailing segment, so the
+	// module path is read back through the ecosystem-native accessor rather
+	// than the bare Name field (ADR-0021). It is lowercased because the
+	// purl specification's golang type says so and the library applies that
+	// rule — identity delegates type semantics rather than keeping a second
+	// opinion (ADR-0041).
+	if got := pkg.EcosystemName(); got != "github.com/example/lib/v2" {
+		normReturnNameMismatch(t, got, "github.com/example/lib/v2")
 	}
 	if pkg.Version != "v2.1.0-rc1" {
 		normReturnNameMismatch(t, pkg.Version, "v2.1.0-rc1")
