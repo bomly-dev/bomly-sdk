@@ -415,9 +415,11 @@ var sensitiveIRISchemes = map[string]struct{}{
 // normalizeIRIReference accepts an absolute IRI that is not a web URL and not
 // a BOM-Link -- the rest of the grammar CycloneDX's schema permits.
 //
-// net/url is the parser; no library owns IRI validation beyond it, and
-// re-implementing RFC 3987 to admit a handful more locators would be the
-// mirroring the delegation rule warns against. What is added on top is
+// net/url is the parser. No maintained Go library validates RFC 3987 IRIs,
+// and re-implementing the grammar to admit a handful more locators would be
+// the mirroring the delegation rule warns against -- so the parser supplies
+// the scheme and userinfo, and the value itself is carried verbatim rather
+// than re-rendered through a URI serializer that would mangle it. What is added on top is
 // policy: an absolute reference, no embedded credentials, and no sensitive
 // scheme.
 func normalizeIRIReference(locator string) (string, bool) {
@@ -446,12 +448,14 @@ func normalizeIRIReference(locator string) (string, bool) {
 	if strings.HasPrefix(strings.ToLower(locator), bomLinkNamespace) {
 		return "", false
 	}
-	// Re-serialized from the parse, and only accepted when that reproduces
-	// what arrived: a value the parser would rewrite is one whose stored form
-	// would differ from its published form.
-	if parsed.String() != locator {
-		return "", false
-	}
+	// The locator is returned exactly as it arrived, and deliberately not
+	// re-serialized from the parse. net/url renders a URI, so it
+	// percent-encodes the Unicode an IRI is allowed to carry: requiring the
+	// round trip to reproduce the input byte-for-byte rejected valid
+	// locators such as "ftp://例え.テスト/資料". Nothing here depends on the
+	// parse output -- it supplies the scheme and the userinfo the policy
+	// checks, and nothing else -- so there is no rewriting to guard against,
+	// and the stored form is the published form by construction.
 	return locator, true
 }
 
@@ -582,7 +586,7 @@ func splitUnescaped(value string) []string {
 	fields := []string{}
 	current := strings.Builder{}
 	for i := 0; i < len(value); i++ {
-		if value[i] == ':' && (i == 0 || value[i-1] != '\\') {
+		if value[i] == ':' && !isEscapedAt(value, i) {
 			fields = append(fields, current.String())
 			current.Reset()
 			continue
@@ -596,15 +600,26 @@ func splitUnescaped(value string) []string {
 func countUnescapedColons(value string) int {
 	count := 0
 	for i := 0; i < len(value); i++ {
-		if value[i] != ':' {
-			continue
+		if value[i] == ':' && !isEscapedAt(value, i) {
+			count++
 		}
-		if i > 0 && value[i-1] == '\\' {
-			continue
-		}
-		count++
 	}
 	return count
+}
+
+// isEscapedAt reports whether the byte at index is quoted by a backslash.
+//
+// Parity, not the single preceding byte: a run of backslashes escapes itself
+// pairwise, so an even run leaves the next character unquoted. In the valid
+// CPE "cpe:2.3:a:vendor\\:product:1:..." the two backslashes encode one
+// literal backslash and the colon after them is a real field separator --
+// looking at only value[i-1] read it as escaped and rejected the reference.
+func isEscapedAt(value string, index int) bool {
+	backslashes := 0
+	for i := index - 1; i >= 0 && value[i] == '\\'; i-- {
+		backslashes++
+	}
+	return backslashes%2 == 1
 }
 
 // canonicalReferenceType returns the specification's own spelling of a type

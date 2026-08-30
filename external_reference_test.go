@@ -748,3 +748,57 @@ func TestKnownSPDXTypeUnderTheWrongCategoryIsRefused(t *testing.T) {
 		t.Fatal("an unrecognized type was rejected; the vocabulary is open")
 	}
 }
+
+// TestUnicodeIRILocatorsSurvive pins that an IRI keeps the characters its
+// grammar allows. net/url renders a URI, so it percent-encodes Unicode:
+// requiring the parse to round-trip byte-for-byte silently dropped valid
+// locators.
+func TestUnicodeIRILocatorsSurvive(t *testing.T) {
+	for _, locator := range []string{
+		"ftp://\u4f8b\u3048.\u30c6\u30b9\u30c8/\u8cc7\u6599",
+		"urn:isbn:9780131103627",
+		// A web URL takes the URLFormReference path instead, which
+		// re-serializes; Unicode hosts there are a separate question, tracked
+		// against NormalizeURL rather than asserted here.
+	} {
+		reference := ExternalReference{Type: "distribution", Locator: locator}
+		normalized, ok := reference.Normalized()
+		if !ok {
+			t.Errorf("%q was dropped, but its grammar permits it", locator)
+			continue
+		}
+		if normalized.Locator != locator {
+			t.Errorf("%q was rewritten to %q", locator, normalized.Locator)
+		}
+	}
+	// The policy still bites on a Unicode host.
+	if _, ok := (ExternalReference{Type: "distribution", Locator: "ftp://u:p@\u4f8b\u3048.\u30c6\u30b9\u30c8/x"}).Normalized(); ok {
+		t.Fatal("credentials survived on a Unicode authority")
+	}
+}
+
+// TestCPEEscapedBackslashesCountAsSeparators pins backslash parity. A run of
+// backslashes escapes itself pairwise, so an even run leaves the next
+// character unquoted -- in "vendor\\\\:product" the two backslashes encode one
+// literal backslash and the colon after them is a real field separator.
+func TestCPEEscapedBackslashesCountAsSeparators(t *testing.T) {
+	// Twelve separators: the escaped backslash does not quote the colon.
+	valid := `cpe:2.3:a:vendor\\:product:1:*:*:*:*:*:*:*`
+	if got := countUnescapedColons(valid); got != cpe23FieldCount-1 {
+		t.Fatalf("counted %d separators in %s, want %d", got, valid, cpe23FieldCount-1)
+	}
+	reference := ExternalReference{Category: ExternalReferenceCategorySecurity, Type: "cpe23Type", Locator: valid}
+	if _, ok := reference.Normalized(); !ok {
+		t.Fatalf("%s was rejected, but it is a well-formed CPE", valid)
+	}
+	// An odd run still quotes the colon, so this one is a component short.
+	short := `cpe:2.3:a:vendor\\\\\\:product:1:*:*:*:*:*:*:*`
+	_ = short
+	odd := `cpe:2.3:a:vendor\:product:1:*:*:*:*:*:*:*`
+	if got := countUnescapedColons(odd); got != cpe23FieldCount-2 {
+		t.Fatalf("counted %d separators in %s, want %d", got, odd, cpe23FieldCount-2)
+	}
+	if _, ok := (ExternalReference{Category: ExternalReferenceCategorySecurity, Type: "cpe23Type", Locator: odd}).Normalized(); ok {
+		t.Fatalf("%s was accepted, but its escaped colon leaves it a component short", odd)
+	}
+}
