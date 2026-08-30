@@ -640,9 +640,29 @@ func assertPublishableReference(t *testing.T, reference ExternalReference) {
 			t.Fatalf("url locator %q would be rejected on read", reference.Locator)
 		}
 	case LocatorKindIRI:
+		// A web URL, a BOM-Link, or another absolute IRI the policy allows.
+		// The grammar is wide here by design -- CycloneDX types the field as
+		// an IRI reference -- so what is asserted is the policy: absolute, no
+		// embedded credentials, no sensitive scheme.
 		_, isURL := NormalizeURL(reference.Locator, URLFormReference)
-		if !isURL && !cdx.IsBOMLink(reference.Locator) {
-			t.Fatalf("iri locator %q is neither a web URL nor a BOM-Link", reference.Locator)
+		if isURL || cdx.IsBOMLink(reference.Locator) {
+			break
+		}
+		parsed, err := url.Parse(reference.Locator)
+		if err != nil {
+			t.Fatalf("iri locator %q does not parse", reference.Locator)
+		}
+		if parsed.Scheme == "" {
+			t.Fatalf("iri locator %q is a relative reference", reference.Locator)
+		}
+		if parsed.User != nil {
+			t.Fatalf("iri locator %q carries credentials", reference.Locator)
+		}
+		if _, sensitive := sensitiveIRISchemes[strings.ToLower(parsed.Scheme)]; sensitive {
+			t.Fatalf("iri locator %q uses the sensitive scheme %q", reference.Locator, parsed.Scheme)
+		}
+		if strings.HasPrefix(strings.ToLower(reference.Locator), bomLinkNamespace) {
+			t.Fatalf("iri locator %q sits in the cdx namespace but is not a BOM-Link", reference.Locator)
 		}
 	case LocatorKindPURL:
 		if err := purlkit.ValidateString(reference.Locator); err != nil {

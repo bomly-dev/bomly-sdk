@@ -3,6 +3,7 @@ package sdk
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 	"unicode"
@@ -162,6 +163,38 @@ var locatorKindByReference = map[ExternalReferenceCategory]map[string]LocatorKin
 	},
 }
 
+// spdxTypeCategories maps each SPDX reference type to the category the
+// specification files it under, derived from the table above so the two
+// cannot disagree.
+var spdxTypeCategories = buildSPDXTypeCategories()
+
+func buildSPDXTypeCategories() map[string]ExternalReferenceCategory {
+	owners := map[string]ExternalReferenceCategory{}
+	for category, types := range locatorKindByReference {
+		for referenceType := range types {
+			owners[referenceType] = category
+		}
+	}
+	return owners
+}
+
+// contradictsItsCategory reports whether a categorised reference names a type
+// the specification files under a different category.
+//
+// The type vocabulary is open, so an unrecognized type is carried -- that is
+// forward compatibility, and it is why such a type falls through to the
+// bounded identifier form. But a type the specification *does* define, paired
+// with the wrong category, is not a future type: it is a contradiction, and
+// letting it through published an invalid SPDX triple as a vetted assertion
+// merely because its locator happened to be a bounded token.
+func contradictsItsCategory(category ExternalReferenceCategory, referenceType string) bool {
+	if category == ExternalReferenceCategoryUnknown {
+		return false
+	}
+	owner, registered := spdxTypeCategories[normalizeReferenceType(referenceType)]
+	return registered && owner != category
+}
+
 // LocatorKindFor derives the locator shape from a reference's category and
 // type. The pair is the input, never the category alone: an SPDX-only axis
 // cannot decide the shape of a reference that arrived without one.
@@ -282,6 +315,9 @@ func (r ExternalReference) Normalized() (ExternalReference, bool) {
 	// are one reference -- without canonicalizing, which spelling reached the
 	// document would depend on which witness arrived first.
 	normalized.Type = canonicalReferenceType(normalized.Category, normalized.Type)
+	if contradictsItsCategory(normalized.Category, normalized.Type) {
+		return ExternalReference{}, false
+	}
 	locator, ok := normalizeLocator(strings.TrimSpace(r.Locator), LocatorKindFor(normalized.Category, normalized.Type))
 	if !ok {
 		// A reference with no usable locator points at nothing. There is no
@@ -324,11 +360,7 @@ func normalizeLocatorByKind(locator string, kind LocatorKind) (string, bool) {
 		if cdx.IsBOMLink(locator) {
 			return locator, true
 		}
-		// Everything else is refused, mailto: included. An address in a
-		// locator is the personal data Contact deliberately does not carry
-		// (ADR-0037 defers that review), so admitting it here would route
-		// around a decision rather than implement it.
-		return "", false
+		return normalizeIRIReference(locator)
 	case LocatorKindPURL:
 		// purlkit is the single home for package URL semantics (ADR-0038),
 		// so the locator is held to the same standard a dependency identity
@@ -357,6 +389,70 @@ func normalizeLocatorByKind(locator string, kind LocatorKind) (string, bool) {
 		}
 		return locator, true
 	}
+}
+
+// sensitiveIRISchemes are the schemes a published locator may not use,
+// whatever the grammar allows.
+//
+// The schema types this field as an IRI reference, so the grammar is wide --
+// "urn:isbn:..." and "ftp://..." are valid locators and dropping them loses a
+// source assertion. Safety is therefore applied as a separate policy rather
+// than by narrowing the grammar to the two shapes Bomly happens to emit.
+//
+// file and its relatives expose filesystem layout, which ADR-0033 exists to
+// keep out of published documents. data and javascript carry a payload rather
+// than a location. mailto carries an address, which is the personal data
+// Contact deliberately does not hold while ADR-0037's privacy review is
+// outstanding -- that one is a deferral, not a permanent rule.
+// bomLinkNamespace is the URN namespace cyclonedx-go's grammar governs.
+const bomLinkNamespace = "urn:cdx:"
+
+var sensitiveIRISchemes = map[string]struct{}{
+	"file": {}, "jar": {}, "data": {}, "javascript": {}, "blob": {},
+	"mailto": {}, "tel": {}, "sms": {},
+}
+
+// normalizeIRIReference accepts an absolute IRI that is not a web URL and not
+// a BOM-Link -- the rest of the grammar CycloneDX's schema permits.
+//
+// net/url is the parser; no library owns IRI validation beyond it, and
+// re-implementing RFC 3987 to admit a handful more locators would be the
+// mirroring the delegation rule warns against. What is added on top is
+// policy: an absolute reference, no embedded credentials, and no sensitive
+// scheme.
+func normalizeIRIReference(locator string) (string, bool) {
+	if !isBoundedToken(locator) {
+		return "", false
+	}
+	parsed, err := url.Parse(locator)
+	if err != nil {
+		return "", false
+	}
+	// A relative reference has no meaning to a consumer that does not know
+	// the base the document was written against, and nothing records one.
+	if parsed.Scheme == "" {
+		return "", false
+	}
+	if _, sensitive := sensitiveIRISchemes[strings.ToLower(parsed.Scheme)]; sensitive {
+		return "", false
+	}
+	if parsed.User != nil {
+		return "", false
+	}
+	// A value in the cdx namespace is a BOM-Link or it is malformed. It has
+	// already been offered to the library's grammar above, so reaching here
+	// means it failed -- and accepting it as a generic URN would publish a
+	// broken BOM-Link under a namespace that has a rule.
+	if strings.HasPrefix(strings.ToLower(locator), bomLinkNamespace) {
+		return "", false
+	}
+	// Re-serialized from the parse, and only accepted when that reproduces
+	// what arrived: a value the parser would rewrite is one whose stored form
+	// would differ from its published form.
+	if parsed.String() != locator {
+		return "", false
+	}
+	return locator, true
 }
 
 // isBoundedToken reports whether a value is a single token safe to write into

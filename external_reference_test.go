@@ -679,3 +679,72 @@ func TestCycloneDXLocatorsAcceptBOMLinks(t *testing.T) {
 		t.Fatal("a mailto: locator was accepted, which stores an email address")
 	}
 }
+
+// TestIRILocatorsPreserveTheWiderGrammar pins that the CycloneDX field keeps
+// the locators its schema permits, with safety applied as a separate policy
+// rather than by narrowing the grammar to the shapes Bomly happens to emit.
+func TestIRILocatorsPreserveTheWiderGrammar(t *testing.T) {
+	for _, locator := range []string{
+		"urn:isbn:9780131103627",
+		"ftp://ftp.example.test/pub/pkg.tar.gz",
+		"git+ssh://git.example.test/owner/repo",
+	} {
+		reference := ExternalReference{Type: "distribution", Locator: locator}
+		normalized, ok := reference.Normalized()
+		if !ok {
+			t.Errorf("%q was dropped, but its schema permits it", locator)
+			continue
+		}
+		if normalized.Locator != locator {
+			t.Errorf("%q was rewritten to %q", locator, normalized.Locator)
+		}
+	}
+	// The policy still holds, whatever the grammar allows.
+	for _, locator := range []string{
+		"file:///etc/passwd",
+		"jar:file:///tmp/x.jar!/a",
+		"data:text/plain;base64,aGk=",
+		"mailto:security@example.test",
+		"ftp://user:pw@ftp.example.test/pkg.tgz",
+		"/relative/path",
+	} {
+		reference := ExternalReference{Type: "distribution", Locator: locator}
+		if got, ok := reference.Normalized(); ok {
+			t.Errorf("%q was accepted: %+v", locator, got)
+		}
+	}
+}
+
+// TestKnownSPDXTypeUnderTheWrongCategoryIsRefused pins the contradiction. An
+// unrecognized type is carried — that is the open vocabulary, and forward
+// compatibility. A type the specification does define, paired with the wrong
+// category, is not a future type; letting it through published an invalid
+// SPDX triple because its locator happened to be a bounded token.
+func TestKnownSPDXTypeUnderTheWrongCategoryIsRefused(t *testing.T) {
+	wrong := ExternalReference{
+		Category: ExternalReferenceCategorySecurity,
+		Type:     "purl", // the specification files purl under PACKAGE-MANAGER
+		Locator:  "pkg:npm/a@1.0.0",
+	}
+	if got, ok := wrong.Normalized(); ok {
+		t.Fatalf("a contradictory category/type pair was accepted: %+v", got)
+	}
+	// The same type under its own category is fine.
+	right := ExternalReference{
+		Category: ExternalReferenceCategoryPackageManager,
+		Type:     "purl",
+		Locator:  "pkg:npm/a@1.0.0",
+	}
+	if _, ok := right.Normalized(); !ok {
+		t.Fatal("a correctly categorised purl reference was rejected")
+	}
+	// A genuinely unknown type still passes under any category.
+	future := ExternalReference{
+		Category: ExternalReferenceCategorySecurity,
+		Type:     "invented-later",
+		Locator:  "some-identifier",
+	}
+	if _, ok := future.Normalized(); !ok {
+		t.Fatal("an unrecognized type was rejected; the vocabulary is open")
+	}
+}
