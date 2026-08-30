@@ -983,3 +983,22 @@ func TestIRICharacterRuleIsAnAllowlist(t *testing.T) {
 		}
 	})
 }
+
+// TestIPv6AuthoritiesAreAccepted pins a case any positional bracket rule
+// would have to preserve: brackets delimit an IP literal in an authority, so
+// a rule that refused them outside one has to know where the authority ends.
+func TestIPv6AuthoritiesAreAccepted(t *testing.T) {
+	for _, locator := range []string{
+		"https://[2001:db8::1]/x",
+		"ftp://[2001:db8::1]/pkg.tgz",
+	} {
+		normalized, ok := (ExternalReference{Type: "distribution", Locator: locator}).Normalized()
+		if !ok {
+			t.Errorf("%q was rejected, but an IPv6 authority is legal", locator)
+			continue
+		}
+		if normalized.Locator != locator {
+			t.Errorf("%q was rewritten to %q", locator, normalized.Locator)
+		}
+	}
+}

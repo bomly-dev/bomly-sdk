@@ -422,14 +422,32 @@ var sensitiveIRISchemes = map[string]struct{}{
 	"mailto": {}, "tel": {}, "sms": {},
 }
 
-// normalizeIRIReference accepts an absolute IRI that is not a web URL and not
-// a BOM-Link -- the rest of the grammar CycloneDX's schema permits.
+// normalizeIRIReference accepts an absolute or relative IRI that is not a web
+// URL and not a BOM-Link -- the rest of the grammar CycloneDX's schema
+// permits.
 //
-// net/url is the parser. No maintained Go library validates RFC 3987 IRIs,
-// and re-implementing the grammar to admit a handful more locators would be
-// the mirroring the delegation rule warns against -- so the parser supplies
-// the scheme and userinfo, and the value itself is carried verbatim rather
-// than re-rendered through a URI serializer that would mangle it. What is added on top is
+// # What this checks, and what it does not
+//
+// This is a publication gate, not a conformance certifier, and the difference
+// is worth stating because the two look alike from outside. It enforces:
+// bounded length, valid UTF-8, no whitespace or control characters, the
+// character set RFC 3986 and RFC 3987 permit, well-formed percent escapes, no
+// embedded credentials, no sensitive scheme, and no authority substitution
+// through a network-path reference. Those are the properties that decide
+// whether publishing the value is safe and whether it is plausibly a locator.
+//
+// It does not validate the grammar positionally. A reserved delimiter legal
+// in one component and not another -- brackets outside an authority, most
+// obviously -- passes. Closing that would mean implementing RFC 3987's
+// component productions, since net/url is not a conformant IRI parser and no
+// maintained Go library is one; that is the mirroring the delegation rule
+// warns against, and a careless version of it would reject legal IPv6
+// authorities such as "ftp://[2001:db8::1]/pkg.tgz", which work today.
+//
+// Nothing in Bomly resolves, fetches, or interprets a locator: it is stored
+// and republished. A malformed-but-safe value is the source document's
+// assertion to answer for, and dropping it would lose what the source said --
+// which is the failure this gate has cost more than it has prevented. What is added on top is
 // policy: an absolute reference, no embedded credentials, and no sensitive
 // scheme.
 func normalizeIRIReference(locator string) (string, bool) {
