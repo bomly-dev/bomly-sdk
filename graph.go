@@ -266,6 +266,25 @@ func foldNodes(surviving, witness GraphNode) {
 		if survivor.ResolvedURL == "" {
 			survivor.ResolvedURL = incoming.ResolvedURL
 		}
+		if survivor.PackageRef == "" {
+			survivor.PackageRef = incoming.PackageRef
+		}
+		// Classification the identity cannot project also fills gaps: a
+		// bare-package-URL witness folded first would otherwise leave the
+		// node with an unknown package manager, which manager-specific
+		// consumers (remediation hints, most of all) key on.
+		if survivor.PackageManager == PackageManagerUnknown {
+			survivor.PackageManager = incoming.PackageManager
+		}
+		if survivor.Language == "" {
+			survivor.Language = incoming.Language
+		}
+		if survivor.Type == "" {
+			survivor.Type = incoming.Type
+		}
+		// Enrichment is an any-witness fact: one witness having been
+		// matched is true of the folded record.
+		survivor.Matched = survivor.Matched || incoming.Matched
 		survivor.Metadata = mergeMetadata(survivor.Metadata, incoming.Metadata)
 	case *ModuleNode:
 		incoming, ok := witness.(*ModuleNode)
