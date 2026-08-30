@@ -76,15 +76,35 @@ const maxContactKindLength = 64
 // "Organization: Acme Inc (info@acme.com)" round-trips as "Organization: Acme
 // Inc". The name survives, the address does not. When the privacy review
 // lands, an email field is an additive change here.
+// # Gate and merge class
+//
+// Every field is gated by Contact.Normalized, applied on both wire
+// directions and again wherever a contact is copied onto another record.
+// The gate acts on the contact as a whole, not field by field: a name that
+// cannot be published takes the contact with it and yields nil, rather than
+// leaving a party with no name attached to a package. NOASSERTION is the one
+// kind that stands without a name, because withholding is itself the claim.
+//
+// A contact is a fill-gaps scalar on its holder: the first publishable
+// supplier wins, and a later witness contributes one only where none was
+// recorded. Both witnesses are gated before the gap is measured, so an
+// unpublishable contact never blocks a valid one.
 type Contact struct {
 	// Kind says whether the party is an organization or a person, or that
-	// the document explicitly declined to say.
+	// the document explicitly declined to say. Parsed by ParseContactKind;
+	// an unrecognized kind is dropped to unknown, which has no valid SPDX
+	// rendering and so omits the field rather than emitting a bad one.
 	Kind ContactKind `json:"kind,omitempty"`
 	// Name is the party's name as the source stated it, minus any email
-	// parenthetical.
+	// address. Bounded, and rejected outright if it carries a control
+	// character, which would corrupt SPDX's line-oriented tag form.
 	Name string `json:"name,omitempty"`
 	// URL is the party's own URL, when the source carried one. CycloneDX's
-	// organizational entity has a url list; SPDX has no slot for it.
+	// organizational entity has a url list; SPDX has no slot for it. Held to
+	// URLFormReference and additionally refused when it carries an email
+	// address, so the no-email rule above cannot be sidestepped through the
+	// query or fragment. An unpublishable URL is cleared on its own; unlike
+	// the name, it does not take the contact with it.
 	URL string `json:"url,omitempty"`
 }
 
@@ -126,6 +146,12 @@ func urlCarriesAddress(raw string) bool {
 	decoded, err := url.QueryUnescape(raw)
 	return err == nil && decoded != raw && addressPattern.MatchString(decoded)
 }
+
+// maxSPDXContactLength bounds a whole SPDX supplier or originator string:
+// the kind prefix, the name, and an email parenthetical that will be
+// discarded. Generous next to maxContactNameLength, since the parenthetical
+// and prefix are stripped before the name is measured.
+const maxSPDXContactLength = 1024
 
 // maxContactNameLength bounds a party name. Real supplier names run to a few
 // dozen characters; the allowance covers long legal names without admitting a
@@ -257,6 +283,15 @@ func (c Contact) SPDXString() string {
 // documentation for why the address is not retained. It returns false when the
 // value carries no publishable claim.
 func ParseSPDXContact(value string) (Contact, bool) {
+	// Bounded before the scan, not after. A name is capped at
+	// maxContactNameLength, but that limit only applies once the value has
+	// been trimmed, prefix-matched, stripped of a parenthetical, and passed
+	// through stripAddressTokens -- all of which walk the whole input. An
+	// ingested document supplies this string, so the work it can ask for is
+	// bounded here instead.
+	if len(value) > maxSPDXContactLength {
+		return Contact{}, false
+	}
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
 		return Contact{}, false

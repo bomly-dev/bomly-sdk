@@ -1658,3 +1658,98 @@ func TestParseContactKindBoundsItsInput(t *testing.T) {
 		}
 	}
 }
+
+// TestMergeLicensesReGatesExistingClaims pins that an empty update still
+// gates what is already held. MergeLicenses used to return the existing slice
+// untouched when there was nothing to add, so a claim that never passed the
+// gate — from a hand-built package, or one mutated through Ensure — stayed
+// visible to in-process consumers like LicenseValues, which would report a
+// license the wire refuses to publish.
+func TestMergeLicensesReGatesExistingClaims(t *testing.T) {
+	pkg := &Package{Licenses: []PackageLicense{
+		{Value: "x", SPDXExpression: "not valid OR", Type: "invented"},
+	}}
+	pkg.MergeFrom(&Package{}) // an update carrying no licenses at all
+	if len(pkg.Licenses) != 1 {
+		t.Fatalf("licenses = %+v, want the stated value kept", pkg.Licenses)
+	}
+	if pkg.Licenses[0].SPDXExpression != "" {
+		t.Fatalf("an unparseable expression survived an empty merge: %q", pkg.Licenses[0].SPDXExpression)
+	}
+	if pkg.Licenses[0].Type != "" {
+		t.Fatalf("an unrecognized provenance survived an empty merge: %q", pkg.Licenses[0].Type)
+	}
+	for _, value := range pkg.LicenseValues() {
+		if value == "not valid OR" {
+			t.Fatal("LicenseValues reports a license the wire would refuse")
+		}
+	}
+	// Two empty sides stay empty rather than allocating.
+	if got := MergeLicenses(nil, nil); got != nil {
+		t.Fatalf("MergeLicenses(nil, nil) = %+v, want nil", got)
+	}
+}
+
+// TestClosedVocabulariesBoundTheirInput pins that every closed vocabulary
+// refuses an oversized token before lowercasing it and formatting it into an
+// error the caller discards.
+func TestClosedVocabulariesBoundTheirInput(t *testing.T) {
+	oversized := strings.Repeat("x", maxVocabularyTokenLength+1)
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"ParseLicenseType", func() error { _, err := ParseLicenseType(oversized); return err }()},
+		{"ParseDigestSubject", func() error { _, err := ParseDigestSubject(oversized); return err }()},
+		{"ParseContactKind", func() error { _, err := ParseContactKind(strings.Repeat("x", maxContactKindLength+1)); return err }()},
+	} {
+		if tc.err == nil {
+			t.Fatalf("%s accepted an oversized token", tc.name)
+		}
+		if !strings.Contains(tc.err.Error(), "over the") {
+			t.Fatalf("%s error = %v, want the bound to have rejected it", tc.name, tc.err)
+		}
+		if len(tc.err.Error()) > 200 {
+			t.Fatalf("%s error is %d bytes; it echoes the input back", tc.name, len(tc.err.Error()))
+		}
+	}
+	// Every declared token fits comfortably under the bound.
+	for _, token := range []string{
+		string(LicenseTypeDeclared), string(LicenseTypeConcluded),
+		string(DigestSubjectSourceTree), string(DigestSubjectMetadata),
+		string(ContactKindOrganization), string(ContactKindPerson), string(ContactKindNoAssertion),
+	} {
+		if len(token) > maxVocabularyTokenLength {
+			t.Fatalf("declared token %q is over the vocabulary bound", token)
+		}
+	}
+}
+
+// TestParseSPDXContactBoundsItsInput pins that the parser's work is bounded
+// before it walks the value. The name limit only applies after trimming,
+// prefix matching, parenthetical stripping, and address-token removal have
+// each scanned the whole input.
+func TestParseSPDXContactBoundsItsInput(t *testing.T) {
+	oversized := "Organization: " + strings.Repeat("x", maxSPDXContactLength)
+	if _, ok := ParseSPDXContact(oversized); ok {
+		t.Fatal("an oversized supplier string was accepted")
+	}
+	// The case the name limit alone does not catch: a short name behind a
+	// huge parenthetical. The parenthetical is stripped before the name is
+	// measured, so without a bound on the whole value this parses
+	// successfully after walking every byte of it.
+	hugeParenthetical := "Organization: Acme (" + strings.Repeat("x", maxSPDXContactLength) + "someone@example.com)"
+	if contact, ok := ParseSPDXContact(hugeParenthetical); ok {
+		t.Fatalf("a supplier with a %d byte parenthetical was accepted as %+v", len(hugeParenthetical), contact)
+	}
+	// A realistic supplier with an email parenthetical still parses: the
+	// bound must sit above the name limit, not at it.
+	long := "Organization: " + strings.Repeat("a", maxContactNameLength-1) + " (someone@example.com)"
+	if len(long) > maxSPDXContactLength {
+		t.Fatalf("fixture is %d bytes, over the parse bound; the bound is too tight", len(long))
+	}
+	contact, ok := ParseSPDXContact(long)
+	if !ok || contact.Name == "" {
+		t.Fatalf("a realistic long supplier was rejected: %+v", contact)
+	}
+}

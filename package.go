@@ -36,6 +36,12 @@ func ParsePackageType(value string) PackageType {
 // String returns the package type value.
 func (t PackageType) String() string { return string(t) }
 
+// maxVocabularyTokenLength bounds a token drawn from one of the model's
+// closed vocabularies. The longest is "noassertion" at eleven characters; the
+// allowance leaves room for whitespace padding and a spelling variant without
+// admitting a value that is really a payload.
+const maxVocabularyTokenLength = 64
+
 // LicenseType identifies license provenance: who is making the claim. Both
 // SBOM formats draw the same distinction -- SPDX as licenseDeclared versus
 // licenseConcluded, CycloneDX 1.6 as the acknowledgement field -- and it
@@ -61,6 +67,13 @@ const (
 // since a misspelled provenance would silently publish a conclusion as a
 // declaration.
 func ParseLicenseType(value string) (LicenseType, error) {
+	// Bounded before any work, as the other closed vocabularies are. The
+	// longest valid value is nine characters, so a longer one cannot match --
+	// lowercasing it and formatting it into an error the caller discards
+	// would spend memory proportional to whatever was sent.
+	if len(value) > maxVocabularyTokenLength {
+		return "", fmt.Errorf("license type is %d bytes, over the %d byte limit", len(value), maxVocabularyTokenLength)
+	}
 	switch LicenseType(strings.ToLower(strings.TrimSpace(value))) {
 	case "":
 		return "", nil
@@ -100,6 +113,12 @@ type PackageLicense struct {
 	// Name is the human-readable license name for a LicenseRef-* identifier.
 	// SPDX's hasExtractedLicensingInfos carries one, and a reader given only
 	// "LicenseRef-bomly-3f2a..." has nothing to go on.
+	//
+	// Gate: PackageLicense.Normalized (trimmed; cleared with the expression
+	// when a reference cannot be published). Merge class: scalar, fill-gaps
+	// *within* a claim -- Name is deliberately not part of the merge
+	// identity, so two records naming one license stay one claim and the
+	// witness that carries a name supplies it to the one that does not.
 	Name string `json:"name,omitempty"`
 	// ExtractedText is the original license text a LicenseRef-* identifier
 	// names. Both formats require the text to accompany the reference -- an
@@ -111,6 +130,16 @@ type PackageLicense struct {
 	// The text is authoritative and the reference is derived from it, per
 	// spdxkit.MintLicenseRef. Normalized re-mints rather than trusting a
 	// reference that disagrees with its text.
+	//
+	// Gate: PackageLicense.Normalized -- bounded, and blank text is cleared
+	// (it would otherwise mint the reference empty text mints, so every
+	// package with a blank license file would share one citation).
+	//
+	// Merge class: set member, and part of the merge identity -- by what the
+	// text mints rather than by its bytes, since whitespace-only differences
+	// name one license. Two claims whose texts genuinely differ are both
+	// kept, and if they arrived under one reference the later is re-minted so
+	// the set never leaves one identifier naming two licenses.
 	ExtractedText string `json:"extracted_text,omitempty"`
 }
 
@@ -291,8 +320,14 @@ func (l PackageLicense) licenseKey() string {
 // concluded analysis disagree carries both, and two sources that saw the same
 // declaration contribute one entry.
 func MergeLicenses(existing, additions []PackageLicense) []PackageLicense {
-	if len(additions) == 0 {
-		return existing
+	// No early return when additions is empty. The existing slice may hold
+	// claims that were never gated -- a hand-built package, or one mutated
+	// through Ensure -- and returning it untouched left them visible to
+	// in-process consumers such as Get, All, and LicenseValues, which would
+	// report a license the wire would refuse to publish. mergeDigestSet
+	// processes both sides for the same reason.
+	if len(existing) == 0 && len(additions) == 0 {
+		return nil
 	}
 	merged := make([]PackageLicense, 0, len(existing)+len(additions))
 	seen := make(map[string]int, len(existing)+len(additions))

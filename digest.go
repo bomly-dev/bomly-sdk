@@ -292,6 +292,17 @@ type Digest struct {
 	// tree's file hashes, not over the module zip, so a consumer that treats it
 	// as an artifact digest and compares it against a downloaded file will
 	// always find a mismatch.
+	//
+	// Gate: ParseDigestSubject, through Digest.Normalized. The vocabulary is
+	// closed, and an unrecognized subject rejects the whole digest rather
+	// than being cleared -- empty is itself a claim ("the published
+	// artifact"), so treating an uninterpretable label as absent would
+	// publish something the producer never said.
+	//
+	// Merge class: part of the digest's set identity. Two records with the
+	// same algorithm and value but different subjects are distinct claims and
+	// both survive a union, because they say different things about what was
+	// hashed.
 	Subject DigestSubject `json:"subject,omitempty"`
 }
 
@@ -315,6 +326,9 @@ const (
 // so an unrecognized value is an integrity claim no consumer can interpret
 // rather than a label to carry along.
 func ParseDigestSubject(value string) (DigestSubject, error) {
+	if len(value) > maxVocabularyTokenLength {
+		return "", fmt.Errorf("digest subject is %d bytes, over the %d byte limit", len(value), maxVocabularyTokenLength)
+	}
 	switch DigestSubject(strings.ToLower(strings.TrimSpace(value))) {
 	case DigestSubjectArtifact:
 		return DigestSubjectArtifact, nil
