@@ -324,6 +324,7 @@ func (g *Graph) UnmarshalJSON(data []byte) error {
 	}
 	out := NewWithCapacity(len(payload.Nodes))
 	idMapping := make(map[string]string, len(payload.Nodes))
+	selfAliases := make([]string, 0, len(payload.Nodes))
 	for i := range payload.Nodes {
 		wire := &payload.Nodes[i]
 		node, err := wire.decodeNode()
@@ -337,7 +338,17 @@ func (g *Graph) UnmarshalJSON(data []byte) error {
 		if wire.ID != "" {
 			idMapping[wire.ID] = survivor.NodeID()
 		}
-		idMapping[survivor.NodeID()] = survivor.NodeID()
+		selfAliases = append(selfAliases, survivor.NodeID())
+	}
+	// Canonical self-aliases fill gaps only: a wire ID a payload actually
+	// used always wins. Otherwise a node whose arbitrary wire ID happens to
+	// equal another node's newly minted identity would have its edges
+	// silently redirected to that other node, and reversing the node order
+	// would change the result.
+	for _, alias := range selfAliases {
+		if _, claimed := idMapping[alias]; !claimed {
+			idMapping[alias] = alias
+		}
 	}
 	for _, edge := range payload.Edges {
 		fromID, okFrom := idMapping[edge.FromID]

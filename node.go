@@ -249,26 +249,12 @@ func NewModuleNode(declaringManifestPath string, coords Coordinates) (*ModuleNod
 		if err != nil {
 			return nil, fmt.Errorf("module node: %w", err)
 		}
-		node.purl = identity.rendered
-		node.Coordinates.PURL = identity.rendered
+		node.adoptIdentity(identity)
 		identityTail = identity.rendered
-		if identity.missingVersion {
-			node.warnings = append(node.warnings, NodeWarning{
-				Code:    NodeWarningMissingVersion,
-				Message: "module package URL carries no version",
-			})
-		}
 	} else if minted := scratch.CanonicalPURL(); minted != "" && knownEcosystem {
 		if identity, evidence, err := dependencyIdentityFromPURL(minted); err == nil {
-			node.purl = identity.rendered
-			node.Coordinates.PURL = identity.rendered
+			node.adoptIdentity(identity)
 			identityTail = identity.rendered
-			if identity.missingVersion {
-				node.warnings = append(node.warnings, NodeWarning{
-					Code:    NodeWarningMissingVersion,
-					Message: "module package URL carries no version",
-				})
-			}
 			_ = evidence // module origins are not modeled; evidence qualifiers are simply not identity
 		}
 	}
@@ -281,6 +267,27 @@ func NewModuleNode(declaringManifestPath string, coords Coordinates) (*ModuleNod
 	}
 	node.id = moduleIDPrefix + canonicalPath + moduleIDJoiner + identityTail
 	return node, nil
+}
+
+// adoptIdentity records a minted package URL as the module's identity and
+// projects its coordinates from it, exactly as the dependency constructor
+// does: a module keyed pkg:npm/app@1.0.0 must not present an empty or
+// contradictory name, version, or ecosystem on the wire.
+func (n *ModuleNode) adoptIdentity(identity dependencyIdentity) {
+	n.purl = identity.rendered
+	n.Coordinates.PURL = identity.rendered
+	n.Name = identity.parsed.Name
+	n.Org = strings.TrimPrefix(identity.parsed.Namespace, "@")
+	n.Version = identity.parsed.Version
+	if resolved := ecosystemForPURLType(identity.parsed.Type); resolved != "" {
+		n.Ecosystem = resolved
+	}
+	if identity.missingVersion {
+		n.warnings = append(n.warnings, NodeWarning{
+			Code:    NodeWarningMissingVersion,
+			Message: "module package URL carries no version",
+		})
+	}
 }
 
 // PURL returns the module's canonical package URL, or "" when none was
