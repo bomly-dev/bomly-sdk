@@ -216,6 +216,13 @@ func (l PackageLicense) Normalized() (PackageLicense, bool) {
 // dangling reference the bare-reference branch refuses, so the same rule
 // applies here: no text, no expression.
 func normalizedSPDXExpression(expression, extractedText string) string {
+	// Declined before any spdxkit call. Each of those bounds the value itself
+	// before it parses, so nothing over-limit reaches a parser either way;
+	// this simply stops an oversized value from being scanned three times,
+	// and it borrows spdxkit's limit rather than keeping a second copy of it.
+	if !spdxkit.WithinBounds(expression) {
+		return ""
+	}
 	if strings.Contains(expression, spdxkit.LicenseRefPrefix) {
 		if strings.TrimSpace(extractedText) == "" {
 			return ""
@@ -237,6 +244,18 @@ func normalizedSPDXExpression(expression, extractedText string) string {
 		for _, ref := range refs {
 			if !spdxkit.ValidLicenseRef(ref) {
 				return ""
+			}
+			// A reference under Bomly's prefix is derived from its text
+			// wherever it appears, not only when it is the whole expression.
+			// Validating it and moving on would let a stale or spoofed one
+			// ride inside a compound and name a license its text does not
+			// mint -- the invariant the bare-reference branch enforces,
+			// silently suspended by an "OR".
+			if strings.HasPrefix(ref, spdxkit.BomlyLicenseRefPrefix) {
+				minted := spdxkit.MintLicenseRef(extractedText).RefID
+				if ref != minted {
+					expression = spdxkit.ReplaceLicenseRef(expression, ref, minted)
+				}
 			}
 		}
 	}
@@ -804,7 +823,11 @@ func (p *Package) MergeFrom(src *Package) {
 	// slice loses whichever arrived second, which is a matching miss rather
 	// than a cosmetic difference.
 	p.CPEs = mergeStringSet(p.CPEs, src.CPEs)
-	p.mergeDigests(src.Digests)
+	// Through the gated set merge, not a bare append: MergeFrom is exported
+	// and the registry is not its only caller, so a hand-built package must
+	// not install a rejected digest or a second, differently-spelled copy of
+	// one already held.
+	p.Digests = mergeDigestSet(p.Digests, src.Digests)
 	// Licenses are a set too, and the declared/concluded distinction makes the
 	// old first-wins behavior actively wrong: a source that concluded a
 	// license and a source that read the declaration are two claims about one

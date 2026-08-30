@@ -379,9 +379,18 @@ func mergeStringSet(existing, additions []string) []string {
 // mergeDigestSet unions two digest slices. Digests compare by whole value:
 // algorithm, value, and subject together, since a digest of a different
 // subject is a different claim.
-// mergeDigestSet unions digests and drops any that cannot be published.
+// mergeDigestSet unions digests, normalizes their spellings, and drops any
+// that cannot be published. It is the one place a digest slice is assembled,
+// so every path — the graph fold, the wire codecs, package seeding, and
+// Package.MergeFrom — inherits the same rule.
 //
-// The drop is the point, not a detail. Digest's codec zeroes a rejected value
+// The union is what keeps provenance: two records can carry genuinely
+// different claims about one package, a hash of the published artifact from
+// one source and a hash over the source tree from another, and Subject is
+// what tells them apart. Keeping only the first slice would lose a claim to
+// merge order alone.
+//
+// The drop matters as much as the union. Digest's codec zeroes a rejected value
 // rather than failing the payload, but omitempty cannot omit a slice element,
 // so a zeroed member survives as a literal "{}" in the encoded array -- an
 // empty checksum record in a published document, which is worse than the

@@ -335,25 +335,3 @@ func (s DigestSubject) Valid() bool {
 
 // String returns the subject token.
 func (s DigestSubject) String() string { return string(s) }
-
-// mergeDigests unions digests rather than keeping whichever record arrived
-// first. Two records can carry genuinely different claims about one package --
-// a hash of the published artifact from one source and a hash over the source
-// tree from another -- and Subject is what tells them apart, so dropping a
-// later slice would lose provenance on merge order alone.
-func (p *Package) mergeDigests(incoming []Digest) {
-	if len(incoming) == 0 {
-		return
-	}
-	seen := make(map[Digest]struct{}, len(p.Digests)+len(incoming))
-	for _, digest := range p.Digests {
-		seen[digest] = struct{}{}
-	}
-	for _, digest := range incoming {
-		if _, found := seen[digest]; found {
-			continue
-		}
-		seen[digest] = struct{}{}
-		p.Digests = append(p.Digests, digest)
-	}
-}

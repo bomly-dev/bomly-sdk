@@ -1490,3 +1490,75 @@ func TestNormalizeURLBoundsItsInput(t *testing.T) {
 		t.Fatalf("an oversized homepage survived: %d bytes", len(got))
 	}
 }
+
+// TestBomlyReferencesAreDerivedInsideCompoundsToo pins the invariant an "OR"
+// used to suspend. A reference under Bomly's prefix is derived from its text
+// wherever it appears; validating it and moving on let a stale or spoofed one
+// ride inside a compound and name a license its text does not mint.
+func TestBomlyReferencesAreDerivedInsideCompoundsToo(t *testing.T) {
+	stale := spdxkit.BomlyLicenseRefPrefix + "00000000000000000000000000000000"
+	minted := spdxkit.MintLicenseRef("Real terms.").RefID
+	if stale == minted {
+		t.Fatal("fixture is not stale")
+	}
+	normalized, ok := PackageLicense{SPDXExpression: "MIT OR " + stale, ExtractedText: "Real terms."}.Normalized()
+	if !ok {
+		t.Fatal("a license with text was rejected")
+	}
+	if strings.Contains(normalized.SPDXExpression, stale) {
+		t.Fatalf("a stale Bomly reference survived inside a compound: %q", normalized.SPDXExpression)
+	}
+	if normalized.SPDXExpression != "MIT OR "+minted {
+		t.Fatalf("expression = %q, want only the reference rewritten", normalized.SPDXExpression)
+	}
+	// A reference that already agrees with its text is left exactly as it is.
+	agreeing := "MIT OR " + minted
+	same, ok := PackageLicense{SPDXExpression: agreeing, ExtractedText: "Real terms."}.Normalized()
+	if !ok || same.SPDXExpression != agreeing {
+		t.Fatalf("an agreeing reference was rewritten to %q", same.SPDXExpression)
+	}
+}
+
+// TestPackageMergeFromNormalizesDigests pins that a direct caller gets the
+// gated set merge. MergeFrom is exported and the registry is not its only
+// caller, so a hand-built package must not install a rejected digest or a
+// second, differently-spelled copy of one already held.
+func TestPackageMergeFromNormalizesDigests(t *testing.T) {
+	dst := &Package{Digests: []Digest{{Algorithm: DigestAlgorithmSHA256, Value: "abc"}}}
+	dst.MergeFrom(&Package{Digests: []Digest{
+		{Algorithm: "SHA-256", Value: "abc"}, // the same claim, spelled the CycloneDX way
+		{Algorithm: "crc32", Value: "zz"},    // unpublishable
+		{Algorithm: "SHA-1", Value: "def"},   // a genuinely new claim
+	}})
+	if len(dst.Digests) != 2 {
+		t.Fatalf("digests = %+v, want the duplicate collapsed and the reject dropped", dst.Digests)
+	}
+	for _, digest := range dst.Digests {
+		if !digest.Algorithm.Valid() {
+			t.Fatalf("an unpublishable digest survived: %+v", digest)
+		}
+	}
+}
+
+// TestOversizedSPDXExpressionNeverSurvives pins the outcome, which two layers
+// currently enforce: spdxkit bounds every entry point before it parses, and
+// normalizedSPDXExpression declines early so an oversized value is not scanned
+// three times on its way to the same answer.
+//
+// Removing either guard alone leaves this passing, and that is the point of
+// asserting the outcome rather than the mechanism: the invariant is that an
+// oversized expression never reaches a published field, so if spdxkit's own
+// limit were ever loosened this test would still be the thing that catches it.
+func TestOversizedSPDXExpressionNeverSurvives(t *testing.T) {
+	oversized := strings.Repeat("MIT OR ", 200000) + "MIT"
+	if spdxkit.WithinBounds(oversized) {
+		t.Fatal("fixture is within bounds; it proves nothing")
+	}
+	normalized, ok := PackageLicense{Value: "stated", SPDXExpression: oversized}.Normalized()
+	if !ok {
+		t.Fatal("the stated value should survive on its own")
+	}
+	if normalized.SPDXExpression != "" {
+		t.Fatalf("an oversized expression survived: %d bytes", len(normalized.SPDXExpression))
+	}
+}
