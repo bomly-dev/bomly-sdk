@@ -277,6 +277,24 @@ func TestRelationshipDepthDoesNotResetBelowADependency(t *testing.T) {
 	}
 }
 
+func TestDependencyRejectsAssertedInvalidPURL(t *testing.T) {
+	// A package URL on the coordinates is an assertion: honored or refused,
+	// never replaced by one the coordinate builder fabricates. Without this
+	// gate {PURL: "not-a-purl", Name: "foo"} was accepted as
+	// pkg:generic/foo — an identity no producer claimed — bypassing the
+	// strict gate that NewDependencyNodeFromPURL and wire decoding use.
+	for _, asserted := range []string{"not-a-purl", "pkg:maven/commons-text@1.10.0"} {
+		if node, err := NewDependencyNode(Coordinates{PURL: asserted, Name: "foo", Version: "1.0.0"}); err == nil {
+			t.Errorf("NewDependencyNode(%q) = %q, want rejection", asserted, node.NodeID())
+		}
+	}
+	// Coordinates that assert nothing still mint from their parts.
+	node, err := NewDependencyNode(Coordinates{Ecosystem: EcosystemNPM, Name: "foo", Version: "1.0.0"})
+	if err != nil || node.NodeID() != "pkg:npm/foo@1.0.0" {
+		t.Fatalf("coordinate minting = %v, %v", node, err)
+	}
+}
+
 func TestModuleRejectsAssertedInvalidPURL(t *testing.T) {
 	// An explicitly asserted package URL is a claim the constructor must
 	// honor or refuse — never replace with a fabricated one. Both the
