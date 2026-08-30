@@ -34,6 +34,11 @@ type nodeWire struct {
 	ResolvedURL           string                 `json:"resolved_url,omitempty"`
 	Origin                *DependencyOrigin      `json:"origin,omitempty"`
 	Origins               []DependencyOrigin     `json:"origins,omitempty"`
+	Licenses              []PackageLicense       `json:"licenses,omitempty"`
+	Description           string                 `json:"description,omitempty"`
+	Homepage              string                 `json:"homepage,omitempty"`
+	Supplier              *Contact               `json:"supplier,omitempty"`
+	Originator            *Contact               `json:"originator,omitempty"`
 	DeclaringManifestPath string                 `json:"declaring_manifest_path,omitempty"`
 	ManifestKind          ManifestKind           `json:"manifest_kind,omitempty"`
 	Metadata              map[string]any         `json:"metadata,omitempty"`
@@ -147,11 +152,24 @@ func (w *nodeWire) decodeDependencyNode() (*DependencyNode, error) {
 	node.Scopes = w.Scopes
 	node.Locations = w.Locations
 	node.CPEs = w.CPEs
-	node.Digests = w.Digests
+	// Routed through the set merge so a digest the codec rejected does not
+	// survive as a zero element that re-encodes to an empty checksum record.
+	node.Digests = mergeDigestSet(nil, w.Digests)
 	node.Copyright = w.Copyright
 	node.FoundBy = w.FoundBy
 	node.ResolvedURL = w.ResolvedURL
 	node.Origins = MergeOrigins(node.Origins, w.wireOrigins())
+	// MergeLicenses re-runs each claim's gate, so a payload that reached the
+	// slice without passing through PackageLicense's codec — a hand-built
+	// value, or one an older producer wrote — is still held to it here.
+	node.Licenses = MergeLicenses(nil, w.Licenses)
+	node.Description = NormalizeDescription(w.Description)
+	node.Homepage = NormalizeHomepage(w.Homepage)
+	// normalizedContact returns nil for a contact the codec rejected, so a
+	// payload like {"kind":"organization"} with no name does not leave a
+	// non-nil pointer to a zero value that re-encodes as "supplier":{}.
+	node.Supplier = normalizedContact(w.Supplier)
+	node.Originator = normalizedContact(w.Originator)
 	if len(w.Metadata) > 0 {
 		if node.Metadata == nil {
 			node.Metadata = make(map[string]any, len(w.Metadata))
@@ -228,7 +246,7 @@ func encodeNodeWire(node GraphNode) nodeWire {
 			Scopes:         n.Scopes,
 			Locations:      n.Locations,
 			CPEs:           n.CPEs,
-			Digests:        n.Digests,
+			Digests:        mergeDigestSet(nil, n.Digests),
 			Copyright:      n.Copyright,
 			FoundBy:        n.FoundBy,
 			ResolvedURL:    n.ResolvedURL,
@@ -236,6 +254,13 @@ func encodeNodeWire(node GraphNode) nodeWire {
 			Metadata:       n.Metadata,
 			Matched:        n.Matched,
 			PackageRef:     n.PackageRef,
+			// Re-gated on the way out as well as in, so a field set directly
+			// on a hand-built node never reaches a reader unchecked.
+			Licenses:    MergeLicenses(nil, n.Licenses),
+			Description: NormalizeDescription(n.Description),
+			Homepage:    NormalizeHomepage(n.Homepage),
+			Supplier:    normalizedContact(n.Supplier),
+			Originator:  normalizedContact(n.Originator),
 		}
 		if len(n.Origins) > 0 {
 			legacy := n.Origins[0]
@@ -385,7 +410,17 @@ func (r *PackageRegistry) MarshalJSON() ([]byte, error) {
 		if pkg == nil || pkg.PURL == "" {
 			continue
 		}
-		payload[pkg.PURL] = pkg.Clone()
+		// Package's own codec re-gates each record as it is written, so a
+		// value installed after insertion -- Ensure, Get, and All all hand
+		// back mutable pointers -- cannot cross the wire unchecked. The gate
+		// lives on the type rather than here because package updates on a
+		// matcher result never pass through this registry at all.
+		//
+		// No defensive copy: that codec has a value receiver, so it
+		// normalizes its own copy and cannot rewrite the stored record. A
+		// clone here would deep-copy every package on every marshal to
+		// prevent something that can no longer happen.
+		payload[pkg.PURL] = pkg
 	}
 	return json.Marshal(payload)
 }

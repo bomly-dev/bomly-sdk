@@ -139,6 +139,10 @@ func TestWireV1NewFieldsAreOmitEmpty(t *testing.T) {
 		for _, forbidden := range []string{
 			"acceptPackageUpdates", "packageUpdates", "capabilities", "configSchema",
 			"detected_origins",
+			// The ADR-0037 package-level assertions. TestWireV1NodeFieldsAreOmitEmpty
+			// covers the node encoder's copies of these; these are Package's
+			// own tags, which that test never reaches.
+			"description", "homepage", "supplier", "originator", "licenses",
 		} {
 			if _, ok := decoded[forbidden]; ok {
 				t.Errorf("%s: zero-valued %q must be omitted from the wire", name, forbidden)
@@ -380,10 +384,16 @@ func TestWireV1NodeFieldsAreOmitEmpty(t *testing.T) {
 	// Fields each kind leaves zero and must therefore omit. A module node
 	// always carries a declaring manifest path (it is identity), so that
 	// key is expected there and forbidden elsewhere.
+	//
+	// The ADR-0037 component assertions are additive and optional on every
+	// kind, so an unset one must not appear either: a reader on an older
+	// build would see a key it does not know, and an explicit null supplier
+	// is not the same statement as an absent one.
+	assertions := []string{"licenses", "description", "homepage", "supplier", "originator"}
 	forbidden := map[NodeKind][]string{
-		NodeKindManifest:   {"manifest_kind", "declaring_manifest_path", "origins", "origin", "purl", "scopes", "package_ref"},
-		NodeKindModule:     {"manifest_kind", "origins", "origin", "scopes", "package_ref"},
-		NodeKindDependency: {"manifest_kind", "declaring_manifest_path", "origins", "origin", "scopes", "package_ref"},
+		NodeKindManifest:   append([]string{"manifest_kind", "declaring_manifest_path", "origins", "origin", "purl", "scopes", "package_ref"}, assertions...),
+		NodeKindModule:     append([]string{"manifest_kind", "origins", "origin", "scopes", "package_ref"}, assertions...),
+		NodeKindDependency: append([]string{"manifest_kind", "declaring_manifest_path", "origins", "origin", "scopes", "package_ref"}, assertions...),
 	}
 
 	graph := New()
@@ -427,5 +437,63 @@ func TestWireV1NodeFieldsAreOmitEmpty(t *testing.T) {
 		if _, present := node["declaring_manifest_path"]; !present {
 			t.Error("module node dropped its declaring manifest path")
 		}
+	}
+}
+
+// TestWireV1NestedAssertionFieldsAreOmitEmpty guards the optional fields that
+// live *inside* the ADR-0037 assertion types. TestWireV1NewFieldsAreOmitEmpty
+// marshals zero-valued top-level payloads, so the slices and pointers holding
+// these types are absent from its output and their own tags are never
+// exercised: that guard stays green if PackageLicense.Name, Digest.Subject, or
+// a Contact field later loses omitempty.
+//
+// Each case carries the minimum that makes the value publishable and leaves
+// every optional field zero, so any key beyond the required ones is a tag that
+// stopped omitting.
+func TestWireV1NestedAssertionFieldsAreOmitEmpty(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		value     any
+		forbidden []string
+	}{
+		{
+			name:      "PackageLicense",
+			value:     PackageLicense{Value: "MIT"},
+			forbidden: []string{"spdx_expression", "type", "name", "extracted_text"},
+		},
+		{
+			name:      "Digest",
+			value:     Digest{Algorithm: DigestAlgorithmSHA256, Value: "abc123"},
+			forbidden: []string{"subject"},
+		},
+		{
+			name:      "Contact",
+			value:     Contact{Kind: ContactKindOrganization, Name: "Acme Inc"},
+			forbidden: []string{"url"},
+		},
+		{
+			name:      "DependencyOrigin",
+			value:     DependencyOrigin{ArtifactURL: "https://cdn.test/pkg.tgz"},
+			forbidden: []string{"repository", "revision"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := json.Marshal(tc.value)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			var decoded map[string]json.RawMessage
+			if err := json.Unmarshal(data, &decoded); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if len(decoded) == 0 {
+				t.Fatalf("%s encoded to %s, which asserts nothing: the fixture must be publishable", tc.name, data)
+			}
+			for _, forbidden := range tc.forbidden {
+				if _, present := decoded[forbidden]; present {
+					t.Errorf("%s: zero-valued %q must be omitted from the wire (encoded %s)", tc.name, forbidden, data)
+				}
+			}
+		})
 	}
 }

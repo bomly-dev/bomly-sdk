@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/bomly-dev/bomly-sdk/purlkit"
+	"github.com/bomly-dev/bomly-sdk/spdxkit"
 )
 
 const maxFuzzInputSize = 1 << 20
@@ -321,4 +322,246 @@ func FuzzDependencyNodeWire(f *testing.F) {
 			t.Fatalf("identity not stable across the codec: %q -> %q", node.NodeID(), again.NodeID())
 		}
 	})
+}
+
+// FuzzDigestAlgorithm drives the algorithm registry with arbitrary strings:
+// algorithm names arrive from ingested SBOM documents and plugin payloads, so
+// whatever a document can spell reaches this parser.
+func FuzzDigestAlgorithm(f *testing.F) {
+	for _, seed := range []string{
+		"sha256", "SHA-256", "SHA256", "sha3-512", "BLAKE2b-256", "ADLER32",
+		"", "   ", "crc32", "sha-------256", "SHA_256", "s.h.a.2.5.6",
+		strings.Repeat("sha256", 200), "\x00sha256", "sha256\n",
+	} {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, value string) {
+		algorithm, err := ParseDigestAlgorithm(value)
+		if err != nil {
+			if algorithm != "" {
+				t.Fatalf("ParseDigestAlgorithm(%q) returned %q alongside an error", value, algorithm)
+			}
+			return
+		}
+		// A parsed algorithm is registered, and re-parsing its canonical token
+		// is a fixed point -- otherwise a value would change identity every
+		// time it crossed the wire.
+		if !algorithm.Valid() {
+			t.Fatalf("ParseDigestAlgorithm(%q) returned unregistered %q", value, algorithm)
+		}
+		again, err := ParseDigestAlgorithm(string(algorithm))
+		if err != nil || again != algorithm {
+			t.Fatalf("re-parsing %q gave %q, %v", algorithm, again, err)
+		}
+		// A registered algorithm names at least one format, or it could never
+		// be published and has no business in the registry.
+		if algorithm.SPDXName() == "" && algorithm.CycloneDXName() == "" {
+			t.Fatalf("%q has no format projection", algorithm)
+		}
+	})
+}
+
+// FuzzContact drives the contact gate with arbitrary supplier strings, which
+// arrive verbatim from ingested SBOM documents.
+func FuzzContact(f *testing.F) {
+	for _, seed := range []string{
+		"Organization: Acme Inc", "Person: Jane Doe", "NOASSERTION",
+		"Organization: Acme Inc (info@acme.com)", "Organization:", "Acme Inc",
+		"", "person:", "PERSON: (a@b.c)", "Organization: a\nb", "Organization: (",
+		strings.Repeat("Person: a", 100), "Organization: \x00",
+	} {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, value string) {
+		contact, ok := ParseSPDXContact(value)
+		if !ok {
+			return
+		}
+		assertPublishableContact(t, contact)
+		// Normalizing an already-normalized contact is a fixed point.
+		once, ok := contact.Normalized()
+		if !ok {
+			t.Fatalf("a parsed contact %+v failed its own gate", contact)
+		}
+		twice, ok := once.Normalized()
+		if !ok || twice != once {
+			t.Fatalf("normalizing twice changed the contact: %+v then %+v", once, twice)
+		}
+		// Rendering and re-reading must reach the same value, or a contact
+		// would drift every time it round-tripped through SPDX.
+		if rendered := contact.SPDXString(); rendered != "" {
+			reparsed, ok := ParseSPDXContact(rendered)
+			if !ok || reparsed != contact {
+				t.Fatalf("round trip of %+v through %q gave %+v (ok=%v)", contact, rendered, reparsed, ok)
+			}
+		}
+	})
+}
+
+// assertPublishableContact fails when a contact carries anything a published
+// document must never show.
+func assertPublishableContact(t *testing.T, contact Contact) {
+	t.Helper()
+	for _, r := range contact.Name {
+		if r < ' ' || r == 0x7f {
+			t.Fatalf("contact name %q carries a control character", contact.Name)
+		}
+	}
+	if len(contact.Name) > maxContactNameLength {
+		t.Fatalf("contact name is %d bytes, over the limit", len(contact.Name))
+	}
+	// An email address is deliberately not carried, wherever the document put
+	// it; see Contact's docs.
+	if strings.Contains(contact.Name, "@") {
+		t.Fatalf("contact name %q retains an address-shaped token", contact.Name)
+	}
+	if contact.URL != "" {
+		if _, ok := NormalizeURL(contact.URL, URLFormReference); !ok {
+			t.Fatalf("contact URL %q would be rejected on read", contact.URL)
+		}
+	}
+}
+
+// FuzzPackageLicense drives the license gate with arbitrary claims. License
+// values and extracted text arrive from lockfiles, registry APIs, and ingested
+// SBOM documents, all untrusted.
+func FuzzPackageLicense(f *testing.F) {
+	for _, seed := range []struct{ value, expression, text, licenseType string }{
+		{"MIT", "MIT", "", "declared"},
+		{"MIT", "MIT", "", "concluded"},
+		{"Custom", "LicenseRef-Acme-Commercial", "Custom terms.", ""},
+		{"Custom", "LicenseRef-bomly-00000000000000000000000000000000", "Custom terms.", ""},
+		{"Custom", `LicenseRef-Acme Commercial "v2"`, "Custom terms.", ""},
+		{"Custom", "LicenseRef-Acme", "", "declared"},
+		{"", "", "Only text.", ""},
+		{"", "", "", ""},
+		{"MIT", "MIT", "", "invented"},
+	} {
+		f.Add(seed.value, seed.expression, seed.text, seed.licenseType)
+	}
+
+	f.Fuzz(func(t *testing.T, value, expression, text, licenseType string) {
+		license := PackageLicense{
+			Value:          value,
+			SPDXExpression: expression,
+			ExtractedText:  text,
+			Type:           LicenseType(licenseType),
+		}
+		normalized, ok := license.Normalized()
+		if !ok {
+			if normalized != (PackageLicense{}) {
+				t.Fatalf("a rejected license returned %+v, want the zero value", normalized)
+			}
+			return
+		}
+		// Provenance is a closed vocabulary: an unrecognized one must never
+		// survive as a published claim.
+		if _, err := ParseLicenseType(string(normalized.Type)); err != nil {
+			t.Fatalf("normalized license carries unrecognized provenance %q", normalized.Type)
+		}
+		// A license reference must be well formed and must have its text, or
+		// the document citing it would not validate.
+		// The text requirement applies to any cited reference, leading or
+		// embedded: HasPrefix alone let a compound such as
+		// "MIT OR LicenseRef-Acme" past both checks.
+		if strings.Contains(normalized.SPDXExpression, spdxkit.LicenseRefPrefix) {
+			if strings.TrimSpace(normalized.ExtractedText) == "" {
+				t.Fatalf("reference in %q survived without its text", normalized.SPDXExpression)
+			}
+			refs := spdxkit.LicenseRefsIn(normalized.SPDXExpression)
+			// One record carries one text, so it can cite at most one
+			// reference.
+			if len(refs) > 1 {
+				t.Fatalf("expression %q cites %d references but carries one text", normalized.SPDXExpression, len(refs))
+			}
+			// Every reference that survives is well formed, wherever it sits.
+			// Checking only a bare one left a malformed reference embedded in
+			// a compound unasserted.
+			for _, ref := range refs {
+				if !spdxkit.ValidLicenseRef(ref) {
+					t.Fatalf("expression %q publishes malformed reference %q", normalized.SPDXExpression, ref)
+				}
+				// A reference under Bomly's prefix is derived from its text.
+				if strings.HasPrefix(ref, spdxkit.BomlyLicenseRefPrefix) &&
+					ref != spdxkit.MintLicenseRef(normalized.ExtractedText).RefID {
+					t.Fatalf("reference %q does not match the text it names", ref)
+				}
+			}
+		}
+		// Normalizing twice is a fixed point.
+		twice, ok := normalized.Normalized()
+		if !ok || twice != normalized {
+			t.Fatalf("normalizing twice changed the license: %+v then %+v", normalized, twice)
+		}
+	})
+}
+
+// FuzzNormalizeURL drives all three published-URL forms with arbitrary input.
+func FuzzNormalizeURL(f *testing.F) {
+	for _, seed := range []string{
+		"https://example.test", "https://example.test/docs?page=1#anchor",
+		"https://user:pw@example.test/", "file:///etc/passwd", "/local/path",
+		"git@github.test:owner/repo.git", "https://", "https://:8080/x",
+		"http://0#0", "%./0", "https://example.test/a%2Fb", "https://EXAMPLE.test:443/x",
+	} {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, raw string) {
+		for _, form := range []URLForm{URLFormArtifact, URLFormRepository, URLFormReference} {
+			normalized, ok := NormalizeURL(raw, form)
+			if !ok {
+				if normalized != "" {
+					t.Fatalf("form %v rejected %q but returned %q", form, raw, normalized)
+				}
+				continue
+			}
+			assertPublishableURL(t, form, normalized)
+			// Reading back what was written must reach the same conclusion,
+			// and must be a fixed point: a value that changed on every pass
+			// would drift each time it crossed the wire.
+			again, ok := NormalizeURL(normalized, form)
+			if !ok || again != normalized {
+				t.Fatalf("form %v: re-normalizing %q gave %q (ok=%v)", form, normalized, again, ok)
+			}
+		}
+	})
+}
+
+// assertPublishableURL fails when a normalized URL carries anything a
+// published document must never show.
+func assertPublishableURL(t *testing.T, form URLForm, raw string) {
+	t.Helper()
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("published URL %q does not parse: %v", raw, err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		t.Fatalf("published URL %q is not a web location", raw)
+	}
+	if parsed.Hostname() == "" {
+		t.Fatalf("published URL %q has no host", raw)
+	}
+	if parsed.User != nil {
+		t.Fatalf("published URL %q carries credentials", raw)
+	}
+	switch form {
+	case URLFormArtifact:
+		if parsed.RawQuery != "" || parsed.ForceQuery {
+			t.Fatalf("artifact URL %q carries a query", raw)
+		}
+		fallthrough
+	case URLFormRepository:
+		if parsed.RawQuery != "" || parsed.ForceQuery {
+			t.Fatalf("repository URL %q carries a query", raw)
+		}
+		if strings.Trim(parsed.Path, "/") == "" {
+			t.Fatalf("origin URL %q names a host root, not a package", raw)
+		}
+		if parsed.Fragment != "" {
+			t.Fatalf("origin URL %q carries a fragment", raw)
+		}
+	}
 }

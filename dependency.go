@@ -106,8 +106,38 @@ type DependencyNode struct {
 	// value; the ADR-0033 publication gates are the only door in. A list
 	// with more than one element is an observable fact — the shape of a
 	// dependency-confusion signal — not a reason to split the node.
-	Origins  []DependencyOrigin
-	Metadata map[string]any
+	Origins []DependencyOrigin
+	// Licenses are the license claims the detecting or ingesting source made
+	// about this dependency. Detection-time facts belong on the node;
+	// consolidation lifts them into the registry package. This is the typed
+	// replacement for the MetadataKeyDetectionLicenses stash.
+	//
+	// Gate: PackageLicense.Normalized. Merge class: set, unioned by
+	// MergeLicenses -- a declaration and a conclusion are two claims about
+	// one package, and two sources reusing one license reference for
+	// different terms are kept apart.
+	Licenses []PackageLicense
+	// Description, Homepage, Supplier, and Originator are the component-level
+	// SBOM assertions a source document made about this dependency
+	// (ADR-0037). They live on the node as well as on Package because an
+	// ingested document asserts them per component, before matching has
+	// produced a registry package to hold them.
+	//
+	// Gates, applied on both wire directions and again when a node seeds a
+	// registry package: NormalizeDescription (trimmed, bounded, control
+	// characters dropped), NormalizeHomepage (URLFormReference, so a bare
+	// host and a query are fine while credentials and local paths are
+	// cleared), and Contact.Normalized for both contacts, which yields nil
+	// for an unpublishable party and never retains an email address.
+	//
+	// Merge class for all four: scalar, fill-gaps. Both witnesses are gated
+	// before the gap is measured, so a value that could not be published
+	// never blocks one that can.
+	Description string
+	Homepage    string
+	Supplier    *Contact
+	Originator  *Contact
+	Metadata    map[string]any
 	// Matched is true when the referenced package was enriched by a matcher.
 	Matched bool
 	// PackageRef is the PURL of this dependency's matching artifact. It is
@@ -444,6 +474,11 @@ func (n *DependencyNode) Clone() *DependencyNode {
 	if len(n.Origins) > 0 {
 		clone.Origins = append([]DependencyOrigin(nil), n.Origins...)
 	}
+	if len(n.Licenses) > 0 {
+		clone.Licenses = append([]PackageLicense(nil), n.Licenses...)
+	}
+	clone.Supplier = n.Supplier.Clone()
+	clone.Originator = n.Originator.Clone()
 	clone.Metadata = cloneAnyMap(n.Metadata)
 	clone.warnings = append([]NodeWarning(nil), n.warnings...)
 	if len(n.purl.Qualifiers) > 0 {

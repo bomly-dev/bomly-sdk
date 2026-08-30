@@ -28,6 +28,12 @@ func (r *PackageRegistry) Add(pkg *Package) *Package {
 	if pkg.ID == "" {
 		pkg.ID = pkg.PURL
 	}
+	// Add is the one door into the registry -- seeding, matcher package
+	// updates off the plugin wire, and analyzer deltas all arrive here -- so
+	// it is where an assertion that bypassed a call-site gate is caught. The
+	// merge branch below re-gates what it takes as well, for a caller that
+	// reaches MergeFrom directly.
+	pkg.NormalizeAssertions()
 	if existing, ok := r.byPURL[pkg.PURL]; ok {
 		existing.MergeFrom(pkg)
 		return existing

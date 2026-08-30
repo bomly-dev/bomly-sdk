@@ -102,6 +102,12 @@ func normalizeExpression(value string) (normalized string, ok bool) {
 	return normalizedValues[0], true
 }
 
+// WithinBounds reports whether a value is small and simple enough for this
+// package to parse. Every entry point applies it internally before parsing, so
+// an over-limit value is already refused; it is exported so a caller holding
+// an expression can decline early without keeping a second copy of the limit.
+func WithinBounds(value string) bool { return withinParserBounds(value) }
+
 func withinParserBounds(value string) bool {
 	if len(value) > maxInputSize {
 		return false

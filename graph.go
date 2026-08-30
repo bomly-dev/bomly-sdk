@@ -257,6 +257,42 @@ func foldNodes(surviving, witness GraphNode) {
 		// digests from a second SBOM witness on insertion order alone.
 		survivor.CPEs = mergeStringSet(survivor.CPEs, incoming.CPEs)
 		survivor.Digests = mergeDigestSet(survivor.Digests, incoming.Digests)
+		// License claims are a set for the same reason they are on Package: a
+		// declaration and a conclusion are two claims about one package, and
+		// two witnesses that read different sources both have something to
+		// say.
+		// DetectionLicenses on both sides, not the typed field alone: a
+		// witness built before the typed field existed carries its claims in
+		// the deprecated metadata stash, and metadata merging keeps the
+		// survivor's value -- so the incoming witness's licenses would be
+		// dropped before seeding ever saw them.
+		survivor.Licenses = MergeLicenses(DetectionLicenses(survivor), DetectionLicenses(incoming))
+		// The component-level document assertions are scalars — one supplier,
+		// one homepage — so a later witness contributes only what the first
+		// did not know.
+		//
+		// Both sides are gated before the gap is measured, not after. A node
+		// built in process never passed a codec, so a survivor could hold an
+		// unpublishable value — a homepage carrying credentials — which is
+		// non-empty and therefore blocks a valid incoming one, and is then
+		// dropped at encode. The result would be that a witness with a good
+		// homepage lost it to a witness that never had one.
+		survivor.Description = NormalizeDescription(survivor.Description)
+		survivor.Homepage = NormalizeHomepage(survivor.Homepage)
+		survivor.Supplier = normalizedContact(survivor.Supplier)
+		survivor.Originator = normalizedContact(survivor.Originator)
+		if survivor.Description == "" {
+			survivor.Description = NormalizeDescription(incoming.Description)
+		}
+		if survivor.Homepage == "" {
+			survivor.Homepage = NormalizeHomepage(incoming.Homepage)
+		}
+		if survivor.Supplier == nil {
+			survivor.Supplier = normalizedContact(incoming.Supplier)
+		}
+		if survivor.Originator == nil {
+			survivor.Originator = normalizedContact(incoming.Originator)
+		}
 		if survivor.Copyright == "" {
 			survivor.Copyright = incoming.Copyright
 		}
@@ -348,22 +384,43 @@ func mergeStringSet(existing, additions []string) []string {
 // mergeDigestSet unions two digest slices. Digests compare by whole value:
 // algorithm, value, and subject together, since a digest of a different
 // subject is a different claim.
+// mergeDigestSet unions digests, normalizes their spellings, and drops any
+// that cannot be published. It is the one place a digest slice is assembled,
+// so every path — the graph fold, the wire codecs, package seeding, and
+// Package.MergeFrom — inherits the same rule.
+//
+// The union is what keeps provenance: two records can carry genuinely
+// different claims about one package, a hash of the published artifact from
+// one source and a hash over the source tree from another, and Subject is
+// what tells them apart. Keeping only the first slice would lose a claim to
+// merge order alone.
+//
+// The drop matters as much as the union. Digest's codec zeroes a rejected value
+// rather than failing the payload, but omitempty cannot omit a slice element,
+// so a zeroed member survives as a literal "{}" in the encoded array -- an
+// empty checksum record in a published document, which is worse than the
+// rejected assertion it replaced. Filtering here, where digest slices are
+// assembled, means every path that builds one is covered by the same rule.
 func mergeDigestSet(existing, additions []Digest) []Digest {
-	if len(additions) == 0 {
-		return existing
-	}
+	merged := make([]Digest, 0, len(existing)+len(additions))
 	seen := make(map[Digest]struct{}, len(existing)+len(additions))
-	for _, digest := range existing {
-		seen[digest] = struct{}{}
-	}
-	for _, digest := range additions {
-		if _, duplicate := seen[digest]; duplicate {
-			continue
+	for _, group := range [][]Digest{existing, additions} {
+		for _, digest := range group {
+			normalized, ok := digest.Normalized()
+			if !ok {
+				continue
+			}
+			if _, duplicate := seen[normalized]; duplicate {
+				continue
+			}
+			seen[normalized] = struct{}{}
+			merged = append(merged, normalized)
 		}
-		seen[digest] = struct{}{}
-		existing = append(existing, digest)
 	}
-	return existing
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
 }
 
 // mergeMetadata fills the gaps in existing from additions. Keys the

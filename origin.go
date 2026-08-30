@@ -7,6 +7,11 @@ import (
 	"strings"
 )
 
+// maxPublishedURLLength bounds any URL Bomly will publish. Browsers and
+// servers cap URLs well below this; the allowance leaves room for a long
+// signed-artifact path without admitting a value that is really a payload.
+const maxPublishedURLLength = 8192
+
 // maxOriginRevisionLength bounds a recorded revision. Commit hashes and tags
 // are far shorter; anything longer is not a revision.
 const maxOriginRevisionLength = 128
@@ -65,27 +70,66 @@ func RepositoryOrigin(rawURL, revision string) *DependencyOrigin {
 	return origin
 }
 
-// NormalizeOriginURL is the single rule every published origin URL satisfies.
-// Apply it when recording a URL and again when reading one back, so an origin
-// that arrives from a plugin or a hand-built graph is held to the same standard
-// as one from a built-in component.
-//
-// A value passes only when it is an absolute http or https URL with a host, a
-// non-empty path, and no embedded credentials; the result is re-serialized from
-// the parse rather than returned as given. Everything else -- local paths,
-// file://, git@host:org/repo, ssh://, git+ssh://, "git+" prefixes, registry and
-// index roots, and URLs carrying userinfo -- is rejected, so filesystem layout
-// and credentials cannot reach a published document.
-//
-// The repository argument selects the repository form: query and fragment are
-// dropped, because they carry the ref that was requested rather than the one
-// that was resolved, which callers pass separately. The artifact form drops the
-// fragment (a checksum or anchor, never part of the location) and rejects a
-// value carrying a query, which marks a signed or tokenized link rather than a
-// stable location.
+// URLForm selects which published-URL rule a value is held to. Every form
+// shares the same safety floor -- absolute http or https, a real host, no
+// embedded credentials -- and differs only in what the location half of the
+// URL is allowed to look like, because the three kinds of value answer
+// different questions.
+type URLForm int
+
+const (
+	// URLFormArtifact is the exact file a package was downloaded from. It
+	// requires a non-empty path and rejects a query, which marks a signed or
+	// tokenized link rather than a stable location.
+	URLFormArtifact URLForm = iota
+	// URLFormRepository is the source repository a package was resolved from.
+	// It requires a non-empty path and drops the query, which carries the ref
+	// that was requested rather than the one that was resolved.
+	URLFormRepository
+	// URLFormReference is a citation: a homepage, an advisory page, a
+	// documentation link -- a URL published so a reader can follow it, never
+	// one Bomly fetches to establish a fact. It keeps the query and the
+	// fragment, and it permits a host root, because "https://example.com/" is
+	// a legitimate homepage while it is never a package artifact. The safety
+	// floor is unchanged: credentials, local paths, and non-http schemes are
+	// rejected exactly as they are for the other two forms.
+	URLFormReference
+)
+
+// NormalizeOriginURL is the origin-specific spelling of NormalizeURL, kept as
+// the name detectors and plugins already call. The repository argument selects
+// URLFormRepository; false selects URLFormArtifact.
 func NormalizeOriginURL(raw string, repository bool) (string, bool) {
+	if repository {
+		return NormalizeURL(raw, URLFormRepository)
+	}
+	return NormalizeURL(raw, URLFormArtifact)
+}
+
+// NormalizeURL is the single rule every published URL satisfies. Apply it when
+// recording a URL and again when reading one back, so a value that arrives
+// from a plugin or a hand-built graph is held to the same standard as one from
+// a built-in component.
+//
+// A value passes only when it is an absolute http or https URL with a host and
+// no embedded credentials; the result is re-serialized from the parse rather
+// than returned as given. Everything else -- local paths, file://,
+// git@host:org/repo, ssh://, git+ssh://, "git+" prefixes, and URLs carrying
+// userinfo -- is rejected, so filesystem layout and credentials cannot reach a
+// published document. The form argument selects the remaining rules; see
+// URLForm.
+func NormalizeURL(raw string, form URLForm) (string, bool) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
+		return "", false
+	}
+	// Bounded before parsing. A homepage or citation arrives from an
+	// untrusted registry record or SBOM document, and the reference form
+	// keeps the path, query, and fragment -- so without a limit one component
+	// could hand url.Parse and the escape canonicalizer a multi-megabyte
+	// value and then carry it on every wire round trip. No real URL comes
+	// close to the limit.
+	if len(trimmed) > maxPublishedURLLength {
 		return "", false
 	}
 	parsed, err := url.Parse(trimmed)
@@ -135,19 +179,51 @@ func NormalizeOriginURL(raw string, repository bool) (string, bool) {
 			parsed.Host = host + ":" + strconv.Itoa(number)
 		}
 	}
-	parsed.Fragment = ""
-	parsed.RawFragment = ""
+	// A citation is followed by a reader, so its fragment is part of what was
+	// cited -- an advisory that names one anchor on a page of many loses its
+	// subject without it. For the other two forms the fragment is a checksum
+	// or an anchor and never part of the location.
+	if form != URLFormReference {
+		parsed.Fragment = ""
+		parsed.RawFragment = ""
+	}
 	// A host root names a server, not a package: a registry or index root on
 	// the artifact side, and no repository at all on the other. An empty path
-	// would also make a "<url>@<revision>" locator re-parse as userinfo.
-	if strings.Trim(parsed.Path, "/") == "" {
+	// would also make a "<url>@<revision>" locator re-parse as userinfo. A
+	// citation is exempt: a bare host is a normal homepage.
+	if form != URLFormReference && strings.Trim(parsed.Path, "/") == "" {
 		return "", false
 	}
-	if repository {
+	switch form {
+	case URLFormRepository:
 		parsed.RawQuery = ""
 		parsed.ForceQuery = false
-	} else if parsed.RawQuery != "" || parsed.ForceQuery {
-		return "", false
+	case URLFormReference:
+		// A query that does not decode is not publishable. url.URL writes
+		// RawQuery back verbatim, so a trailing or truncated escape survives
+		// here -- and every consumer that tries to read the query, including
+		// the contact gate that looks for an email address in it, gets a
+		// decode error and concludes the value is clean. An encoded address
+		// behind a malformed escape would publish on exactly that reasoning.
+		if _, err := url.QueryUnescape(parsed.RawQuery); err != nil {
+			return "", false
+		}
+		// Kept: a citation's query selects what is being cited. It is also
+		// the one part of a URL that url.URL writes back verbatim instead of
+		// re-encoding, so a raw space or control character in it would
+		// survive this pass and then be trimmed on the next one -- two
+		// normalizations, two answers, on a rule that runs on both write and
+		// read. Such a query is malformed regardless: RFC 3986 requires those
+		// characters to be escaped.
+		for i := 0; i < len(parsed.RawQuery); i++ {
+			if b := parsed.RawQuery[i]; b <= ' ' || b == 0x7f {
+				return "", false
+			}
+		}
+	default:
+		if parsed.RawQuery != "" || parsed.ForceQuery {
+			return "", false
+		}
 	}
 	// Canonicalize the escaped form, not parsed.Path: Path is already decoded,
 	// where "%2F" and "/" are indistinguishable, and re-encoding from it would
@@ -161,6 +237,14 @@ func NormalizeOriginURL(raw string, repository bool) (string, bool) {
 	parsed.RawPath = escaped
 	normalized := parsed.String()
 	if normalized == "" {
+		return "", false
+	}
+	// The result is bounded as well as the input. Canonicalizing escapes can
+	// make a value longer than it arrived, so a URL just under the limit can
+	// normalize to one just over it -- accepted on write and rejected on
+	// read, which breaks the fixed point this rule promises and would let a
+	// stored value fail its own gate later. The fuzzer found exactly that.
+	if len(normalized) > maxPublishedURLLength {
 		return "", false
 	}
 	return normalized, true
