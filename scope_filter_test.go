@@ -4,14 +4,22 @@ import "testing"
 
 func TestFilterGraphByScope(t *testing.T) {
 	depsGraph := New()
-	root := mustDep(t, Coordinates{Name: "app", Version: "1.0.0"})
+	// The project's own root is a module node under the union — a
+	// structural record retained by kind. A scope-less dependency node is
+	// not structural and is filtered like any other dependency, which is
+	// what keeps an edgeless graph or an orphan record from slipping
+	// development dependencies past a runtime filter.
+	root := mustModule(t, "package.json", Coordinates{Name: "app", Version: "1.0.0"})
 	runtimeDep := mustDep(t, Coordinates{Name: "react", Version: "18.2.0"})
 	runtimeDep.Scopes = ScopesOf(ScopeRuntime)
 	devDep := mustDep(t, Coordinates{Name: "vitest", Version: "2.0.0"})
 	devDep.Scopes = ScopesOf(ScopeDevelopment)
 	sharedDep := mustDep(t, Coordinates{Name: "shared", Version: "1.0.0"})
 	sharedDep.Scopes = ScopesOf(ScopeDevelopment, ScopeRuntime)
-	for _, pkg := range []*DependencyNode{root, runtimeDep, devDep, sharedDep} {
+	if err := depsGraph.AddNode(root); err != nil {
+		t.Fatalf("add module root: %v", err)
+	}
+	for _, pkg := range []*DependencyNode{runtimeDep, devDep, sharedDep} {
 		if err := depsGraph.AddNode(pkg); err != nil {
 			t.Fatalf("add package %q: %v", pkg.NodeID(), err)
 		}

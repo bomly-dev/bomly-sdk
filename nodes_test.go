@@ -207,3 +207,72 @@ func TestPackageCloneAndMergeCarryDetectedOrigins(t *testing.T) {
 		t.Fatalf("MergeFrom detected origins = %+v, want the deduplicated union", target.DetectedOrigins)
 	}
 }
+
+func TestScopeFilterAppliesToUnattachedDependencies(t *testing.T) {
+	// Roots are not a rescue: in an edgeless graph every node has no
+	// incoming edge, so seeding the allow-set from Roots() would return the
+	// graph unfiltered and hand a runtime caller the development
+	// dependencies too. Only structural nodes are retained by kind.
+	graph := New()
+	module := mustModule(t, "package.json", Coordinates{Name: "app"})
+	runtimeDep := mustDepPURL(t, "pkg:npm/react@18.2.0")
+	runtimeDep.Scopes = ScopesOf(ScopeRuntime)
+	devDep := mustDepPURL(t, "pkg:npm/vitest@2.0.0")
+	devDep.Scopes = ScopesOf(ScopeDevelopment)
+	orphanDev := mustDepPURL(t, "pkg:npm/orphan@1.0.0")
+	orphanDev.Scopes = ScopesOf(ScopeDevelopment)
+	for _, node := range []GraphNode{module, runtimeDep, devDep, orphanDev} {
+		if err := graph.AddNode(node); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	filtered, err := FilterGraphByScope(graph, ScopeRuntime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := filtered.Node(devDep.NodeID()); ok {
+		t.Error("edgeless graph: development dependency survived a runtime filter")
+	}
+	if _, ok := filtered.Node(orphanDev.NodeID()); ok {
+		t.Error("orphan development dependency survived a runtime filter")
+	}
+	if _, ok := filtered.Node(runtimeDep.NodeID()); !ok {
+		t.Error("runtime dependency was dropped")
+	}
+	if _, ok := filtered.Node(module.NodeID()); !ok {
+		t.Error("structural module node must be retained by kind")
+	}
+}
+
+func TestRelationshipDepthDoesNotResetBelowADependency(t *testing.T) {
+	// A structural node beneath a dependency does not reset the depth: the
+	// dependency under it stays transitive, even though the chain passes
+	// through a module node.
+	graph := New()
+	module := mustModule(t, "package.json", Coordinates{Name: "app"})
+	direct := mustDepPURL(t, "pkg:npm/direct@1.0.0")
+	nested := mustModule(t, "vendor/package.json", Coordinates{Name: "vendored"})
+	deep := mustDepPURL(t, "pkg:npm/deep@1.0.0")
+	for _, node := range []GraphNode{module, direct, nested, deep} {
+		if err := graph.AddNode(node); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, edge := range [][2]string{
+		{module.NodeID(), direct.NodeID()},
+		{direct.NodeID(), nested.NodeID()},
+		{nested.NodeID(), deep.NodeID()},
+	} {
+		if err := graph.AddEdge(edge[0], edge[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	relationships := dependencyRelationshipsForGraph(graph)
+	if relationships[direct.NodeID()] != DependencyRelationshipDirect {
+		t.Fatalf("module's own dependency = %q, want direct", relationships[direct.NodeID()])
+	}
+	if relationships[deep.NodeID()] != DependencyRelationshipTransitive {
+		t.Fatalf("dependency below a dependency = %q, want transitive", relationships[deep.NodeID()])
+	}
+}
