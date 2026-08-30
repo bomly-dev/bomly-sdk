@@ -368,22 +368,34 @@ func mergeStringSet(existing, additions []string) []string {
 // mergeDigestSet unions two digest slices. Digests compare by whole value:
 // algorithm, value, and subject together, since a digest of a different
 // subject is a different claim.
+// mergeDigestSet unions digests and drops any that cannot be published.
+//
+// The drop is the point, not a detail. Digest's codec zeroes a rejected value
+// rather than failing the payload, but omitempty cannot omit a slice element,
+// so a zeroed member survives as a literal "{}" in the encoded array -- an
+// empty checksum record in a published document, which is worse than the
+// rejected assertion it replaced. Filtering here, where digest slices are
+// assembled, means every path that builds one is covered by the same rule.
 func mergeDigestSet(existing, additions []Digest) []Digest {
-	if len(additions) == 0 {
-		return existing
-	}
+	merged := make([]Digest, 0, len(existing)+len(additions))
 	seen := make(map[Digest]struct{}, len(existing)+len(additions))
-	for _, digest := range existing {
-		seen[digest] = struct{}{}
-	}
-	for _, digest := range additions {
-		if _, duplicate := seen[digest]; duplicate {
-			continue
+	for _, group := range [][]Digest{existing, additions} {
+		for _, digest := range group {
+			normalized, ok := digest.Normalized()
+			if !ok {
+				continue
+			}
+			if _, duplicate := seen[normalized]; duplicate {
+				continue
+			}
+			seen[normalized] = struct{}{}
+			merged = append(merged, normalized)
 		}
-		seen[digest] = struct{}{}
-		existing = append(existing, digest)
 	}
-	return existing
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
 }
 
 // mergeMetadata fills the gaps in existing from additions. Keys the

@@ -690,3 +690,206 @@ func TestPackageLicenseRejectsBlankExtractedText(t *testing.T) {
 		t.Fatalf("blank text minted the citation %q", normalized.SPDXExpression)
 	}
 }
+
+// TestPackageLicenseValidatesGeneralExpressions pins that "does not start with
+// LicenseRef-" is not evidence that a string is a license expression. An
+// unparseable value used to survive as a typed claim and would have been
+// exported into a document that fails its own validator.
+func TestPackageLicenseValidatesGeneralExpressions(t *testing.T) {
+	t.Run("an unparseable expression is dropped", func(t *testing.T) {
+		normalized, ok := PackageLicense{Value: "weird", SPDXExpression: "not valid OR"}.Normalized()
+		if !ok {
+			t.Fatal("a license with a stated value was rejected outright")
+		}
+		if normalized.SPDXExpression != "" {
+			t.Fatalf("expression = %q, want it dropped", normalized.SPDXExpression)
+		}
+		if normalized.Value != "weird" {
+			t.Fatalf("value = %q, want the source's own statement kept", normalized.Value)
+		}
+	})
+
+	t.Run("a deprecated identifier is canonicalized", func(t *testing.T) {
+		// spdxkit owns the replacement map (ADR-0038); Value keeps what the
+		// source said while the expression is the form Bomly will publish.
+		normalized, ok := PackageLicense{Value: "GPL-2.0", SPDXExpression: "GPL-2.0"}.Normalized()
+		if !ok {
+			t.Fatal("a valid license was rejected")
+		}
+		if normalized.SPDXExpression != "GPL-2.0-only" {
+			t.Fatalf("expression = %q, want the canonical identifier", normalized.SPDXExpression)
+		}
+		if normalized.Value != "GPL-2.0" {
+			t.Fatalf("value = %q, want the source's own spelling kept", normalized.Value)
+		}
+	})
+
+	t.Run("a valid expression survives", func(t *testing.T) {
+		normalized, ok := PackageLicense{SPDXExpression: "MIT OR Apache-2.0"}.Normalized()
+		if !ok || normalized.SPDXExpression != "MIT OR Apache-2.0" {
+			t.Fatalf("normalized = %+v ok=%v, want the expression kept", normalized, ok)
+		}
+	})
+
+	t.Run("a compound citing a reference needs its text", func(t *testing.T) {
+		// The parser accepts "MIT OR LicenseRef-Acme", but a citation without
+		// its text is the same dangling reference the bare-reference branch
+		// refuses.
+		normalized, ok := PackageLicense{Value: "mixed", SPDXExpression: "MIT OR LicenseRef-Acme"}.Normalized()
+		if !ok {
+			t.Fatal("a license with a stated value was rejected outright")
+		}
+		if normalized.SPDXExpression != "" {
+			t.Fatalf("expression = %q, want it dropped without its text", normalized.SPDXExpression)
+		}
+		// With the text present it is publishable.
+		withText, ok := PackageLicense{SPDXExpression: "MIT OR LicenseRef-Acme", ExtractedText: "Acme terms."}.Normalized()
+		if !ok || withText.SPDXExpression != "MIT OR LicenseRef-Acme" {
+			t.Fatalf("normalized = %+v ok=%v, want the compound kept once its text is present", withText, ok)
+		}
+	})
+}
+
+// TestRegistryGatesArrivingAssertions pins the registry's door. Package has no
+// JSON codec of its own and matcher package updates cross the plugin wire as
+// plain structs, so without a gate at Add a matcher could put credentials or a
+// control character straight into the registry, which PackageRegistry then
+// forwards to every reader.
+func TestRegistryGatesArrivingAssertions(t *testing.T) {
+	registry := NewPackageRegistry()
+	// The first record of a PURL takes the clone path, not the merge path.
+	stored := registry.Add(&Package{
+		Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"},
+		Homepage:    "https://user:pw@react.test/",
+		Description: "bad\x07text",
+		Supplier:    &Contact{Kind: ContactKindOrganization, Name: "Acme\nInc"},
+		Licenses:    []PackageLicense{{Value: "x", SPDXExpression: "not valid OR"}},
+		Digests:     []Digest{{Algorithm: "crc32", Value: "zz"}, {Algorithm: DigestAlgorithmSHA256, Value: "abc"}},
+	})
+	if stored.Homepage != "" {
+		t.Fatalf("credentials entered the registry: %q", stored.Homepage)
+	}
+	if stored.Description != "badtext" {
+		t.Fatalf("description = %q, want the control character dropped", stored.Description)
+	}
+	if stored.Supplier != nil {
+		t.Fatalf("an unpublishable supplier entered the registry: %+v", stored.Supplier)
+	}
+	if len(stored.Licenses) != 1 || stored.Licenses[0].SPDXExpression != "" {
+		t.Fatalf("licenses = %+v, want the unparseable expression dropped", stored.Licenses)
+	}
+	if len(stored.Digests) != 1 || stored.Digests[0].Algorithm != DigestAlgorithmSHA256 {
+		t.Fatalf("digests = %+v, want only the publishable one", stored.Digests)
+	}
+
+	// The merge path is gated too: a second update for the same PURL fills
+	// gaps, and must not fill them with an unpublishable value.
+	ApplyPackageUpdates(registry, []*Package{{
+		Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"},
+		Homepage:    "https://user:pw@evil.test/",
+		Supplier:    &Contact{Kind: ContactKindOrganization, Name: "Bad\nActor"},
+	}})
+	merged, _ := registry.Get("pkg:npm/react@18.2.0")
+	if merged.Homepage != "" || merged.Supplier != nil {
+		t.Fatalf("a matcher update carried an unpublishable assertion into the registry: %+v", merged)
+	}
+
+	// A publishable update still fills the gap -- the gate rejects, it does
+	// not simply refuse everything.
+	ApplyPackageUpdates(registry, []*Package{{
+		Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"},
+		Homepage:    "https://react.test",
+	}})
+	merged, _ = registry.Get("pkg:npm/react@18.2.0")
+	if merged.Homepage != "https://react.test" {
+		t.Fatalf("homepage = %q, want the valid update to fill the gap", merged.Homepage)
+	}
+}
+
+// TestRejectedOptionalAssertionsLeaveNoEmptyWireObjects pins the two shapes
+// that omitempty cannot suppress on its own: a non-nil pointer to a rejected
+// value, and a rejected element inside a slice. Both would publish an empty
+// object where the assertion was supposed to have been dropped.
+func TestRejectedOptionalAssertionsLeaveNoEmptyWireObjects(t *testing.T) {
+	payload := `{"nodes":[{"kind":"dependency","id":"pkg:npm/a@1.0.0","purl":"pkg:npm/a@1.0.0",` +
+		`"supplier":{"kind":"organization"},"originator":{},` +
+		`"digests":[{"algorithm":"crc32","value":"zz"},{"algorithm":"sha256","value":"abc"}]}]}`
+	var decoded Graph
+	if err := json.Unmarshal([]byte(payload), &decoded); err != nil {
+		t.Fatalf("decode graph: %v", err)
+	}
+	node := decoded.DependencyNodes()[0]
+	if node.Supplier != nil || node.Originator != nil {
+		t.Fatalf("a rejected contact survived as a pointer: supplier=%+v originator=%+v", node.Supplier, node.Originator)
+	}
+	if len(node.Digests) != 1 || node.Digests[0].Algorithm != DigestAlgorithmSHA256 {
+		t.Fatalf("digests = %+v, want only the publishable one", node.Digests)
+	}
+
+	encoded, err := json.Marshal(&decoded)
+	if err != nil {
+		t.Fatalf("encode graph: %v", err)
+	}
+	for _, forbidden := range []string{`"supplier":{}`, `"originator":{}`, `{},`, `[{}`} {
+		if strings.Contains(string(encoded), forbidden) {
+			t.Fatalf("encoded graph contains %s: %s", forbidden, encoded)
+		}
+	}
+}
+
+// TestPackageMergeFromGatesDirectCallers pins MergeFrom's own gate. The
+// registry normalizes before merging, so that path cannot reach this — but
+// MergeFrom is exported and callable directly, and a caller that reaches it
+// with a matcher's raw package must not get an unpublishable assertion
+// installed as if it had passed a door.
+func TestPackageMergeFromGatesDirectCallers(t *testing.T) {
+	dst := &Package{}
+	dst.MergeFrom(&Package{
+		Homepage:    "https://user:pw@evil.test/",
+		Description: "bad\x07text",
+		Supplier:    &Contact{Kind: ContactKindOrganization, Name: "Acme\nInc"},
+	})
+	if dst.Homepage != "" {
+		t.Fatalf("credentials survived a direct merge: %q", dst.Homepage)
+	}
+	if dst.Description != "badtext" {
+		t.Fatalf("description = %q, want the control character dropped", dst.Description)
+	}
+	if dst.Supplier != nil {
+		t.Fatalf("an unpublishable supplier survived a direct merge: %+v", dst.Supplier)
+	}
+}
+
+// TestPackageLicenseNormalizationIsIdempotent pins a break the fuzzer caught:
+// an expression dropped as unpublishable used to acquire its minted reference
+// on the second pass rather than the first. Normalized runs on both marshal
+// and unmarshal, so such a record changed shape every time it crossed the
+// wire.
+func TestPackageLicenseNormalizationIsIdempotent(t *testing.T) {
+	for _, license := range []PackageLicense{
+		{Value: "x", SPDXExpression: "not valid OR", ExtractedText: "Custom terms."},
+		{Value: "x", SPDXExpression: "not valid OR"},
+		{Value: "GPL-2.0", SPDXExpression: "GPL-2.0"},
+		{SPDXExpression: "LicenseRef-Acme", ExtractedText: "Acme terms."},
+		{SPDXExpression: "MIT OR LicenseRef-Acme", ExtractedText: "Acme terms."},
+		{Value: "Custom", ExtractedText: "Custom terms."},
+	} {
+		once, ok := license.Normalized()
+		if !ok {
+			continue
+		}
+		twice, ok := once.Normalized()
+		if !ok || twice != once {
+			t.Fatalf("normalizing %+v twice gave %+v then %+v (ok=%v)", license, once, twice, ok)
+		}
+	}
+	// The specific case: a rejected expression mints its citation in the
+	// first pass, not the second.
+	dropped, ok := PackageLicense{Value: "x", SPDXExpression: "not valid OR", ExtractedText: "Custom terms."}.Normalized()
+	if !ok {
+		t.Fatal("a license with text was rejected")
+	}
+	if dropped.SPDXExpression == "" {
+		t.Fatal("text was left with no citation after its expression was dropped")
+	}
+}

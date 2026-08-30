@@ -124,11 +124,19 @@ const maxExtractedLicenseTextLength = 128 * 1024
 // record says nothing publishable. It is the gate for a license that arrived
 // from a plugin, an ingested document, or a hand-built value.
 //
-// Two rules are enforced. An unrecognized provenance is dropped to unknown
-// rather than published as a claim nobody made. And a LicenseRef-* expression
-// is re-minted from its text, since spdxkit makes the text authoritative: a
+// Three rules are enforced. An unrecognized provenance is dropped to unknown
+// rather than published as a claim nobody made. A LicenseRef-* expression is
+// re-minted from its text, since spdxkit makes the text authoritative: a
 // reference that disagrees with the text it names would produce a document
-// whose citation resolves to the wrong license.
+// whose citation resolves to the wrong license. And every other expression is
+// put to spdxkit -- the single home for SPDX expression semantics (ADR-0038) --
+// rather than trusted because it merely lacks a reference prefix.
+//
+// The expression that survives is the canonical one. spdxkit rewrites
+// deprecated identifiers, so "GPL-2.0" is stored as "GPL-2.0-only": Value keeps
+// what the source said, while SPDXExpression is the form Bomly is willing to
+// publish. Anything the parser rejects is dropped rather than exported into a
+// document that would then fail its own validator.
 func (l PackageLicense) Normalized() (PackageLicense, bool) {
 	normalized := PackageLicense{
 		Value:          strings.TrimSpace(l.Value),
@@ -168,15 +176,54 @@ func (l PackageLicense) Normalized() (PackageLicense, bool) {
 			// stated, so re-exporting that document reproduces its own
 			// identifiers instead of renaming them.
 		}
-	} else if normalized.SPDXExpression == "" && normalized.ExtractedText != "" {
-		// Text without a reference is text nothing can cite. Mint the
-		// reference the text implies rather than dropping the text.
+	} else if normalized.SPDXExpression != "" {
+		normalized.SPDXExpression = normalizedSPDXExpression(normalized.SPDXExpression, normalized.ExtractedText)
+	}
+	// Text that ended up with no citation gets one, whether the expression
+	// arrived empty or was just dropped as unpublishable: text nothing can
+	// cite is text that will be lost on export.
+	//
+	// This has to happen after the checks above, not only in the
+	// arrived-empty case. Minting solely for an empty input meant a value
+	// whose expression was rejected acquired its reference on the *second*
+	// pass instead of the first, so normalizing twice gave a different
+	// answer -- and Normalized runs on both marshal and unmarshal, so the
+	// same record would have changed shape each time it crossed the wire.
+	if normalized.SPDXExpression == "" && normalized.ExtractedText != "" {
 		normalized.SPDXExpression = spdxkit.MintLicenseRef(normalized.ExtractedText).RefID
 	}
 	if normalized.Value == "" && normalized.SPDXExpression == "" {
 		return PackageLicense{}, false
 	}
 	return normalized, true
+}
+
+// normalizedSPDXExpression puts a general expression -- one that is not itself
+// a bare license reference -- to spdxkit, returning the canonical form or ""
+// when the parser rejects it.
+//
+// This exists because "does not start with LicenseRef-" is not evidence that a
+// string is a license expression. A value like "not valid OR" would otherwise
+// be stored as a typed claim, merged as one, and exported into a document that
+// fails its own validator, with the failure surfacing far from the component
+// that carried it.
+//
+// A compound expression may still name a reference ("MIT OR LicenseRef-Acme").
+// The parser accepts those, but a citation without its text is exactly the
+// dangling reference the bare-reference branch refuses, so the same rule
+// applies here: no text, no expression.
+func normalizedSPDXExpression(expression, extractedText string) string {
+	if strings.Contains(expression, spdxkit.LicenseRefPrefix) && strings.TrimSpace(extractedText) == "" {
+		return ""
+	}
+	// Canonicalize first, then validate what would actually be published: a
+	// rewrite that produced an invalid expression must not survive on the
+	// strength of its input having been valid.
+	canonical := spdxkit.CanonicalExpression(expression)
+	if !spdxkit.Valid(canonical) {
+		return ""
+	}
+	return canonical
 }
 
 // licenseKey is the merge identity of a license claim: the same expression
@@ -465,6 +512,29 @@ func (p *Package) LicenseValues() []string {
 	return values
 }
 
+// NormalizeAssertions re-runs the publication gate on every field of p that
+// carries untrusted input, in place. Values that cannot be published are
+// cleared rather than corrected, following the codecs on DependencyOrigin and
+// Contact.
+//
+// Package has no JSON codec of its own -- it is a large struct decoded by the
+// standard rules, and matcher package updates cross the plugin wire as plain
+// values -- so there is no unmarshal hook to hang these rules on. This method
+// is that hook, and PackageRegistry.Add calls it, which is the one door every
+// package goes through on its way into the registry.
+func (p *Package) NormalizeAssertions() {
+	if p == nil {
+		return
+	}
+	p.Description = NormalizeDescription(p.Description)
+	p.Homepage = NormalizeHomepage(p.Homepage)
+	p.Supplier = normalizedContact(p.Supplier)
+	p.Originator = normalizedContact(p.Originator)
+	p.Licenses = MergeLicenses(nil, p.Licenses)
+	p.Digests = mergeDigestSet(nil, p.Digests)
+	p.DetectedOrigins = MergeOrigins(nil, p.DetectedOrigins)
+}
+
 // Clone returns a deep copy of the package.
 func (p *Package) Clone() *Package {
 	if p == nil {
@@ -544,17 +614,22 @@ func (p *Package) MergeFrom(src *Package) {
 	if p.ResolvedURL == "" {
 		p.ResolvedURL = src.ResolvedURL
 	}
+	// Each assertion is re-gated as it is taken. Package has no JSON codec of
+	// its own -- a matcher's package updates arrive over the plugin wire as
+	// plain structs -- so this is where a homepage carrying credentials or a
+	// supplier carrying a control character would otherwise enter the registry
+	// and be forwarded by PackageRegistry.MarshalJSON unchecked.
 	if strings.TrimSpace(p.Description) == "" {
-		p.Description = src.Description
+		p.Description = NormalizeDescription(src.Description)
 	}
 	if p.Homepage == "" {
-		p.Homepage = src.Homepage
+		p.Homepage = NormalizeHomepage(src.Homepage)
 	}
 	if p.Supplier == nil {
-		p.Supplier = src.Supplier.Clone()
+		p.Supplier = normalizedContact(src.Supplier)
 	}
 	if p.Originator == nil {
-		p.Originator = src.Originator.Clone()
+		p.Originator = normalizedContact(src.Originator)
 	}
 	p.mergeAttestations(src.Attestations)
 	// CPEs are a set, not a first-wins scalar. Two matchers can each know a

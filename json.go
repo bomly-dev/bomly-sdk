@@ -152,7 +152,9 @@ func (w *nodeWire) decodeDependencyNode() (*DependencyNode, error) {
 	node.Scopes = w.Scopes
 	node.Locations = w.Locations
 	node.CPEs = w.CPEs
-	node.Digests = w.Digests
+	// Routed through the set merge so a digest the codec rejected does not
+	// survive as a zero element that re-encodes to an empty checksum record.
+	node.Digests = mergeDigestSet(nil, w.Digests)
 	node.Copyright = w.Copyright
 	node.FoundBy = w.FoundBy
 	node.ResolvedURL = w.ResolvedURL
@@ -163,8 +165,11 @@ func (w *nodeWire) decodeDependencyNode() (*DependencyNode, error) {
 	node.Licenses = MergeLicenses(nil, w.Licenses)
 	node.Description = NormalizeDescription(w.Description)
 	node.Homepage = NormalizeHomepage(w.Homepage)
-	node.Supplier = w.Supplier.Clone()
-	node.Originator = w.Originator.Clone()
+	// normalizedContact returns nil for a contact the codec rejected, so a
+	// payload like {"kind":"organization"} with no name does not leave a
+	// non-nil pointer to a zero value that re-encodes as "supplier":{}.
+	node.Supplier = normalizedContact(w.Supplier)
+	node.Originator = normalizedContact(w.Originator)
 	if len(w.Metadata) > 0 {
 		if node.Metadata == nil {
 			node.Metadata = make(map[string]any, len(w.Metadata))
@@ -241,7 +246,7 @@ func encodeNodeWire(node GraphNode) nodeWire {
 			Scopes:         n.Scopes,
 			Locations:      n.Locations,
 			CPEs:           n.CPEs,
-			Digests:        n.Digests,
+			Digests:        mergeDigestSet(nil, n.Digests),
 			Copyright:      n.Copyright,
 			FoundBy:        n.FoundBy,
 			ResolvedURL:    n.ResolvedURL,
@@ -254,8 +259,8 @@ func encodeNodeWire(node GraphNode) nodeWire {
 			Licenses:    MergeLicenses(nil, n.Licenses),
 			Description: NormalizeDescription(n.Description),
 			Homepage:    NormalizeHomepage(n.Homepage),
-			Supplier:    n.Supplier.Clone(),
-			Originator:  n.Originator.Clone(),
+			Supplier:    normalizedContact(n.Supplier),
+			Originator:  normalizedContact(n.Originator),
 		}
 		if len(n.Origins) > 0 {
 			legacy := n.Origins[0]
