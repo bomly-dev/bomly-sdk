@@ -352,3 +352,76 @@ func TestWireV1StrictDependencyIdentity(t *testing.T) {
 		t.Fatalf("custom purl type must decode: %v", err)
 	}
 }
+
+// TestWireV1NodeFieldsAreOmitEmpty is the node-level half of the additive
+// guard: the top-level payload check above never reaches the structural
+// encoder branches, because a graph's own keys are "nodes" and "edges" and
+// a zero DependencyNode takes neither branch. This walks the encoded node
+// objects themselves, so a field that stops honoring omitempty is caught
+// where it would actually surface — inside a node.
+func TestWireV1NodeFieldsAreOmitEmpty(t *testing.T) {
+	manifest, err := NewManifestNode("package.json", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	module, err := NewModuleNode("package.json", Coordinates{Name: "app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dependency, err := NewDependencyNodeFromPURL("pkg:npm/left-pad@1.3.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Fields each kind leaves zero and must therefore omit. A module node
+	// always carries a declaring manifest path (it is identity), so that
+	// key is expected there and forbidden elsewhere.
+	forbidden := map[NodeKind][]string{
+		NodeKindManifest:   {"manifest_kind", "declaring_manifest_path", "origins", "origin", "purl", "scopes", "package_ref"},
+		NodeKindModule:     {"manifest_kind", "origins", "origin", "scopes", "package_ref"},
+		NodeKindDependency: {"manifest_kind", "declaring_manifest_path", "origins", "origin", "scopes", "package_ref"},
+	}
+
+	graph := New()
+	for _, node := range []GraphNode{manifest, module, dependency} {
+		if err := graph.AddNode(node); err != nil {
+			t.Fatal(err)
+		}
+	}
+	encoded, err := json.Marshal(graph)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Nodes []map[string]json.RawMessage `json:"nodes"`
+	}
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Nodes) != 3 {
+		t.Fatalf("encoded %d nodes, want 3", len(payload.Nodes))
+	}
+	for _, node := range payload.Nodes {
+		var kind NodeKind
+		if raw, ok := node["kind"]; ok {
+			if err := json.Unmarshal(raw, &kind); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, key := range forbidden[kind] {
+			if _, present := node[key]; present {
+				t.Errorf("%s node: zero-valued %q must be omitted from the wire", kind, key)
+			}
+		}
+	}
+	// The module's declaring path is identity, not optional surface: it
+	// must be present, or the kind's identity cannot be reconstructed.
+	for _, node := range payload.Nodes {
+		if string(node["kind"]) != `"module"` {
+			continue
+		}
+		if _, present := node["declaring_manifest_path"]; !present {
+			t.Error("module node dropped its declaring manifest path")
+		}
+	}
+}

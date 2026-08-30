@@ -145,10 +145,19 @@ func dependencyIdentityFromPURL(raw string) (dependencyIdentity, []purlkit.Quali
 	if rendered == "" {
 		return dependencyIdentity{}, nil, fmt.Errorf("package URL identity does not render")
 	}
+	// Cache the parse of the rendered identity rather than the pre-render
+	// struct: rendering applies the library's canonical form (trimming a
+	// version's surrounding whitespace, for one), so the pre-render fields
+	// can disagree with the ID they produced. Coordinates project from this
+	// cache, and they must say exactly what the identity says.
+	canonical, err := purlkit.Parse(rendered)
+	if err != nil {
+		return dependencyIdentity{}, nil, err
+	}
 	return dependencyIdentity{
 		rendered:       rendered,
-		parsed:         split.Identity,
-		missingVersion: split.Identity.Version == "",
+		parsed:         canonical,
+		missingVersion: canonical.Version == "",
 	}, split.Evidence, nil
 }
 
@@ -203,7 +212,16 @@ func newDependencyNode(coords Coordinates, rawPURL string) (*DependencyNode, err
 		})
 	}
 	node.adoptEvidenceQualifiers(evidence)
-	node.recordNormalization(coords, applied)
+	// Provenance breadcrumbs describe how caller coordinates were shaped on
+	// the way to the identity, so they are recorded only when coordinates
+	// minted it. When a raw package URL was supplied, the normalization
+	// pass touched nothing that reached this node — its fields project from
+	// the identity — and recording rules that changed nothing observable
+	// would also break codec idempotence, since a decoded node always
+	// carries the package URL its predecessor emitted.
+	if strings.TrimSpace(rawPURL) == "" {
+		node.recordNormalization(coords, applied)
+	}
 	return node, nil
 }
 
@@ -214,45 +232,29 @@ func (n *DependencyNode) backfillCoordinates() {
 	if n.Ecosystem == "" {
 		n.Ecosystem = ecosystemForPURLType(n.purl.Type)
 	}
-	// The identity is authoritative, but coordinates are its ecosystem-native
-	// projection rather than a field-for-field mirror: a Go module carries
-	// its whole path in Name while the package URL splits the trailing
-	// segment off as the name, and both spell one identity. So coordinates
-	// survive exactly when they re-mint this identity, and coordinates that
-	// contradict it — a record keyed pkg:npm/foo@1 claiming to be bar@2 —
-	// are replaced by the identity's own split, because presentation and
-	// registry seeding must never disagree with the key.
-	if !n.coordinatesRemintIdentity() {
-		n.Name = n.purl.Name
-		n.Org = strings.TrimPrefix(n.purl.Namespace, "@")
-		n.Version = n.purl.Version
-	}
-	// Backfilled values pass the same normalization rules caller-supplied
-	// ones already passed, so decoding a node from a bare package URL and
-	// re-decoding that node's own wire form produce field-for-field
-	// identical records. This is derivation, not caller-value
-	// normalization, so nothing here lands in the provenance breadcrumbs;
-	// the minted identity stays untouched.
-	purl := n.Coordinates.PURL
-	NormalizeCoordinates(&n.Coordinates)
-	n.Coordinates.PURL = purl
-}
-
-// coordinatesRemintIdentity reports whether the node's current coordinates
-// derive the identity it already carries — the test that separates an
-// ecosystem-native spelling from a contradiction.
-func (n *DependencyNode) coordinatesRemintIdentity() bool {
-	probe := n.Coordinates
-	probe.PURL = ""
-	if probe.Name == "" {
-		return false
-	}
-	minted := probe.CanonicalPURL()
-	if minted == "" {
-		return false
-	}
-	identity, _, err := dependencyIdentityFromPURL(minted)
-	return err == nil && identity.rendered == n.id
+	// The identity is the single source of truth for these fields: name,
+	// org, and version are projected from the canonical package URL
+	// verbatim, never merged with caller values. Caller coordinates decide
+	// what identity gets minted; once minted, the identity decides what the
+	// coordinates say. That keeps presentation and registry seeding from
+	// ever disagreeing with the key (a record keyed pkg:npm/foo@1 cannot
+	// read as bar@2), preserves the spellings a purl type's rules allow,
+	// and makes the codec idempotent by construction — one identity always
+	// projects one set of coordinates. Path-style ecosystems keep their
+	// native form through the accessors: a Go module projects as org
+	// "github.com/example/lib" plus name "v2", which EcosystemName and
+	// DisplayName rejoin into "github.com/example/lib/v2".
+	n.Name = n.purl.Name
+	n.Org = strings.TrimPrefix(n.purl.Namespace, "@")
+	n.Version = n.purl.Version
+	// Projected values are taken from the identity verbatim and are never
+	// re-normalized: the package URL preserves spellings its type's rules
+	// allow (an npm scope's case, an alphabetic version), and normalizing
+	// the projection would leave coordinates naming a different package
+	// than the key — a matcher querying by coordinates would look up
+	// something the identity never claimed. Verbatim projection is also
+	// what keeps the codec idempotent: the same identity always projects
+	// the same coordinates, however many times a node round-trips.
 }
 
 // ecosystemForPURLType resolves the SDK ecosystem a purl type belongs to.
@@ -322,6 +324,7 @@ func (n *DependencyNode) recordNormalization(original Coordinates, applied []str
 	if len(applied) == 0 {
 		return
 	}
+
 	if n.Metadata == nil {
 		n.Metadata = make(map[string]any, 4)
 	}
