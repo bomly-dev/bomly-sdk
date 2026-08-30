@@ -482,12 +482,18 @@ func (n *DependencyNode) Clone() *DependencyNode {
 	if len(n.Licenses) > 0 {
 		clone.Licenses = append([]PackageLicense(nil), n.Licenses...)
 	}
-	if len(n.ExternalReferences) > 0 {
-		clone.ExternalReferences = make([]ExternalReference, 0, len(n.ExternalReferences))
-		for _, reference := range n.ExternalReferences {
+	if n.ExternalReferences != nil {
+		// Allocated by length and filled by index: a zero-length slice made
+		// with spare capacity still shares its backing array, so a later
+		// append on either side would write into the other.
+		clone.ExternalReferences = make([]ExternalReference, len(n.ExternalReferences))
+		for i, reference := range n.ExternalReferences {
 			copied := reference
-			copied.Hashes = append([]Digest(nil), reference.Hashes...)
-			clone.ExternalReferences = append(clone.ExternalReferences, copied)
+			if reference.Hashes != nil {
+				copied.Hashes = make([]Digest, len(reference.Hashes))
+				copy(copied.Hashes, reference.Hashes)
+			}
+			clone.ExternalReferences[i] = copied
 		}
 	}
 	clone.Supplier = n.Supplier.Clone()

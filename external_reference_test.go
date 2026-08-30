@@ -299,3 +299,182 @@ func TestParseExternalReferenceCategory(t *testing.T) {
 		t.Error("the unknown category reported an SPDX spelling")
 	}
 }
+
+// TestExternalReferenceRefusesMalformedCategoryAndType pins that neither axis
+// is silently emptied. Both carry meaning: an empty category says the source
+// had no such axis (CycloneDX), and the type decides which grammar the
+// locator is held to as well as being part of the merge identity. Clearing
+// either would rewrite the source's assertion rather than reject it.
+func TestExternalReferenceRefusesMalformedCategoryAndType(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		reference ExternalReference
+	}{
+		{
+			name:      "a misspelled category",
+			reference: ExternalReference{Category: "SECURTY", Type: "advisory", Locator: "https://advisories.test/x"},
+		},
+		{
+			name:      "a type carrying whitespace",
+			reference: ExternalReference{Category: ExternalReferenceCategorySecurity, Type: "advisory link", Locator: "https://advisories.test/x"},
+		},
+		{
+			name:      "no type at all",
+			reference: ExternalReference{Locator: "https://example.test"},
+		},
+		{
+			name:      "an oversized type",
+			reference: ExternalReference{Type: strings.Repeat("x", maxReferenceTypeLength+1), Locator: "https://example.test"},
+		},
+	} {
+		if got, ok := tc.reference.Normalized(); ok {
+			t.Errorf("%s: accepted as %+v, want the reference refused", tc.name, got)
+		}
+	}
+}
+
+// TestKnownReferenceTypesAreCanonicalized pins that a recognized type reaches
+// the document in the specification's spelling. The vocabulary compares
+// case-insensitively, so two spellings are one reference — without this,
+// which spelling was published would depend on which witness folded first.
+func TestKnownReferenceTypesAreCanonicalized(t *testing.T) {
+	normalized, ok := ExternalReference{
+		Category: ExternalReferenceCategorySecurity,
+		Type:     "CPE23TYPE",
+		Locator:  "cpe:2.3:a:v:p:1.0:*:*:*:*:*:*:*",
+	}.Normalized()
+	if !ok {
+		t.Fatal("a valid reference was rejected")
+	}
+	if normalized.Type != "cpe23Type" {
+		t.Fatalf("type = %q, want the specification's own spelling", normalized.Type)
+	}
+	// An unrecognized type is carried as given: the vocabulary is open, so a
+	// type this build does not know is not a type to correct.
+	custom, ok := ExternalReference{Type: "Some-Future-Type", Locator: "https://example.test"}.Normalized()
+	if !ok || custom.Type != "Some-Future-Type" {
+		t.Fatalf("custom type normalized to %+v, want it carried unchanged", custom)
+	}
+}
+
+// TestCPELocatorValidatesThePartComponent pins the check that neither
+// available CPE library performs. See isCPELocator for the probe results:
+// nvdtools accepts these, and umisama/go-cpe rewrites them into valid-looking
+// values, which is worse.
+func TestCPELocatorValidatesThePartComponent(t *testing.T) {
+	for _, locator := range []string{
+		"cpe:2.3:x:vendor:product:1.0:*:*:*:*:*:*:*", // part "x" is not defined
+		"cpe:/aardvark", // part is not a part
+		"cpe:/x:v:p",
+		"cpe:2.3:a:vendor", // truncated
+	} {
+		reference := ExternalReference{Category: ExternalReferenceCategorySecurity, Type: "cpe23Type", Locator: locator}
+		if got, ok := reference.Normalized(); ok {
+			t.Errorf("%q was accepted as a CPE: %+v", locator, got)
+		}
+	}
+	// Every defined part, in both bindings, is accepted.
+	for _, locator := range []string{
+		"cpe:2.3:a:v:p:1.0:*:*:*:*:*:*:*",
+		"cpe:2.3:o:v:p:1.0:*:*:*:*:*:*:*",
+		"cpe:2.3:h:v:p:1.0:*:*:*:*:*:*:*",
+		"cpe:2.3:*:v:p:1.0:*:*:*:*:*:*:*",
+		"cpe:/a:vendor:product:1.0",
+		"cpe:/o:vendor",
+		"cpe:/",
+	} {
+		reference := ExternalReference{Category: ExternalReferenceCategorySecurity, Type: "cpe22Type", Locator: locator}
+		if _, ok := reference.Normalized(); !ok {
+			t.Errorf("%q was rejected, but it is a well-formed CPE", locator)
+		}
+	}
+}
+
+// TestMergedReferenceContentIsOrderIndependent pins the two places where
+// sorting the reference list cannot help: a comment that differs between two
+// witnesses of one reference, and the nested hash array inside it. Both live
+// within a single record, so only reconciling them makes the exported
+// document independent of the order consolidation folded witnesses in.
+func TestMergedReferenceContentIsOrderIndependent(t *testing.T) {
+	withZ := ExternalReference{Type: "vcs", Locator: "https://git.test/r", Comment: "z"}
+	withA := ExternalReference{Type: "vcs", Locator: "https://git.test/r", Comment: "a"}
+	forward := MergeExternalReferences([]ExternalReference{withZ}, []ExternalReference{withA})
+	reverse := MergeExternalReferences([]ExternalReference{withA}, []ExternalReference{withZ})
+	if len(forward) != 1 || len(reverse) != 1 {
+		t.Fatalf("merged to %d and %d records, want one each", len(forward), len(reverse))
+	}
+	if forward[0].Comment != reverse[0].Comment {
+		t.Fatalf("comment depends on order: %q forward, %q reverse", forward[0].Comment, reverse[0].Comment)
+	}
+
+	first := ExternalReference{Type: "distribution", Locator: "https://cdn.test/p.tgz",
+		Hashes: []Digest{{Algorithm: DigestAlgorithmSHA256, Value: "bbb"}}}
+	second := ExternalReference{Type: "distribution", Locator: "https://cdn.test/p.tgz",
+		Hashes: []Digest{{Algorithm: DigestAlgorithmSHA1, Value: "aaa"}}}
+	forwardHashes := MergeExternalReferences([]ExternalReference{first}, []ExternalReference{second})
+	reverseHashes := MergeExternalReferences([]ExternalReference{second}, []ExternalReference{first})
+	if len(forwardHashes[0].Hashes) != 2 || len(reverseHashes[0].Hashes) != 2 {
+		t.Fatalf("hashes did not union: %+v / %+v", forwardHashes[0].Hashes, reverseHashes[0].Hashes)
+	}
+	for i := range forwardHashes[0].Hashes {
+		if forwardHashes[0].Hashes[i] != reverseHashes[0].Hashes[i] {
+			t.Fatalf("nested hash order depends on witness order: %+v vs %+v",
+				forwardHashes[0].Hashes, reverseHashes[0].Hashes)
+		}
+	}
+}
+
+// TestClonedReferenceSlicesAreIndependent pins that a clone does not share a
+// backing array with its source. A zero-length slice made with spare capacity
+// still aliases, so a later append on either side would write into the other.
+func TestClonedReferenceSlicesAreIndependent(t *testing.T) {
+	original := &Package{ExternalReferences: []ExternalReference{{Type: "website", Locator: "https://a.test"}}}
+	clone := original.Clone()
+	clone.ExternalReferences[0].Type = "vcs"
+	if original.ExternalReferences[0].Type != "website" {
+		t.Fatal("editing the clone changed the original package")
+	}
+
+	node := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "a", Version: "1.0.0"})
+	node.ExternalReferences = []ExternalReference{{
+		Type: "distribution", Locator: "https://cdn.test/a.tgz",
+		Hashes: []Digest{{Algorithm: DigestAlgorithmSHA256, Value: "abc"}},
+	}}
+	nodeClone := node.Clone()
+	nodeClone.ExternalReferences[0].Hashes[0].Value = "changed"
+	if node.ExternalReferences[0].Hashes[0].Value != "abc" {
+		t.Fatal("editing the clone's nested hashes changed the original node")
+	}
+}
+
+// TestLocatorBoundAppliesToTheNormalizedForm pins a break the fuzzer found:
+// canonical rendering can make a locator longer than it arrived, so a value
+// just under the limit could normalize to one just over it — accepted on
+// write and rejected on read. The same shape of defect appeared in
+// NormalizeURL, where percent-encoding grows a fragment.
+func TestLocatorBoundAppliesToTheNormalizedForm(t *testing.T) {
+	// A package URL whose name re-encodes wider than it arrived: canonical
+	// rendering percent-encodes "+" as "%2B", tripling those bytes. This is
+	// the shape the fuzzer found.
+	grows := "pkg:a/" + strings.Repeat("+", 3000)
+	if len(grows) > maxLocatorLength {
+		t.Fatalf("fixture is %d bytes, want it under the limit before encoding", len(grows))
+	}
+	reference := ExternalReference{
+		Category: ExternalReferenceCategoryPackageManager,
+		Type:     "purl",
+		Locator:  grows,
+	}
+	normalized, ok := reference.Normalized()
+	if ok && len(normalized.Locator) > maxLocatorLength {
+		t.Fatalf("accepted a locator whose normalized form is %d bytes, over the %d byte limit",
+			len(normalized.Locator), maxLocatorLength)
+	}
+	// Whatever is accepted must survive a second pass unchanged.
+	if ok {
+		again, stillOK := reference.Normalized()
+		if !stillOK || again.Locator != normalized.Locator {
+			t.Fatalf("normalizing twice changed the locator")
+		}
+	}
+}

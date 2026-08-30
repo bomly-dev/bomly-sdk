@@ -240,18 +240,32 @@ func (r ExternalReference) Normalized() (ExternalReference, bool) {
 		Comment: NormalizeDescription(r.Comment),
 		Hashes:  mergeDigestSet(nil, r.Hashes),
 	}
-	if category, err := ParseExternalReferenceCategory(string(r.Category)); err == nil {
-		normalized.Category = category
+	// An unrecognized category is refused, not cleared. Empty carries meaning
+	// here -- it says the reference came from a document with no category
+	// axis, which is CycloneDX -- so silently emptying a misspelled "SECURTY"
+	// would rewrite the source's assertion, change the merge identity, and
+	// drop the reference's SPDX projection.
+	category, err := ParseExternalReferenceCategory(string(r.Category))
+	if err != nil {
+		return ExternalReference{}, false
 	}
+	normalized.Category = category
 	if len(normalized.Comment) > maxReferenceCommentLength {
 		normalized.Comment = ""
 	}
-	if len(normalized.Type) > maxReferenceTypeLength || !isBoundedToken(normalized.Type) {
-		// A type is written verbatim into a document field. One carrying
-		// whitespace or a control character would corrupt the output, and it
-		// is not a type in any case.
-		normalized.Type = ""
+	// A malformed type takes the whole reference with it. Both formats
+	// require one, it is part of the merge identity, and it decides which
+	// grammar the locator is held to -- so clearing it would validate the
+	// locator under the fallback kind and then publish a typeless reference
+	// that neither format can express.
+	if normalized.Type == "" || len(normalized.Type) > maxReferenceTypeLength || !isBoundedToken(normalized.Type) {
+		return ExternalReference{}, false
 	}
+	// A recognized type is stored in the specification's own spelling. The
+	// vocabulary compares case-insensitively, so "CPE23TYPE" and "cpe23Type"
+	// are one reference -- without canonicalizing, which spelling reached the
+	// document would depend on which witness arrived first.
+	normalized.Type = canonicalReferenceType(normalized.Category, normalized.Type)
 	locator, ok := normalizeLocator(strings.TrimSpace(r.Locator), LocatorKindFor(normalized.Category, normalized.Type))
 	if !ok {
 		// A reference with no usable locator points at nothing. There is no
@@ -263,7 +277,20 @@ func (r ExternalReference) Normalized() (ExternalReference, bool) {
 }
 
 // normalizeLocator applies the grammar the kind names.
+//
+// The result is bounded as well as the input. Canonical rendering can make a
+// value longer than it arrived -- a package URL re-encodes characters its
+// grammar requires escaped -- so a locator just under the limit can normalize
+// to one just over it, which would be accepted on write and rejected on read.
 func normalizeLocator(locator string, kind LocatorKind) (string, bool) {
+	normalized, ok := normalizeLocatorByKind(locator, kind)
+	if !ok || len(normalized) > maxLocatorLength {
+		return "", false
+	}
+	return normalized, true
+}
+
+func normalizeLocatorByKind(locator string, kind LocatorKind) (string, bool) {
 	if locator == "" || len(locator) > maxLocatorLength {
 		return "", false
 	}
@@ -323,10 +350,26 @@ const cpe23FieldCount = 13
 // isCPELocator reports whether a value is a CPE in either form the
 // specification defines: the 2.3 formatted string, or the 2.2 URI.
 //
-// This is a structural check, not a full CPE parser. It exists to keep a value
-// that is plainly not a CPE out of a field a consumer will read as one; the
-// component grammar itself is not re-implemented here, because nothing in
-// Bomly interprets the components.
+// # Why this is not delegated
+//
+// Two CPE libraries were probed before writing this, both already present in
+// the CLI's dependency graph. Neither rejects a malformed part component, and
+// one is actively worse than no library at all:
+//
+//   - facebookincubator/nvdtools/wfn accepts "cpe:2.3:x:..." and
+//     "cpe:/aardvark" without error, and pads a truncated 2.3 string out to
+//     full width rather than refusing it.
+//   - umisama/go-cpe silently rewrites the invalid part "x" to "*" and
+//     reduces "cpe:/aardvark" to "cpe:/" -- it corrupts the assertion into a
+//     valid-looking one, which is the worst possible outcome for a value
+//     Bomly publishes.
+//
+// The part vocabulary is three characters that have not changed since CPE
+// 2.3 was published, which is exactly the case the delegation rule leaves to
+// hand logic: data the library does not encode. Everything structural about
+// the component grammar is still left alone, because nothing in Bomly
+// interprets the components -- this only keeps a value that is plainly not a
+// CPE out of a field consumers read as one.
 func isCPELocator(value string) bool {
 	if !isBoundedToken(value) {
 		return false
@@ -335,23 +378,38 @@ func isCPELocator(value string) bool {
 	switch {
 	case strings.HasPrefix(lower, "cpe:2.3:"):
 		// Escaped colons ("\:") are part of a component, not separators.
-		return countUnescapedColons(value) == cpe23FieldCount-1
+		if countUnescapedColons(value) != cpe23FieldCount-1 {
+			return false
+		}
+		return isCPEPart(fieldAt(lower, 2))
 	case strings.HasPrefix(lower, "cpe:/"):
-		// The 2.2 URI names up to seven components after the "cpe:/" prefix;
-		// trailing components may be omitted entirely.
-		part := lower[len("cpe:/"):]
-		if part == "" {
-			return false
-		}
-		switch part[0] {
-		case 'a', 'o', 'h':
-			return true
-		default:
-			return false
-		}
+		// The 2.2 URI names up to seven components after the prefix; trailing
+		// components may be omitted, and the part itself may be empty.
+		part := strings.SplitN(lower[len("cpe:/"):], ":", 2)[0]
+		return part == "" || isCPEPart(part)
 	default:
 		return false
 	}
+}
+
+// isCPEPart reports whether a value is a CPE part component: one of the three
+// defined values, or a logical ANY or NA.
+func isCPEPart(value string) bool {
+	switch value {
+	case "a", "o", "h", "*", "-":
+		return true
+	default:
+		return false
+	}
+}
+
+// fieldAt returns the colon-separated field at index, or "" when absent.
+func fieldAt(value string, index int) string {
+	fields := strings.Split(value, ":")
+	if index >= len(fields) {
+		return ""
+	}
+	return fields[index]
 }
 
 // countUnescapedColons counts the colons that act as field separators.
@@ -367,6 +425,59 @@ func countUnescapedColons(value string) int {
 		count++
 	}
 	return count
+}
+
+// canonicalReferenceType returns the specification's own spelling of a type
+// the vocabulary recognizes, and the value as given otherwise -- the type
+// vocabulary is open, so an unrecognized type is carried, not corrected.
+func canonicalReferenceType(category ExternalReferenceCategory, referenceType string) string {
+	if canonical, ok := canonicalReferenceTypes[normalizeReferenceType(referenceType)]; ok {
+		return canonical
+	}
+	return referenceType
+}
+
+// canonicalReferenceTypes indexes every reference type the SPDX
+// specification names by its comparison form. The values are
+// spdx/tools-golang's constants, so the canonical spelling is the library's.
+var canonicalReferenceTypes = buildCanonicalReferenceTypes()
+
+func buildCanonicalReferenceTypes() map[string]string {
+	spellings := []string{
+		spdxcommon.TypeSecurityCPE23Type, spdxcommon.TypeSecurityCPE22Type,
+		spdxcommon.TypeSecurityAdvisory, spdxcommon.TypeSecurityFix,
+		spdxcommon.TypeSecurityUrl, spdxcommon.TypeSecuritySwid,
+		spdxcommon.TypePackageManagerPURL, spdxcommon.TypePackageManagerMavenCentral,
+		spdxcommon.TypePackageManagerNpm, spdxcommon.TypePackageManagerNuGet,
+		spdxcommon.TypePackageManagerBower,
+		spdxcommon.TypePersistentIdSwh, spdxcommon.TypePersistentIdGitoid,
+	}
+	index := make(map[string]string, len(spellings))
+	for _, spelling := range spellings {
+		index[normalizeReferenceType(spelling)] = spelling
+	}
+	return index
+}
+
+// reconcileComments picks one comment for a reference two witnesses both
+// described. A gap is filled, and two different notes resolve to the
+// lexicographically smaller one.
+//
+// The tie-break is arbitrary but it has to exist: "first non-empty wins"
+// makes the exported document depend on the order consolidation happened to
+// fold witnesses in, which is the same nondeterminism the reference sort
+// removes and which a sort cannot fix inside a single record.
+func reconcileComments(existing, incoming string) string {
+	switch {
+	case incoming == "":
+		return existing
+	case existing == "":
+		return incoming
+	case incoming < existing:
+		return incoming
+	default:
+		return existing
+	}
 }
 
 // referenceKey is the merge identity of an external reference: the triple the
@@ -397,9 +508,7 @@ func MergeExternalReferences(existing, additions []ExternalReference) []External
 			key := normalized.referenceKey()
 			if at, found := seen[key]; found {
 				merged[at].Hashes = mergeDigestSet(merged[at].Hashes, normalized.Hashes)
-				if merged[at].Comment == "" {
-					merged[at].Comment = normalized.Comment
-				}
+				merged[at].Comment = reconcileComments(merged[at].Comment, normalized.Comment)
 				continue
 			}
 			seen[key] = len(merged)
