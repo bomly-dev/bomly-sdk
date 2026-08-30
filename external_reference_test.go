@@ -941,6 +941,12 @@ func TestIRICharacterRuleIsAnAllowlist(t *testing.T) {
 			// trimmed as Unicode whitespace, which is a different rule.
 			"urn:example:a\u0085b",
 			"urn:example:a\u0080b",
+			// Private-use code points: the grammar admits these only inside
+			// a query, and they have no interoperable meaning anywhere.
+			"urn:example:\ue000",
+			"ftp://host.test/\ue000",
+			"ftp://host.test/x?q=\ue000",
+			"urn:example:\U000F0000",
 		} {
 			if got, ok := (ExternalReference{Type: "distribution", Locator: locator}).Normalized(); ok {
 				t.Errorf("%q was accepted: %+v", locator, got)

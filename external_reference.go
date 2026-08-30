@@ -525,9 +525,16 @@ func isWebScheme(locator string) bool {
 //
 // Below 0x80 the permitted set is RFC 3986's: unreserved, the reserved
 // gen-delims and sub-delims, and "%" as the escape introducer. At or above
-// 0x80 it is RFC 3987's ucschar, plus iprivate -- which the grammar admits
-// only in a query, allowed here anywhere rather than tracking component
-// position for a distinction nothing downstream reads.
+// 0x80 it is RFC 3987's ucschar.
+//
+// iprivate is deliberately absent. The grammar admits it only inside a query,
+// and an earlier cut allowed it everywhere to avoid tracking component
+// position -- which admitted it in paths and opaque data, where it is not
+// legal. Refusing it outright is both simpler and better suited to what these
+// values are for: a private-use code point has no interoperable meaning, so a
+// locator carrying one cannot be followed by the consumer it is published
+// for. The narrow loss is a private-use character inside a query, which is
+// legal and equally uninterpretable.
 
 // allowedASCIIIRIBytes marks the ASCII characters an IRI may carry unescaped.
 var allowedASCIIIRIBytes = buildAllowedASCIIIRIBytes()
@@ -551,9 +558,9 @@ func buildAllowedASCIIIRIBytes() [128]bool {
 	return allowed
 }
 
-// ucscharRanges is RFC 3987's ucschar production, followed by iprivate. The
-// gaps are the point: U+FDD0-U+FDEF and every plane's final two code points
-// are noncharacters and fall outside these ranges.
+// ucscharRanges is RFC 3987's ucschar production. The gaps are the point:
+// U+FDD0-U+FDEF and every plane's final two code points are noncharacters and
+// fall outside these ranges, as do the private-use blocks.
 var ucscharRanges = [...][2]rune{
 	{0x000A0, 0x0D7FF}, {0x0F900, 0x0FDCF}, {0x0FDF0, 0x0FFEF},
 	{0x10000, 0x1FFFD}, {0x20000, 0x2FFFD}, {0x30000, 0x3FFFD},
@@ -561,8 +568,6 @@ var ucscharRanges = [...][2]rune{
 	{0x70000, 0x7FFFD}, {0x80000, 0x8FFFD}, {0x90000, 0x9FFFD},
 	{0xA0000, 0xAFFFD}, {0xB0000, 0xBFFFD}, {0xC0000, 0xCFFFD},
 	{0xD0000, 0xDFFFD}, {0xE1000, 0xEFFFD},
-	// iprivate
-	{0x0E000, 0x0F8FF}, {0xF0000, 0xFFFFD}, {0x100000, 0x10FFFD},
 }
 
 // hasLegalIRICharacters reports whether every character in a value is one an
