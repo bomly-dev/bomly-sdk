@@ -178,9 +178,18 @@ func testGraphWireRoundTrip(t *testing.T) {
 			if !node.FirstParty {
 				t.Errorf("module node %q lost its legacy first-party marker", node.ID)
 			}
+			if node.Type == sdk.PackageTypeManifest {
+				t.Errorf("module node %q carries the manifest type, which outranks the first-party marker in legacy inference", node.ID)
+			}
 		case sdk.NodeKindDependency:
 			if node.FirstParty {
 				t.Errorf("dependency node %q claims first-party ownership", node.ID)
+			}
+			// The manifest type outranks every other legacy marker, so a
+			// dependency carrying it reads as structural to a pre-union
+			// peer and drops out of that peer's matching entirely.
+			if node.Type == sdk.PackageTypeManifest {
+				t.Errorf("dependency node %q carries the manifest type", node.ID)
 			}
 		}
 	}
