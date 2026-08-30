@@ -3,6 +3,7 @@ package spdxkit
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"sort"
 	"strings"
 )
 
@@ -101,13 +102,20 @@ func MintLicenseRef(text string) ExtractedText {
 	}
 }
 
-// LicenseRefsIn returns the license references an expression names, in the
-// order the parser reports them, deduplicated. It returns nil when the
-// expression names none or cannot be parsed.
+// LicenseRefsIn returns the license references an expression names, sorted and
+// deduplicated. It returns nil when the expression names none or cannot be
+// parsed.
 //
 // The enumeration is the parser's, not a scan for the prefix: a reference is
 // whatever SPDX's grammar says is one, and a substring match would find the
 // prefix inside a quoted or malformed value that is not a reference at all.
+//
+// The sort is the contract, not a convenience. Extract collects identifiers
+// through a map, so it reports them in an order that varies between runs of
+// the same binary on the same input -- an earlier version of this function
+// promised "the order the parser reports them", which is not an order at all.
+// A caller that indexed the result, or a test that pinned it, would pass
+// locally and fail elsewhere.
 func LicenseRefsIn(expression string) []string {
 	if !strings.Contains(expression, LicenseRefPrefix) {
 		return nil
@@ -123,6 +131,7 @@ func LicenseRefsIn(expression string) []string {
 			refs = append(refs, identifier)
 		}
 	}
+	sort.Strings(refs)
 	return refs
 }
 

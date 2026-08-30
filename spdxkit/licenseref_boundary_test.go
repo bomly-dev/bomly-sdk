@@ -33,6 +33,34 @@ func TestReplaceLicenseRef(t *testing.T) {
 	}
 }
 
+// TestLicenseRefsInIsDeterministic pins the order. Extract collects
+// identifiers through a map, so it reports them in an order that varies
+// between runs of the same binary on the same input; CI caught this after the
+// value-comparison assertion below passed locally. A caller that indexed the
+// result, or a fixture that pinned it, would be flaky rather than wrong.
+func TestLicenseRefsInIsDeterministic(t *testing.T) {
+	const expression = "LicenseRef-B AND LicenseRef-A AND LicenseRef-C AND MIT"
+	first := LicenseRefsIn(expression)
+	if len(first) != 3 {
+		t.Fatalf("LicenseRefsIn(%q) = %v, want three references", expression, first)
+	}
+	for i := 1; i < len(first); i++ {
+		if first[i-1] >= first[i] {
+			t.Fatalf("references are not sorted: %v", first)
+		}
+	}
+	// Map iteration order is randomized per pass, so repeating the call is
+	// what exposes an unsorted result.
+	for pass := 0; pass < 200; pass++ {
+		again := LicenseRefsIn(expression)
+		for i := range again {
+			if again[i] != first[i] {
+				t.Fatalf("pass %d returned %v, want %v", pass, again, first)
+			}
+		}
+	}
+}
+
 // TestLicenseRefsIn pins that references are enumerated by the parser rather
 // than by scanning for the prefix.
 func TestLicenseRefsIn(t *testing.T) {
