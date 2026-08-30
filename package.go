@@ -290,6 +290,9 @@ func (p *Package) Clone() *Package {
 			clone.Attestations = append(clone.Attestations, attestation.Clone())
 		}
 	}
+	if len(p.DetectedOrigins) > 0 {
+		clone.DetectedOrigins = append([]DependencyOrigin(nil), p.DetectedOrigins...)
+	}
 	clone.Scorecard = p.Scorecard.Clone()
 	clone.EOL = p.EOL.Clone()
 	clone.Remediation = p.Remediation.Clone()
@@ -311,6 +314,10 @@ func (p *Package) MergeFrom(src *Package) {
 	if p.Ecosystem == "" {
 		p.Ecosystem = src.Ecosystem
 	}
+	// Detected origins union by normalized value: a package seeded from two
+	// graph nodes carries every vetted origin either witnessed, so a
+	// repository-resolving matcher never loses evidence to seeding order.
+	p.DetectedOrigins = MergeOrigins(p.DetectedOrigins, src.DetectedOrigins)
 	if p.Name == "" {
 		p.Name = src.Name
 	}

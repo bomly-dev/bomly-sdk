@@ -211,19 +211,21 @@ func newDependencyNode(coords Coordinates, rawPURL string) (*DependencyNode, err
 // caller left them empty, so a node constructed from a bare package URL
 // still presents ecosystem-native names.
 func (n *DependencyNode) backfillCoordinates() {
-	if n.Name == "" {
-		n.Name = n.purl.Name
-	}
-	if n.Org == "" && n.purl.Namespace != "" {
-		n.Org = strings.TrimPrefix(n.purl.Namespace, "@")
-	}
-	if n.Version == "" {
-		n.Version = n.purl.Version
-	}
 	if n.Ecosystem == "" {
-		if ecosystem, ok := purlkit.EcosystemForType(n.purl.Type); ok {
-			n.Ecosystem = Ecosystem(ecosystem)
-		}
+		n.Ecosystem = ecosystemForPURLType(n.purl.Type)
+	}
+	// The identity is authoritative, but coordinates are its ecosystem-native
+	// projection rather than a field-for-field mirror: a Go module carries
+	// its whole path in Name while the package URL splits the trailing
+	// segment off as the name, and both spell one identity. So coordinates
+	// survive exactly when they re-mint this identity, and coordinates that
+	// contradict it — a record keyed pkg:npm/foo@1 claiming to be bar@2 —
+	// are replaced by the identity's own split, because presentation and
+	// registry seeding must never disagree with the key.
+	if !n.coordinatesRemintIdentity() {
+		n.Name = n.purl.Name
+		n.Org = strings.TrimPrefix(n.purl.Namespace, "@")
+		n.Version = n.purl.Version
 	}
 	// Backfilled values pass the same normalization rules caller-supplied
 	// ones already passed, so decoding a node from a bare package URL and
@@ -234,6 +236,40 @@ func (n *DependencyNode) backfillCoordinates() {
 	purl := n.Coordinates.PURL
 	NormalizeCoordinates(&n.Coordinates)
 	n.Coordinates.PURL = purl
+}
+
+// coordinatesRemintIdentity reports whether the node's current coordinates
+// derive the identity it already carries — the test that separates an
+// ecosystem-native spelling from a contradiction.
+func (n *DependencyNode) coordinatesRemintIdentity() bool {
+	probe := n.Coordinates
+	probe.PURL = ""
+	if probe.Name == "" {
+		return false
+	}
+	minted := probe.CanonicalPURL()
+	if minted == "" {
+		return false
+	}
+	identity, _, err := dependencyIdentityFromPURL(minted)
+	return err == nil && identity.rendered == n.id
+}
+
+// ecosystemForPURLType resolves the SDK ecosystem a purl type belongs to.
+// The type table covers the types whose names differ from Bomly's
+// ecosystem token (golang, gem, …); the canonical alias table covers the
+// direct ones (npm, apk, rpm, conda, …), which the type table deliberately
+// omits. Without the second lookup a node built from a bare package URL
+// would carry no ecosystem, and ecosystem-specific behavior — an npm
+// scope in EcosystemName(), for one — would silently degrade.
+func ecosystemForPURLType(purlType string) Ecosystem {
+	if ecosystem, ok := purlkit.EcosystemForType(purlType); ok {
+		return Ecosystem(ecosystem)
+	}
+	if ecosystem, ok := purlkit.CanonicalEcosystem(purlType); ok {
+		return Ecosystem(ecosystem)
+	}
+	return ""
 }
 
 // adoptEvidenceQualifiers relocates the URL-valued evidence qualifiers into
