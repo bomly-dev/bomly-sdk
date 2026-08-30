@@ -229,8 +229,14 @@ func newDependencyNode(coords Coordinates, rawPURL string) (*DependencyNode, err
 // caller left them empty, so a node constructed from a bare package URL
 // still presents ecosystem-native names.
 func (n *DependencyNode) backfillCoordinates() {
-	if n.Ecosystem == "" {
-		n.Ecosystem = ecosystemForPURLType(n.purl.Type)
+	// The identity decides the package family too: a record keyed
+	// pkg:npm/foo@1 that claims ecosystem "maven" would seed its registry
+	// package into the wrong family and take the wrong ecosystem-specific
+	// name handling. A custom purl type resolves to no known ecosystem, so
+	// a detector's own token survives there — the open vocabulary keeps its
+	// say where the table has none.
+	if resolved := ecosystemForPURLType(n.purl.Type); resolved != "" {
+		n.Ecosystem = resolved
 	}
 	// The identity is the single source of truth for these fields: name,
 	// org, and version are projected from the canonical package URL
