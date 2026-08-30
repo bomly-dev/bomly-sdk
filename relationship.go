@@ -36,21 +36,19 @@ func RelationshipForPath(path []GraphNode) DependencyRelationship {
 		return ""
 	}
 	target, _ := path[len(path)-1].(*DependencyNode)
-	// Depth counts dependency hops, not path length: manifest and module
-	// nodes are structural, so a manifest → module → dependency path is a
-	// direct dependency of that module, not a transitive one.
-	depth := 0
-	for _, node := range path[:len(path)-1] {
-		if _, ok := node.(*DependencyNode); ok {
-			depth++
+	// The path's first node is the owner — a manifest, a module, or (in a
+	// dependency-only graph) the root dependency itself — so it is never a
+	// hop. Between owner and target only dependency nodes count: structural
+	// nodes are not hops either, which keeps manifest → module → dependency
+	// direct while leaving the legacy root → child path direct as well, so
+	// this agrees with the graph-wide derivation.
+	depth := 1
+	if len(path) > 2 {
+		for _, node := range path[1 : len(path)-1] {
+			if _, ok := node.(*DependencyNode); ok {
+				depth++
+			}
 		}
-	}
-	depth++
-	if depth == 0 {
-		// Preserve the historical interpretation of a one-node path as a
-		// direct target. Graph-wide classification uses unknown for a root
-		// occurrence because no owning edge is available there.
-		depth = 1
 	}
 	return relationshipForDepth(target, depth)
 }
