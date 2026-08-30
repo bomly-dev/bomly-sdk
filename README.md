@@ -43,7 +43,7 @@ plugins reuse the same implementations Bomly's built-ins use:
 - `logkit` — secret-safe subprocess logging: argument/URL sanitizers, command fields, stderr counter.
 - `detectorkit` — detector helpers: manifest metadata, source positions, remediation hints, subgraphs, build-tool readiness and timeouts.
 - `matcherkit` — matcher helpers: registry package seeding and license normalization.
-- `testkit` — test helpers: fuzz graph invariants, Go binary builders, lockfile position assertions.
+- `testkit` — test helpers: fuzz graph invariants, typed-node constructors, Go binary builders, lockfile position assertions.
 
 ## Compatibility
 
