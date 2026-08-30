@@ -865,3 +865,29 @@ func TestIRILocatorsRejectMalformedEscapes(t *testing.T) {
 		}
 	}
 }
+
+// TestWebSchemesDoNotFallBackToTheIRIPath pins that a locator naming http or
+// https is judged by the web gate and gets no second hearing as a generic
+// IRI. The generic path asks only for a scheme, no credentials, and nothing
+// sensitive — so a hostless URL that the web gate rejected was falling
+// through and being published unchanged.
+func TestWebSchemesDoNotFallBackToTheIRIPath(t *testing.T) {
+	for _, locator := range []string{
+		"https:///advisory", // no host
+		"http://:8080/x",    // no hostname
+		"https://",          // nothing at all
+		"HTTPS:///advisory", // the scheme is compared case-insensitively
+	} {
+		if got, ok := (ExternalReference{Type: "website", Locator: locator}).Normalized(); ok {
+			t.Errorf("%q bypassed the web gate and was published as %q", locator, got.Locator)
+		}
+	}
+	// A web URL that passes the gate is unaffected, and non-web schemes still
+	// take the generic path.
+	if _, ok := (ExternalReference{Type: "website", Locator: "https://x.test/ok"}).Normalized(); !ok {
+		t.Fatal("a valid web URL was rejected")
+	}
+	if _, ok := (ExternalReference{Type: "distribution", Locator: "ftp://a.test/pkg.tgz"}).Normalized(); !ok {
+		t.Fatal("a non-web IRI was rejected")
+	}
+}

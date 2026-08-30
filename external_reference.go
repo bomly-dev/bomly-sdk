@@ -354,8 +354,18 @@ func normalizeLocatorByKind(locator string, kind LocatorKind) (string, bool) {
 		// by cyclonedx-go itself, which owns that grammar and is already a
 		// dependency here, so the serial and version format is the library's
 		// rule rather than a second copy of it.
-		if normalized, ok := NormalizeURL(locator, URLFormReference); ok {
+		normalized, ok := NormalizeURL(locator, URLFormReference)
+		if ok {
 			return normalized, true
+		}
+		// A web scheme is judged by the web gate, and does not get a second
+		// hearing as a generic IRI. Without this, a locator that failed the
+		// gate -- "https:///advisory" has no host, "http://:8080/x" has no
+		// hostname -- fell through and was published unchanged, since the
+		// generic path asks only for a scheme, no credentials, and nothing
+		// sensitive. The stricter rule for the scheme is the one that applies.
+		if isWebScheme(locator) {
+			return "", false
 		}
 		if cdx.IsBOMLink(locator) {
 			return locator, true
@@ -484,6 +494,21 @@ func normalizeIRIReference(locator string) (string, bool) {
 	// checks, and nothing else -- so there is no rewriting to guard against,
 	// and the stored form is the published form by construction.
 	return locator, true
+}
+
+// isWebScheme reports whether a locator names http or https, the schemes
+// NormalizeURL is the authority for.
+func isWebScheme(locator string) bool {
+	scheme, _, found := strings.Cut(locator, ":")
+	if !found {
+		return false
+	}
+	switch strings.ToLower(scheme) {
+	case "http", "https":
+		return true
+	default:
+		return false
+	}
 }
 
 // hasValidPercentEscapes reports whether every "%" in a value introduces a
