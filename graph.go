@@ -251,13 +251,103 @@ func foldNodes(surviving, witness GraphNode) {
 		mergeNodeLocations(&survivor.Locations, incoming.Locations)
 		survivor.Origins = MergeOrigins(survivor.Origins, incoming.Origins)
 		mergeDependencySources(survivor, incoming)
+		// Every witness's assertions about one package survive the fold:
+		// security identifiers and integrity claims union, detection
+		// scalars and metadata fill gaps. Dropping them would lose CPEs or
+		// digests from a second SBOM witness on insertion order alone.
+		survivor.CPEs = mergeStringSet(survivor.CPEs, incoming.CPEs)
+		survivor.Digests = mergeDigestSet(survivor.Digests, incoming.Digests)
+		if survivor.Copyright == "" {
+			survivor.Copyright = incoming.Copyright
+		}
+		if survivor.FoundBy == "" {
+			survivor.FoundBy = incoming.FoundBy
+		}
+		if survivor.ResolvedURL == "" {
+			survivor.ResolvedURL = incoming.ResolvedURL
+		}
+		survivor.Metadata = mergeMetadata(survivor.Metadata, incoming.Metadata)
 	case *ModuleNode:
 		incoming, ok := witness.(*ModuleNode)
 		if !ok {
 			return
 		}
 		mergeNodeLocations(&survivor.Locations, incoming.Locations)
+		survivor.Metadata = mergeMetadata(survivor.Metadata, incoming.Metadata)
+	case *ManifestNode:
+		incoming, ok := witness.(*ManifestNode)
+		if !ok {
+			return
+		}
+		// A manifest's classification lives only on the node, so an
+		// unclassified first witness must not block a later classified one
+		// — otherwise consolidation order decides whether the POM,
+		// lockfile, or workflow kind survives.
+		if survivor.FileKind == "" {
+			survivor.FileKind = incoming.FileKind
+		}
+		survivor.Metadata = mergeMetadata(survivor.Metadata, incoming.Metadata)
 	}
+}
+
+// mergeStringSet unions two string slices, preserving order and dropping
+// duplicates.
+func mergeStringSet(existing, additions []string) []string {
+	if len(additions) == 0 {
+		return existing
+	}
+	seen := make(map[string]struct{}, len(existing)+len(additions))
+	for _, value := range existing {
+		seen[value] = struct{}{}
+	}
+	for _, value := range additions {
+		if _, duplicate := seen[value]; duplicate {
+			continue
+		}
+		seen[value] = struct{}{}
+		existing = append(existing, value)
+	}
+	return existing
+}
+
+// mergeDigestSet unions two digest slices. Digests compare by whole value:
+// algorithm, value, and subject together, since a digest of a different
+// subject is a different claim.
+func mergeDigestSet(existing, additions []Digest) []Digest {
+	if len(additions) == 0 {
+		return existing
+	}
+	seen := make(map[Digest]struct{}, len(existing)+len(additions))
+	for _, digest := range existing {
+		seen[digest] = struct{}{}
+	}
+	for _, digest := range additions {
+		if _, duplicate := seen[digest]; duplicate {
+			continue
+		}
+		seen[digest] = struct{}{}
+		existing = append(existing, digest)
+	}
+	return existing
+}
+
+// mergeMetadata fills the gaps in existing from additions. Keys the
+// survivor already carries win, so a fold never rewrites an assertion the
+// surviving record made.
+func mergeMetadata(existing, additions map[string]any) map[string]any {
+	if len(additions) == 0 {
+		return existing
+	}
+	if existing == nil {
+		existing = make(map[string]any, len(additions))
+	}
+	for key, value := range additions {
+		if _, present := existing[key]; present {
+			continue
+		}
+		existing[key] = value
+	}
+	return existing
 }
 
 // mergeDependencySources folds registry-match eligibility toward eligible:
