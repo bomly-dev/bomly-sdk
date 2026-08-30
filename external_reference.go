@@ -8,6 +8,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	spdxcommon "github.com/spdx/tools-golang/spdx/v2/common"
+
 	"github.com/bomly-dev/bomly-sdk/purlkit"
 )
 
@@ -40,11 +42,13 @@ const (
 
 // spdxCategoryNames maps each category to its SPDX spelling. A category with
 // no entry has no SPDX projection.
+// The spellings are spdx/tools-golang's own constants, so a rename upstream is
+// a compile error here rather than a document Bomly emits that SPDX rejects.
 var spdxCategoryNames = map[ExternalReferenceCategory]string{
-	ExternalReferenceCategorySecurity:       "SECURITY",
-	ExternalReferenceCategoryPackageManager: "PACKAGE-MANAGER",
-	ExternalReferenceCategoryPersistentID:   "PERSISTENT-ID",
-	ExternalReferenceCategoryOther:          "OTHER",
+	ExternalReferenceCategorySecurity:       spdxcommon.CategorySecurity,
+	ExternalReferenceCategoryPackageManager: spdxcommon.CategoryPackageManager,
+	ExternalReferenceCategoryPersistentID:   spdxcommon.CategoryPersistentId,
+	ExternalReferenceCategoryOther:          spdxcommon.CategoryOther,
 }
 
 // ParseExternalReferenceCategory normalizes a category, accepting SPDX's own
@@ -105,36 +109,40 @@ const (
 	LocatorKindIdentifier LocatorKind = "identifier"
 )
 
-// locatorKindByReference is transcribed from SPDX 2.3's external reference
-// types. It is keyed on the (category, type) pair rather than on the category
-// alone, because the category does not determine the shape: SECURITY holds
-// both CPE values and advisory URLs, and PACKAGE-MANAGER holds both package
-// URLs and bare coordinates.
+// locatorKindByReference names the locator shape for each reference type the
+// SPDX specification defines. The type strings are spdx/tools-golang's own
+// constants, so a rename upstream breaks the build here; the mapping to a
+// shape is Bomly's, because no library states it.
 //
-// Rows are not invented -- a pair appears here only because the specification
-// names it.
+// It is keyed on the (category, type) pair rather than the category alone,
+// because the category does not determine the shape: SECURITY holds both CPE
+// values and advisory URLs, and PACKAGE-MANAGER holds both package URLs and
+// bare coordinates.
+//
+// vocabulary_registry_test.go reads the library's declarations and fails when
+// a type it names has no entry here, so a specification addition surfaces as a
+// failing build rather than as a locator validated by the wrong grammar.
 var locatorKindByReference = map[ExternalReferenceCategory]map[string]LocatorKind{
 	ExternalReferenceCategorySecurity: {
-		"cpe22type": LocatorKindCPE,
-		"cpe23type": LocatorKindCPE,
-		"advisory":  LocatorKindURL,
-		"fix":       LocatorKindURL,
-		"url":       LocatorKindURL,
-		"swid":      LocatorKindIdentifier,
+		normalizeReferenceType(spdxcommon.TypeSecurityCPE23Type): LocatorKindCPE,
+		normalizeReferenceType(spdxcommon.TypeSecurityCPE22Type): LocatorKindCPE,
+		normalizeReferenceType(spdxcommon.TypeSecurityAdvisory):  LocatorKindURL,
+		normalizeReferenceType(spdxcommon.TypeSecurityFix):       LocatorKindURL,
+		normalizeReferenceType(spdxcommon.TypeSecurityUrl):       LocatorKindURL,
+		normalizeReferenceType(spdxcommon.TypeSecuritySwid):      LocatorKindIdentifier,
 	},
 	ExternalReferenceCategoryPackageManager: {
-		"purl": LocatorKindPURL,
+		normalizeReferenceType(spdxcommon.TypePackageManagerPURL): LocatorKindPURL,
 		// These carry the package manager's own coordinate form, not a URL:
-		// "org.apache.tomcat:tomcat:9.0.0.M4" for maven-central, "http-server@0.3.0"
-		// for npm.
-		"maven-central": LocatorKindIdentifier,
-		"npm":           LocatorKindIdentifier,
-		"nuget":         LocatorKindIdentifier,
-		"bower":         LocatorKindIdentifier,
+		// "org.apache.tomcat:tomcat:9.0.0.M4" for maven-central.
+		normalizeReferenceType(spdxcommon.TypePackageManagerMavenCentral): LocatorKindIdentifier,
+		normalizeReferenceType(spdxcommon.TypePackageManagerNpm):          LocatorKindIdentifier,
+		normalizeReferenceType(spdxcommon.TypePackageManagerNuGet):        LocatorKindIdentifier,
+		normalizeReferenceType(spdxcommon.TypePackageManagerBower):        LocatorKindIdentifier,
 	},
 	ExternalReferenceCategoryPersistentID: {
-		"swh":    LocatorKindIdentifier,
-		"gitoid": LocatorKindIdentifier,
+		normalizeReferenceType(spdxcommon.TypePersistentIdSwh):    LocatorKindIdentifier,
+		normalizeReferenceType(spdxcommon.TypePersistentIdGitoid): LocatorKindIdentifier,
 	},
 }
 
