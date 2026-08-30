@@ -113,6 +113,13 @@ const (
 	// reference carry a 2.2 URI and vice versa, so an exporter would publish
 	// a reference whose declared type contradicts its own locator.
 	LocatorKindCPE23 LocatorKind = "cpe23"
+	// LocatorKindIRI is CycloneDX's externalReference url field, which its
+	// schema types as an IRI reference rather than a web URL. A BOM-Link
+	// ("urn:cdx:<serial>/<version>") is a valid locator there, and ADR-0037
+	// relies on exactly that to link a merged document back to its sources --
+	// so holding this field to the web-URL gate would drop the reference the
+	// merged-export design depends on.
+	LocatorKindIRI LocatorKind = "iri"
 	// LocatorKindIdentifier is the bounded free-form fallback: a token with
 	// no whitespace or control characters and no grammar of its own.
 	LocatorKindIdentifier LocatorKind = "identifier"
@@ -172,7 +179,7 @@ func LocatorKindFor(category ExternalReferenceCategory, referenceType string) Lo
 		return LocatorKindIdentifier
 	}
 	if category == ExternalReferenceCategoryUnknown {
-		return LocatorKindURL
+		return LocatorKindIRI
 	}
 	return LocatorKindIdentifier
 }
@@ -306,6 +313,22 @@ func normalizeLocatorByKind(locator string, kind LocatorKind) (string, bool) {
 	switch kind {
 	case LocatorKindURL:
 		return NormalizeURL(locator, URLFormReference)
+	case LocatorKindIRI:
+		// A web location is held to the full gate. A BOM-Link is recognized
+		// by cyclonedx-go itself, which owns that grammar and is already a
+		// dependency here, so the serial and version format is the library's
+		// rule rather than a second copy of it.
+		if normalized, ok := NormalizeURL(locator, URLFormReference); ok {
+			return normalized, true
+		}
+		if cdx.IsBOMLink(locator) {
+			return locator, true
+		}
+		// Everything else is refused, mailto: included. An address in a
+		// locator is the personal data Contact deliberately does not carry
+		// (ADR-0037 defers that review), so admitting it here would route
+		// around a decision rather than implement it.
+		return "", false
 	case LocatorKindPURL:
 		// purlkit is the single home for package URL semantics (ADR-0038),
 		// so the locator is held to the same standard a dependency identity
@@ -377,6 +400,10 @@ const cpe22ComponentCount = 7
 //     "cpe:/a:v:p:1:u:e:l", dropping a component.
 //   - umisama/go-cpe rewrites the invalid part "x" to "*" and reduces
 //     "cpe:/aardvark" to "cpe:/".
+//
+// Both also fail the maintenance bar: nvdtools was archived upstream in
+// 2024, and go-cpe has not been pushed since 2019. Neither is a dependency
+// to take on a module every plugin imports.
 //
 // Both silently repair malformed input into valid-looking values, which is
 // the worst outcome for something Bomly publishes as an assertion. What is

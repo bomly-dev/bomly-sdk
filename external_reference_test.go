@@ -29,9 +29,10 @@ func TestLocatorKindComesFromThePair(t *testing.T) {
 		{ExternalReferenceCategoryOther, "anything", LocatorKindIdentifier},
 		{ExternalReferenceCategorySecurity, "invented-later", LocatorKindIdentifier},
 		// No category means the reference came from CycloneDX, whose schema
-		// types the field as an IRI reference.
-		{ExternalReferenceCategoryUnknown, "website", LocatorKindURL},
-		{ExternalReferenceCategoryUnknown, "vcs", LocatorKindURL},
+		// types the field as an IRI reference -- a web URL or a BOM-Link,
+		// not a web URL only.
+		{ExternalReferenceCategoryUnknown, "website", LocatorKindIRI},
+		{ExternalReferenceCategoryUnknown, "vcs", LocatorKindIRI},
 		// The type vocabulary is compared case-insensitively.
 		{ExternalReferenceCategorySecurity, "CPE23TYPE", LocatorKindCPE23},
 	} {
@@ -632,5 +633,49 @@ func TestCustomReferenceTypesMergeCaseSensitively(t *testing.T) {
 	)
 	if len(known) != 1 {
 		t.Fatalf("recognized type merged to %d records, want one", len(known))
+	}
+}
+
+// TestCycloneDXLocatorsAcceptBOMLinks pins that the CycloneDX url field is
+// held to its schema's IRI-reference typing rather than to the web-URL gate.
+// ADR-0037 links a merged document back to its sources with exactly this
+// reference, so dropping BOM-Links would break the merged-export design
+// before it is written.
+func TestCycloneDXLocatorsAcceptBOMLinks(t *testing.T) {
+	const link = "urn:cdx:3e671687-395b-41f5-a30f-a58921a69b79/1"
+	reference := ExternalReference{Type: "bom", Locator: link}
+	normalized, ok := reference.Normalized()
+	if !ok {
+		t.Fatal("a BOM-Link reference was rejected")
+	}
+	if normalized.Locator != link {
+		t.Fatalf("locator = %q, want it carried unchanged", normalized.Locator)
+	}
+	// A web URL still passes the full gate, credentials and all.
+	if _, ok := (ExternalReference{Type: "website", Locator: "https://example.test"}).Normalized(); !ok {
+		t.Fatal("a web URL was rejected")
+	}
+	if _, ok := (ExternalReference{Type: "website", Locator: "https://user:pw@example.test/"}).Normalized(); ok {
+		t.Fatal("credentials survived the IRI kind")
+	}
+	// A malformed BOM-Link is not a BOM-Link: the serial and version format
+	// is cyclonedx-go's rule, not a second copy of it here.
+	for _, bad := range []string{
+		"urn:cdx:not-a-uuid/1",
+		"urn:cdx:3e671687-395b-41f5-a30f-a58921a69b79",
+		"urn:cdx:3e671687-395b-41f5-a30f-a58921a69b79/0",
+	} {
+		if _, ok := (ExternalReference{Type: "bom", Locator: bad}).Normalized(); ok {
+			t.Errorf("%q was accepted as a BOM-Link", bad)
+		}
+	}
+	// An SPDX-typed url reference stays web-only: its specification says URL.
+	spdxURL := ExternalReference{Category: ExternalReferenceCategorySecurity, Type: "url", Locator: link}
+	if _, ok := spdxURL.Normalized(); ok {
+		t.Fatal("a BOM-Link was accepted for an SPDX url-typed reference")
+	}
+	// mailto: is refused, matching the no-email decision Contact records.
+	if _, ok := (ExternalReference{Type: "security-contact", Locator: "mailto:security@example.test"}).Normalized(); ok {
+		t.Fatal("a mailto: locator was accepted, which stores an email address")
 	}
 }

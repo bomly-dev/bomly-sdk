@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	cdx "github.com/CycloneDX/cyclonedx-go"
+
 	"github.com/bomly-dev/bomly-sdk/purlkit"
 	"github.com/bomly-dev/bomly-sdk/spdxkit"
 )
@@ -636,6 +638,11 @@ func assertPublishableReference(t *testing.T, reference ExternalReference) {
 	case LocatorKindURL:
 		if _, ok := NormalizeURL(reference.Locator, URLFormReference); !ok {
 			t.Fatalf("url locator %q would be rejected on read", reference.Locator)
+		}
+	case LocatorKindIRI:
+		_, isURL := NormalizeURL(reference.Locator, URLFormReference)
+		if !isURL && !cdx.IsBOMLink(reference.Locator) {
+			t.Fatalf("iri locator %q is neither a web URL nor a BOM-Link", reference.Locator)
 		}
 	case LocatorKindPURL:
 		if err := purlkit.ValidateString(reference.Locator); err != nil {
