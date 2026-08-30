@@ -213,8 +213,17 @@ func (l PackageLicense) Normalized() (PackageLicense, bool) {
 // dangling reference the bare-reference branch refuses, so the same rule
 // applies here: no text, no expression.
 func normalizedSPDXExpression(expression, extractedText string) string {
-	if strings.Contains(expression, spdxkit.LicenseRefPrefix) && strings.TrimSpace(extractedText) == "" {
-		return ""
+	if strings.Contains(expression, spdxkit.LicenseRefPrefix) {
+		if strings.TrimSpace(extractedText) == "" {
+			return ""
+		}
+		// One record carries one ExtractedText, so an expression naming two
+		// references cannot supply the text for both, and at least one
+		// citation in it would dangle. Refused for the same reason a bare
+		// reference without text is.
+		if len(spdxkit.LicenseRefsIn(expression)) > 1 {
+			return ""
+		}
 	}
 	// Canonicalize first, then validate what would actually be published: a
 	// rewrite that produced an invalid expression must not survive on the
@@ -291,18 +300,33 @@ func MergeLicenses(existing, additions []PackageLicense) []PackageLicense {
 // for different text is re-minted under Bomly's prefix, which is derived from
 // its own text and so cannot collide again. The contradiction survives as two
 // distinct, citable claims rather than being resolved by dropping one.
+// The reference may be the whole expression or embedded in a compound one
+// ("MIT OR LicenseRef-Custom"), so the references are enumerated by the parser
+// rather than by testing the expression's prefix. A compound naming more than
+// one reference is dropped instead: the record carries a single ExtractedText,
+// which cannot be the text of two different references, so at least one
+// citation in it would dangle -- the same rule the bare-reference case applies.
 func resolveLicenseRefCollision(license PackageLicense, textByRef map[string]string) PackageLicense {
 	text := strings.TrimSpace(license.ExtractedText)
-	if text == "" || !strings.HasPrefix(license.SPDXExpression, spdxkit.LicenseRefPrefix) {
+	if text == "" {
 		return license
 	}
-	prior, seen := textByRef[license.SPDXExpression]
+	refs := spdxkit.LicenseRefsIn(license.SPDXExpression)
+	if len(refs) != 1 {
+		// None to collide, or more than one -- which Normalized has already
+		// refused, since one ExtractedText cannot be the text of two
+		// references.
+		return license
+	}
+	ref := refs[0]
+	prior, seen := textByRef[ref]
 	switch {
 	case !seen:
-		textByRef[license.SPDXExpression] = text
+		textByRef[ref] = text
 	case prior != text:
-		license.SPDXExpression = spdxkit.MintLicenseRef(license.ExtractedText).RefID
-		textByRef[license.SPDXExpression] = text
+		minted := spdxkit.MintLicenseRef(license.ExtractedText).RefID
+		license.SPDXExpression = spdxkit.ReplaceLicenseRef(license.SPDXExpression, ref, minted)
+		textByRef[minted] = text
 	}
 	return license
 }
@@ -664,7 +688,17 @@ func (p *Package) MergeFrom(src *Package) {
 	// plain structs -- so this is where a homepage carrying credentials or a
 	// supplier carrying a control character would otherwise enter the registry
 	// and be forwarded by PackageRegistry.MarshalJSON unchecked.
-	if strings.TrimSpace(p.Description) == "" {
+	// The destination is gated before its gaps are measured, not only the
+	// source. Add normalizes what comes in, but Ensure, Get, and All hand back
+	// mutable pointers, so p may already hold a value that is non-empty --
+	// and so blocks this fill -- yet unpublishable, and therefore dropped
+	// again at marshal. Measuring the gap first would lose a valid update to a
+	// value that never reaches a reader.
+	p.Description = NormalizeDescription(p.Description)
+	p.Homepage = NormalizeHomepage(p.Homepage)
+	p.Supplier = normalizedContact(p.Supplier)
+	p.Originator = normalizedContact(p.Originator)
+	if p.Description == "" {
 		p.Description = NormalizeDescription(src.Description)
 	}
 	if p.Homepage == "" {

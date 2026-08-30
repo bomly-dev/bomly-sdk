@@ -1076,3 +1076,95 @@ func TestReferenceURLRejectsRawQueryWhitespace(t *testing.T) {
 		t.Fatalf("re-normalizing %q gave %q (ok=%v)", got, again, ok)
 	}
 }
+
+// TestMergeLicensesResolvesEmbeddedReferenceCollisions pins that a reference
+// reused inside a compound expression is separated too. The earlier fix only
+// looked at expressions that *begin* with the prefix, so "MIT OR
+// LicenseRef-Custom" from two documents kept one identifier naming two texts.
+func TestMergeLicensesResolvesEmbeddedReferenceCollisions(t *testing.T) {
+	merged := MergeLicenses(
+		[]PackageLicense{{SPDXExpression: "MIT OR LicenseRef-Custom", ExtractedText: "Doc A terms."}},
+		[]PackageLicense{{SPDXExpression: "MIT OR LicenseRef-Custom", ExtractedText: "Doc B terms."}},
+	)
+	if len(merged) != 2 {
+		t.Fatalf("merged = %+v, want both documents' terms", merged)
+	}
+	if merged[0].SPDXExpression == merged[1].SPDXExpression {
+		t.Fatalf("both claims kept the expression %q, which now names two texts", merged[0].SPDXExpression)
+	}
+	// The rest of the compound is untouched -- only the reference is rewritten.
+	if !strings.HasPrefix(merged[1].SPDXExpression, "MIT OR LicenseRef-bomly-") {
+		t.Fatalf("rewritten expression = %q, want only the reference replaced", merged[1].SPDXExpression)
+	}
+	// The first claim keeps the identifier it arrived with.
+	if merged[0].SPDXExpression != "MIT OR LicenseRef-Custom" {
+		t.Fatalf("first claim = %q, want its own identifier preserved", merged[0].SPDXExpression)
+	}
+}
+
+// TestPackageLicenseRefusesMultipleReferences pins the modelling limit
+// honestly: a record carries one ExtractedText, so an expression naming two
+// references cannot supply the text for both and at least one citation in it
+// would dangle.
+func TestPackageLicenseRefusesMultipleReferences(t *testing.T) {
+	normalized, ok := PackageLicense{
+		Value: "dual custom",
+		// Deliberately not *starting* with a reference: an expression that
+		// does is already re-minted by the bare-reference branch, so it would
+		// not exercise this rule at all.
+		SPDXExpression: "MIT AND LicenseRef-A AND LicenseRef-B",
+		ExtractedText:  "Only one text.",
+	}.Normalized()
+	if !ok {
+		t.Fatal("a license with a stated value was rejected outright")
+	}
+	// The source's two-reference expression does not survive: neither of its
+	// identifiers can be published when only one of them has text.
+	for _, ref := range []string{"LicenseRef-A", "LicenseRef-B"} {
+		if strings.Contains(normalized.SPDXExpression, ref) {
+			t.Fatalf("expression = %q, want %q refused: one text cannot name two references", normalized.SPDXExpression, ref)
+		}
+	}
+	// The text is not lost with it -- it mints its own citation, so the terms
+	// stay exportable under an identifier that resolves.
+	if normalized.SPDXExpression != spdxkit.MintLicenseRef("Only one text.").RefID {
+		t.Fatalf("expression = %q, want the text's own minted citation", normalized.SPDXExpression)
+	}
+	if normalized.Value != "dual custom" {
+		t.Fatalf("value = %q, want the source's statement kept", normalized.Value)
+	}
+	if strings.Contains(normalized.SPDXExpression, "MIT") {
+		t.Fatalf("expression = %q, want the whole compound refused, not partially kept", normalized.SPDXExpression)
+	}
+	// A single embedded reference is still fine.
+	single, ok := PackageLicense{SPDXExpression: "MIT OR LicenseRef-A", ExtractedText: "Terms."}.Normalized()
+	if !ok || single.SPDXExpression != "MIT OR LicenseRef-A" {
+		t.Fatalf("normalized = %+v ok=%v, want a single embedded reference kept", single, ok)
+	}
+}
+
+// TestPackageMergeFromGatesItsDestination pins the same ordering rule the fold
+// follows. Ensure, Get, and All hand back mutable pointers, so the destination
+// can hold a value that is non-empty (blocking the fill) yet unpublishable
+// (dropped at marshal) -- losing a valid update to a value no reader sees.
+func TestPackageMergeFromGatesItsDestination(t *testing.T) {
+	dst := &Package{
+		Homepage:    "https://user:pw@evil.test/",
+		Description: strings.Repeat("a", maxDescriptionLength+1),
+		Supplier:    &Contact{Kind: ContactKindOrganization, Name: "Acme\nInc"},
+	}
+	dst.MergeFrom(&Package{
+		Homepage:    "https://good.test",
+		Description: "A tidy package.",
+		Supplier:    &Contact{Kind: ContactKindOrganization, Name: "Meta"},
+	})
+	if dst.Homepage != "https://good.test" {
+		t.Fatalf("homepage = %q, want the valid update to win over the unpublishable value", dst.Homepage)
+	}
+	if dst.Description != "A tidy package." {
+		t.Fatalf("description = %q, want the valid update to win", dst.Description)
+	}
+	if dst.Supplier == nil || dst.Supplier.Name != "Meta" {
+		t.Fatalf("supplier = %+v, want the valid update to win", dst.Supplier)
+	}
+}

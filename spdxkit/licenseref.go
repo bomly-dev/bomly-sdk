@@ -100,3 +100,73 @@ func MintLicenseRef(text string) ExtractedText {
 		Text:  text,
 	}
 }
+
+// LicenseRefsIn returns the license references an expression names, in the
+// order the parser reports them, deduplicated. It returns nil when the
+// expression names none or cannot be parsed.
+//
+// The enumeration is the parser's, not a scan for the prefix: a reference is
+// whatever SPDX's grammar says is one, and a substring match would find the
+// prefix inside a quoted or malformed value that is not a reference at all.
+func LicenseRefsIn(expression string) []string {
+	if !strings.Contains(expression, LicenseRefPrefix) {
+		return nil
+	}
+	// Extract is the enumeration. It parses the expression, already
+	// deduplicates what it returns, and yields nothing at all when the
+	// expression does not parse -- so a dedup pass or an error branch here
+	// would be code that cannot change the result.
+	identifiers, _ := Extract(expression)
+	var refs []string
+	for _, identifier := range identifiers {
+		if strings.HasPrefix(identifier, LicenseRefPrefix) {
+			refs = append(refs, identifier)
+		}
+	}
+	return refs
+}
+
+// ReplaceLicenseRef rewrites every occurrence of one license reference in an
+// expression, leaving the rest of the expression untouched.
+//
+// Replacement is boundary-aware. Identifier characters are letters, digits,
+// "." and "-", so a plain substring replacement of "LicenseRef-Custom" would
+// also rewrite the middle of "LicenseRef-Custom2" and silently rename a
+// different license.
+func ReplaceLicenseRef(expression, old, replacement string) string {
+	if old == "" || !strings.Contains(expression, old) {
+		return expression
+	}
+	var b strings.Builder
+	b.Grow(len(expression))
+	for i := 0; i < len(expression); {
+		if !strings.HasPrefix(expression[i:], old) {
+			b.WriteByte(expression[i])
+			i++
+			continue
+		}
+		beforeOK := i == 0 || !isIDStringByte(expression[i-1])
+		end := i + len(old)
+		afterOK := end == len(expression) || !isIDStringByte(expression[end])
+		if beforeOK && afterOK {
+			b.WriteString(replacement)
+			i = end
+			continue
+		}
+		b.WriteByte(expression[i])
+		i++
+	}
+	return b.String()
+}
+
+// isIDStringByte reports whether b may appear in an SPDX idstring.
+func isIDStringByte(b byte) bool {
+	switch {
+	case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b >= '0' && b <= '9':
+		return true
+	case b == '.', b == '-':
+		return true
+	default:
+		return false
+	}
+}
