@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // The digest algorithm registry. Both SBOM formats define a closed hash
@@ -218,11 +220,20 @@ func (d Digest) Validate() error {
 	if len(value) > maxDigestValueLength {
 		return fmt.Errorf("digest value is %d bytes, over the %d byte limit", len(value), maxDigestValueLength)
 	}
+	// Invalid UTF-8 is rejected rather than carried. encoding/json replaces
+	// such bytes with U+FFFD, so a digest that passed validation would
+	// serialize as a different value than the one checked -- and a digest
+	// that changes when written is worse than no digest.
+	if !utf8.ValidString(value) {
+		return fmt.Errorf("digest value is not valid UTF-8")
+	}
 	for _, r := range value {
 		// A digest is a token. Whitespace or a control character means the
 		// value was concatenated from something else, and publishing it would
-		// corrupt the document it lands in.
-		if r <= ' ' || r == 0x7f {
+		// corrupt the document it lands in. The test is Unicode-aware: an em
+		// space or a next-line character is as much whitespace as a space,
+		// and an ASCII-only check let those through.
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
 			return fmt.Errorf("digest value contains a control or whitespace character")
 		}
 	}

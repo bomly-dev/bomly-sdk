@@ -1753,3 +1753,107 @@ func TestParseSPDXContactBoundsItsInput(t *testing.T) {
 		t.Fatalf("a realistic long supplier was rejected: %+v", contact)
 	}
 }
+
+// TestReferenceURLRejectsUndecodableQuery pins a privacy hole a malformed
+// escape opened. url.URL writes RawQuery back verbatim, so a truncated escape
+// survived normalization — and every consumer that tried to decode the query,
+// including the contact gate looking for an email address, got a decode error
+// and concluded the value was clean. An encoded address published on exactly
+// that reasoning.
+func TestReferenceURLRejectsUndecodableQuery(t *testing.T) {
+	hidden := "https://acme.test/?email=jane%40example.com%"
+	if got, ok := NormalizeURL(hidden, URLFormReference); ok {
+		t.Fatalf("a URL with an undecodable query was accepted: %q", got)
+	}
+	contact, ok := (Contact{Kind: ContactKindOrganization, Name: "Acme", URL: hidden}).Normalized()
+	if !ok {
+		t.Fatal("the contact should survive; only its URL is unpublishable")
+	}
+	if contact.URL != "" {
+		t.Fatalf("an encoded address published behind a malformed escape: %q", contact.URL)
+	}
+	// A well-formed escaped query is still kept.
+	fine := "https://acme.test/?q=a%20b"
+	if got, ok := NormalizeURL(fine, URLFormReference); !ok || got != fine {
+		t.Fatalf("NormalizeURL(%q) = %q ok=%v, want it kept", fine, got, ok)
+	}
+}
+
+// TestDigestValueRejectsUnserializableRunes pins two shapes an ASCII-only
+// check let through. Invalid UTF-8 is replaced by encoding/json with U+FFFD,
+// so a digest that passed validation would serialize as a different value than
+// the one checked; and Unicode whitespace is as much whitespace as a space.
+func TestDigestValueRejectsUnserializableRunes(t *testing.T) {
+	for name, value := range map[string]string{
+		"invalid UTF-8": "abc\xffdef",
+		"em space":      "abc\u2003def",
+		"next line":     "abc\u0085def",
+		"ascii space":   "abc def",
+		"ascii control": "abc\x07def",
+	} {
+		if _, ok := (Digest{Algorithm: DigestAlgorithmSHA256, Value: value}).Normalized(); ok {
+			t.Errorf("%s: an unpublishable digest value was accepted", name)
+		}
+	}
+	// A normal hex digest is unaffected, and so is a base64 integrity value.
+	for _, value := range []string{"abc123", "sha512-Zm9vYmFy+/=="} {
+		if _, ok := (Digest{Algorithm: DigestAlgorithmSHA256, Value: value}).Normalized(); !ok {
+			t.Errorf("a legitimate digest value %q was rejected", value)
+		}
+	}
+}
+
+// TestLegacyDetectionLicensesSurviveTheWireAndTheFold pins the two paths that
+// silently lost claims recorded through the deprecated metadata stash. After
+// JSON decoding the stash is []any of map[string]any, so a typed assertion
+// found nothing; and during a fold, metadata merging keeps the survivor's
+// value, so the incoming witness's claims were dropped before seeding.
+func TestLegacyDetectionLicensesSurviveTheWireAndTheFold(t *testing.T) {
+	t.Run("across a JSON round trip", func(t *testing.T) {
+		graph := New()
+		dep := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "a", Version: "1.0.0"})
+		dep.Metadata = map[string]any{
+			MetadataKeyDetectionLicenses: []PackageLicense{{Value: "ISC", SPDXExpression: "ISC"}},
+		}
+		if err := graph.AddNode(dep); err != nil {
+			t.Fatalf("add node: %v", err)
+		}
+		encoded, err := json.Marshal(graph)
+		if err != nil {
+			t.Fatalf("encode: %v", err)
+		}
+		var decoded Graph
+		if err := json.Unmarshal(encoded, &decoded); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		got := DetectionLicenses(decoded.DependencyNodes()[0])
+		if len(got) != 1 || got[0].SPDXExpression != "ISC" {
+			t.Fatalf("DetectionLicenses = %+v, want the stashed claim to survive the wire", got)
+		}
+	})
+
+	t.Run("across a fold", func(t *testing.T) {
+		graph := New()
+		first := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "b", Version: "1.0.0"})
+		first.Metadata = map[string]any{
+			MetadataKeyDetectionLicenses: []PackageLicense{{Value: "MIT", SPDXExpression: "MIT"}},
+		}
+		if err := graph.AddNode(first); err != nil {
+			t.Fatalf("add first: %v", err)
+		}
+		second := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "b", Version: "1.0.0"})
+		second.Metadata = map[string]any{
+			MetadataKeyDetectionLicenses: []PackageLicense{{Value: "Apache-2.0", SPDXExpression: "Apache-2.0"}},
+		}
+		if _, err := graph.InsertNode(second); err != nil {
+			t.Fatalf("insert second: %v", err)
+		}
+		got := DetectionLicenses(graph.DependencyNodes()[0])
+		if len(got) != 2 {
+			t.Fatalf("DetectionLicenses = %+v, want both witnesses' stashed claims", got)
+		}
+		if seeded := PackageFromDependencyNode(graph.DependencyNodes()[0]).Licenses; len(seeded) != 2 {
+			t.Fatalf("seeded licenses = %+v, want both claims to reach the registry", seeded)
+		}
+	})
+}

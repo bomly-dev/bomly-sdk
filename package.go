@@ -950,11 +950,37 @@ func DetectionLicenses(dep *DependencyNode) []PackageLicense {
 	}
 	licenses := dep.Licenses
 	if dep.Metadata != nil {
-		if stashed, ok := dep.Metadata[MetadataKeyDetectionLicenses].([]PackageLicense); ok {
-			licenses = MergeLicenses(licenses, stashed)
-		}
+		licenses = MergeLicenses(licenses, stashedDetectionLicenses(dep.Metadata[MetadataKeyDetectionLicenses]))
 	}
 	return MergeLicenses(nil, licenses)
+}
+
+// stashedDetectionLicenses reads the deprecated metadata stash whatever shape
+// it arrived in.
+//
+// A typed assertion alone is not enough. Metadata is map[string]any, so a node
+// that came off the wire holds the stash as []any of map[string]any -- the
+// assertion fails, and the licenses a producer recorded vanish the first time
+// the node crosses a process boundary. Re-decoding through the typed form
+// costs a marshal on a path that only legacy payloads take, and the
+// alternative is losing the data silently.
+func stashedDetectionLicenses(value any) []PackageLicense {
+	switch stashed := value.(type) {
+	case nil:
+		return nil
+	case []PackageLicense:
+		return stashed
+	default:
+		encoded, err := json.Marshal(stashed)
+		if err != nil {
+			return nil
+		}
+		var licenses []PackageLicense
+		if err := json.Unmarshal(encoded, &licenses); err != nil {
+			return nil
+		}
+		return licenses
+	}
 }
 
 // PackageFromDependencyNode seeds a registry package from a dependency

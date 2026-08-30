@@ -38,22 +38,33 @@ func TestReplaceLicenseRef(t *testing.T) {
 func TestLicenseRefsIn(t *testing.T) {
 	for _, tc := range []struct {
 		expression string
-		want       int
+		want       []string
 	}{
-		{"MIT", 0},
-		{"LicenseRef-A", 1},
-		{"MIT OR LicenseRef-A", 1},
-		{"LicenseRef-A AND LicenseRef-B", 2},
-		{"MIT AND LicenseRef-A AND LicenseRef-B", 2},
+		{"MIT", nil},
+		{"LicenseRef-A", []string{"LicenseRef-A"}},
+		// The identifiers matter, not their number: a filter that returned
+		// "MIT" here would give the same count as one that returned the
+		// reference, and only one of those is what this function promises.
+		{"MIT OR LicenseRef-A", []string{"LicenseRef-A"}},
+		{"LicenseRef-A AND LicenseRef-B", []string{"LicenseRef-A", "LicenseRef-B"}},
+		{"MIT AND LicenseRef-A AND LicenseRef-B", []string{"LicenseRef-A", "LicenseRef-B"}},
 		// These two pin what Extract promises and LicenseRefsIn relies on:
 		// it deduplicates, and it yields nothing for an expression that does
 		// not parse. If either changed upstream, LicenseRefsIn would need its
 		// own pass, so the dependency is asserted rather than assumed.
-		{"LicenseRef-A OR LicenseRef-A", 1},
-		{"LicenseRef-A OR OR", 0},
+		{"LicenseRef-A OR LicenseRef-A", []string{"LicenseRef-A"}},
+		{"LicenseRef-A OR OR", nil},
 	} {
-		if got := LicenseRefsIn(tc.expression); len(got) != tc.want {
-			t.Errorf("LicenseRefsIn(%q) = %v, want %d references", tc.expression, got, tc.want)
+		got := LicenseRefsIn(tc.expression)
+		if len(got) != len(tc.want) {
+			t.Errorf("LicenseRefsIn(%q) = %v, want %v", tc.expression, got, tc.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("LicenseRefsIn(%q) = %v, want %v", tc.expression, got, tc.want)
+				break
+			}
 		}
 	}
 }

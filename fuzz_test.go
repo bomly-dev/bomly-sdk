@@ -470,18 +470,25 @@ func FuzzPackageLicense(f *testing.F) {
 			if strings.TrimSpace(normalized.ExtractedText) == "" {
 				t.Fatalf("reference in %q survived without its text", normalized.SPDXExpression)
 			}
+			refs := spdxkit.LicenseRefsIn(normalized.SPDXExpression)
 			// One record carries one text, so it can cite at most one
 			// reference.
-			if refs := spdxkit.LicenseRefsIn(normalized.SPDXExpression); len(refs) > 1 {
+			if len(refs) > 1 {
 				t.Fatalf("expression %q cites %d references but carries one text", normalized.SPDXExpression, len(refs))
 			}
-		}
-		// The well-formed-idstring rule applies to a bare reference, which is
-		// the only shape written into an expression field on its own.
-		if strings.HasPrefix(normalized.SPDXExpression, spdxkit.LicenseRefPrefix) &&
-			!strings.ContainsAny(normalized.SPDXExpression, " \t\r\n()") &&
-			!spdxkit.ValidLicenseRef(normalized.SPDXExpression) {
-			t.Fatalf("normalized license carries malformed reference %q", normalized.SPDXExpression)
+			// Every reference that survives is well formed, wherever it sits.
+			// Checking only a bare one left a malformed reference embedded in
+			// a compound unasserted.
+			for _, ref := range refs {
+				if !spdxkit.ValidLicenseRef(ref) {
+					t.Fatalf("expression %q publishes malformed reference %q", normalized.SPDXExpression, ref)
+				}
+				// A reference under Bomly's prefix is derived from its text.
+				if strings.HasPrefix(ref, spdxkit.BomlyLicenseRefPrefix) &&
+					ref != spdxkit.MintLicenseRef(normalized.ExtractedText).RefID {
+					t.Fatalf("reference %q does not match the text it names", ref)
+				}
+			}
 		}
 		// Normalizing twice is a fixed point.
 		twice, ok := normalized.Normalized()

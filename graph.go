@@ -261,7 +261,12 @@ func foldNodes(surviving, witness GraphNode) {
 		// declaration and a conclusion are two claims about one package, and
 		// two witnesses that read different sources both have something to
 		// say.
-		survivor.Licenses = MergeLicenses(survivor.Licenses, incoming.Licenses)
+		// DetectionLicenses on both sides, not the typed field alone: a
+		// witness built before the typed field existed carries its claims in
+		// the deprecated metadata stash, and metadata merging keeps the
+		// survivor's value -- so the incoming witness's licenses would be
+		// dropped before seeding ever saw them.
+		survivor.Licenses = MergeLicenses(DetectionLicenses(survivor), DetectionLicenses(incoming))
 		// The component-level document assertions are scalars — one supplier,
 		// one homepage — so a later witness contributes only what the first
 		// did not know.

@@ -199,6 +199,15 @@ func NormalizeURL(raw string, form URLForm) (string, bool) {
 		parsed.RawQuery = ""
 		parsed.ForceQuery = false
 	case URLFormReference:
+		// A query that does not decode is not publishable. url.URL writes
+		// RawQuery back verbatim, so a trailing or truncated escape survives
+		// here -- and every consumer that tries to read the query, including
+		// the contact gate that looks for an email address in it, gets a
+		// decode error and concludes the value is clean. An encoded address
+		// behind a malformed escape would publish on exactly that reasoning.
+		if _, err := url.QueryUnescape(parsed.RawQuery); err != nil {
+			return "", false
+		}
 		// Kept: a citation's query selects what is being cited. It is also
 		// the one part of a URL that url.URL writes back verbatim instead of
 		// re-encoding, so a raw space or control character in it would
