@@ -734,6 +734,30 @@ func reconcileComments(existing, incoming string) string {
 	}
 }
 
+// cloneExternalReferences returns a deep copy that shares nothing with its
+// source.
+//
+// Allocated by length and filled by index: a zero-length slice made with
+// spare capacity still shares its backing array, so a later append on either
+// side would write into the other. Both Package.Clone and
+// DependencyNode.Clone route through here -- they held the same code, and
+// they already needed the same correction to it once.
+func cloneExternalReferences(references []ExternalReference) []ExternalReference {
+	if references == nil {
+		return nil
+	}
+	clone := make([]ExternalReference, len(references))
+	for i, reference := range references {
+		copied := reference
+		if reference.Hashes != nil {
+			copied.Hashes = make([]Digest, len(reference.Hashes))
+			copy(copied.Hashes, reference.Hashes)
+		}
+		clone[i] = copied
+	}
+	return clone
+}
+
 // referenceKey is the merge identity of an external reference: the triple the
 // formats treat as one assertion.
 // The type is compared as stored, not case-folded. Normalized has already

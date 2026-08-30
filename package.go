@@ -763,20 +763,7 @@ func (p *Package) Clone() *Package {
 	if len(p.Digests) > 0 {
 		clone.Digests = append([]Digest(nil), p.Digests...)
 	}
-	if p.ExternalReferences != nil {
-		// Allocated by length and filled by index: a zero-length slice made
-		// with spare capacity still shares its backing array, so a later
-		// append on either side would write into the other.
-		clone.ExternalReferences = make([]ExternalReference, len(p.ExternalReferences))
-		for i, reference := range p.ExternalReferences {
-			copied := reference
-			if reference.Hashes != nil {
-				copied.Hashes = make([]Digest, len(reference.Hashes))
-				copy(copied.Hashes, reference.Hashes)
-			}
-			clone.ExternalReferences[i] = copied
-		}
-	}
+	clone.ExternalReferences = cloneExternalReferences(p.ExternalReferences)
 	if len(p.Licenses) > 0 {
 		clone.Licenses = append([]PackageLicense(nil), p.Licenses...)
 	}

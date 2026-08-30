@@ -166,13 +166,21 @@ func TestExternalReferenceVocabularyMatchesTheLibraries(t *testing.T) {
 func TestCycloneDXReferenceTypesAreCanonicalized(t *testing.T) {
 	declared := declaredConstants(t, "github.com/CycloneDX/cyclonedx-go", "ExternalReferenceType")
 	for constName, spelling := range declared {
-		// CycloneDX references carry no category, which is how the model
-		// records that the source had no such axis.
-		got := canonicalReferenceType(ExternalReferenceCategoryUnknown, spelling)
-		if got != spelling {
-			t.Errorf("%s = %q canonicalizes to %q; it is missing from the registry", constName, spelling, got)
+		// Membership is asserted directly. canonicalReferenceType returns
+		// its input when the key is absent -- the open vocabulary carries an
+		// unrecognized type unchanged -- so comparing its output to the
+		// spelling cannot detect a missing entry at all. That first draft
+		// rested entirely on the upper-case probe, which only distinguishes
+		// the two when uppercasing changes the string.
+		canonical, present := canonicalCycloneDXReferenceTypes[normalizeReferenceType(spelling)]
+		if !present {
+			t.Errorf("%s = %q is missing from the CycloneDX registry", constName, spelling)
+			continue
 		}
-		// And an upper-cased spelling must fold to the library's own.
+		if canonical != spelling {
+			t.Errorf("%s = %q is registered as %q", constName, spelling, canonical)
+		}
+		// And a differently-cased spelling folds to the library's own.
 		if got := canonicalReferenceType(ExternalReferenceCategoryUnknown, strings.ToUpper(spelling)); got != spelling {
 			t.Errorf("%s: upper-cased %q canonicalizes to %q, want %q", constName, spelling, got, spelling)
 		}
