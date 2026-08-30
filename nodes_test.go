@@ -455,6 +455,7 @@ func TestFoldPreservesEveryWitnessAssertion(t *testing.T) {
 	second.CPEs = []string{"cpe:2.3:a:other:left-pad:1.3.0:*:*:*:*:*:*:*"}
 	second.Digests = []Digest{{Algorithm: DigestAlgorithmSHA256, Value: "bbb"}}
 	second.Copyright = "Copyright (c) contributors"
+	second.FoundBy = "sbom"
 	second.ResolvedURL = "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz"
 	second.Metadata = map[string]any{"witness": "sbom"}
 	second.PackageManager = PackageManagerNPM
@@ -478,6 +479,8 @@ func TestFoldPreservesEveryWitnessAssertion(t *testing.T) {
 	if dep.Copyright == "" || dep.ResolvedURL == "" {
 		t.Errorf("scalar gaps were not filled: copyright=%q resolvedURL=%q", dep.Copyright, dep.ResolvedURL)
 	}
+	// The witness carries a different FoundBy, so this pins gap-filling
+	// rather than passing vacuously against an empty value.
 	if dep.FoundBy != "node" {
 		t.Errorf("surviving scalar was overwritten: %q", dep.FoundBy)
 	}
@@ -548,5 +551,59 @@ func TestDecodeRejectsConflictingWireIDs(t *testing.T) {
 	}
 	if folded.Size() != 1 {
 		t.Fatalf("size = %d, want the witnesses folded", folded.Size())
+	}
+}
+
+func TestModuleFoldFillsScalarGaps(t *testing.T) {
+	// A module identified by path and name carries no version in its
+	// identity, so a versionless witness and a versioned one fold — and
+	// without gap-filling, insertion order would decide what is published.
+	graph := New()
+	bare, err := NewModuleNode("go.mod", Coordinates{Name: "app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.AddNode(bare); err != nil {
+		t.Fatal(err)
+	}
+	detailed, err := NewModuleNode("go.mod", Coordinates{Name: "app", Version: "1.2.0", Language: Language("go")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	survivor, err := graph.InsertNode(detailed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	module, ok := survivor.(*ModuleNode)
+	if !ok {
+		t.Fatalf("survivor is %T", survivor)
+	}
+	if module.Version != "1.2.0" || module.Language != Language("go") {
+		t.Fatalf("module scalar gaps unfilled: version=%q language=%q", module.Version, module.Language)
+	}
+}
+
+func TestAssertedPURLRecordsNoNormalizationBreadcrumbs(t *testing.T) {
+	// The identity came from the assertion, not from the caller's
+	// coordinates, so normalization rules that shaped nothing observable
+	// must not surface as provenance — irrelevant caller fields would
+	// otherwise change a node's metadata.
+	// The ecosystem is set so the npm lowercase rule genuinely fires: with
+	// an unclassified coordinate set no rule applies and the assertion
+	// would pass for the wrong reason.
+	node, err := NewDependencyNode(Coordinates{PURL: "pkg:npm/left-pad@1.3.0", Ecosystem: EcosystemNPM, Name: "Left-Pad", Version: "1.3.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, recorded := node.Metadata[normMetadataAppliedKey]; recorded {
+		t.Fatalf("asserted identity recorded normalization breadcrumbs: %v", node.Metadata)
+	}
+	// Coordinates that genuinely mint the identity still record them.
+	minted, err := NewDependencyNode(Coordinates{Ecosystem: EcosystemNPM, Name: "Left-Pad", Version: "1.3.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, recorded := minted.Metadata[normMetadataAppliedKey]; !recorded {
+		t.Fatalf("coordinate-minted identity lost its breadcrumbs: %v", minted.Metadata)
 	}
 }

@@ -221,12 +221,14 @@ func newDependencyNode(coords Coordinates, rawPURL string) (*DependencyNode, err
 	node.adoptEvidenceQualifiers(evidence)
 	// Provenance breadcrumbs describe how caller coordinates were shaped on
 	// the way to the identity, so they are recorded only when coordinates
-	// minted it. When a raw package URL was supplied, the normalization
-	// pass touched nothing that reached this node — its fields project from
-	// the identity — and recording rules that changed nothing observable
-	// would also break codec idempotence, since a decoded node always
-	// carries the package URL its predecessor emitted.
-	if strings.TrimSpace(rawPURL) == "" {
+	// actually minted it — neither a raw package URL nor one asserted on
+	// the coordinates. With either, the normalization pass touched nothing
+	// that reached this node (its fields project from the identity), so
+	// recording rules that changed nothing observable would mislead, let
+	// irrelevant caller fields alter a node's metadata, and break codec
+	// idempotence — a decoded node always carries the package URL its
+	// predecessor emitted.
+	if strings.TrimSpace(rawPURL) == "" && strings.TrimSpace(coords.PURL) == "" {
 		node.recordNormalization(coords, applied)
 	}
 	return node, nil

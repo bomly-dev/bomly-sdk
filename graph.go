@@ -291,6 +291,22 @@ func foldNodes(surviving, witness GraphNode) {
 		if !ok {
 			return
 		}
+		// A module identified by path and name carries no version in its
+		// identity, so two witnesses of one module — one versionless —
+		// fold, and without this the survivor's empty version would let
+		// insertion order decide what gets published.
+		if survivor.Version == "" {
+			survivor.Version = incoming.Version
+		}
+		if survivor.Ecosystem == "" {
+			survivor.Ecosystem = incoming.Ecosystem
+		}
+		if survivor.PackageManager == PackageManagerUnknown {
+			survivor.PackageManager = incoming.PackageManager
+		}
+		if survivor.Language == "" {
+			survivor.Language = incoming.Language
+		}
 		mergeNodeLocations(&survivor.Locations, incoming.Locations)
 		survivor.Metadata = mergeMetadata(survivor.Metadata, incoming.Metadata)
 	case *ManifestNode:
