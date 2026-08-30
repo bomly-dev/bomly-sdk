@@ -276,3 +276,48 @@ func TestRelationshipDepthDoesNotResetBelowADependency(t *testing.T) {
 		t.Fatalf("dependency below a dependency = %q, want transitive", relationships[deep.NodeID()])
 	}
 }
+
+func TestModuleRejectsAssertedInvalidPURL(t *testing.T) {
+	// An explicitly asserted package URL is a claim the constructor must
+	// honor or refuse — never replace with a fabricated one. Both the
+	// unparseable and the profile-invalid cases fail, matching the
+	// dependency gate.
+	for _, asserted := range []string{"not-a-purl", "pkg:maven/commons-text@1.10.0"} {
+		if node, err := NewModuleNode("package.json", Coordinates{PURL: asserted, Name: "app"}); err == nil {
+			t.Errorf("NewModuleNode(%q) = %q, want rejection", asserted, node.NodeID())
+		}
+	}
+	// A module with no asserted package URL still falls back to path and
+	// name, and a valid assertion is honored.
+	if node, err := NewModuleNode("package.json", Coordinates{Name: "app"}); err != nil || node.NodeID() != "module:package.json#app" {
+		t.Fatalf("path fallback = %v, %v", node, err)
+	}
+	node, err := NewModuleNode("package.json", Coordinates{PURL: "pkg:npm/app@1.0.0"})
+	if err != nil || node.PURL() != "pkg:npm/app@1.0.0" {
+		t.Fatalf("valid assertion = %v, %v", node, err)
+	}
+}
+
+func TestEcosystemProjectsFromTheIdentity(t *testing.T) {
+	// A contradicting ecosystem cannot survive: it would seed the registry
+	// package into the wrong family and take the wrong name handling.
+	node, err := NewDependencyNode(Coordinates{PURL: "pkg:npm/foo@1.0.0", Ecosystem: EcosystemMaven, Name: "foo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node.Ecosystem != EcosystemNPM {
+		t.Fatalf("ecosystem = %q, want the identity's npm", node.Ecosystem)
+	}
+	if pkg := PackageFromDependencyNode(node); pkg.Ecosystem != EcosystemNPM {
+		t.Fatalf("seeded package ecosystem = %q, want npm", pkg.Ecosystem)
+	}
+	// A custom purl type resolves to no known ecosystem, so a detector's
+	// own token survives — the open vocabulary keeps its say.
+	custom, err := NewDependencyNode(Coordinates{PURL: "pkg:pokemon/pikachu@25", Ecosystem: Ecosystem("pokemon"), Name: "pikachu"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if custom.Ecosystem != Ecosystem("pokemon") {
+		t.Fatalf("custom ecosystem token = %q, want it preserved", custom.Ecosystem)
+	}
+}

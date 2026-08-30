@@ -239,7 +239,26 @@ func NewModuleNode(declaringManifestPath string, coords Coordinates) (*ModuleNod
 	// fabrications, and a module is the project's own record — without a
 	// real ecosystem it is identified by path and name (ADR-0041).
 	_, knownEcosystem := purlkit.CanonicalEcosystem(string(scratch.Ecosystem), scratch.PackageManager.Name(), string(scratch.Type))
-	if minted := scratch.CanonicalPURL(); minted != "" && (knownEcosystem || strings.TrimSpace(coords.PURL) != "") {
+	if asserted := strings.TrimSpace(coords.PURL); asserted != "" {
+		// An explicitly asserted package URL is a claim, not a hint: it
+		// must parse and satisfy its type's profile. Falling back to the
+		// coordinate builder would answer an invalid assertion with a
+		// fabricated identity ("not-a-purl" becoming pkg:generic/app),
+		// which is exactly what the dependency gate refuses to do.
+		identity, _, err := dependencyIdentityFromPURL(asserted)
+		if err != nil {
+			return nil, fmt.Errorf("module node: %w", err)
+		}
+		node.purl = identity.rendered
+		node.Coordinates.PURL = identity.rendered
+		identityTail = identity.rendered
+		if identity.missingVersion {
+			node.warnings = append(node.warnings, NodeWarning{
+				Code:    NodeWarningMissingVersion,
+				Message: "module package URL carries no version",
+			})
+		}
+	} else if minted := scratch.CanonicalPURL(); minted != "" && knownEcosystem {
 		if identity, evidence, err := dependencyIdentityFromPURL(minted); err == nil {
 			node.purl = identity.rendered
 			node.Coordinates.PURL = identity.rendered
