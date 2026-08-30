@@ -426,6 +426,14 @@ func normalizeIRIReference(locator string) (string, bool) {
 	if !isBoundedToken(locator) {
 		return "", false
 	}
+	// Percent escapes are checked directly. net/url accepts a malformed
+	// escape in an opaque or relative reference -- "urn:x:foo%ZZ" parses
+	// without error -- and publishing that puts a value in the document that
+	// every consumer's own parser will reject. The same rule already guards
+	// a reference URL's query.
+	if !hasValidPercentEscapes(locator) {
+		return "", false
+	}
 	parsed, err := url.Parse(locator)
 	if err != nil {
 		return "", false
@@ -476,6 +484,31 @@ func normalizeIRIReference(locator string) (string, bool) {
 	// checks, and nothing else -- so there is no rewriting to guard against,
 	// and the stored form is the published form by construction.
 	return locator, true
+}
+
+// hasValidPercentEscapes reports whether every "%" in a value introduces a
+// two-digit hex escape, which is the one piece of the IRI grammar net/url
+// does not enforce on the forms this gate accepts.
+func hasValidPercentEscapes(value string) bool {
+	for i := 0; i < len(value); i++ {
+		if value[i] != '%' {
+			continue
+		}
+		if i+2 >= len(value) || !isHexDigit(value[i+1]) || !isHexDigit(value[i+2]) {
+			return false
+		}
+		i += 2
+	}
+	return true
+}
+
+func isHexDigit(b byte) bool {
+	switch {
+	case b >= '0' && b <= '9', b >= 'a' && b <= 'f', b >= 'A' && b <= 'F':
+		return true
+	default:
+		return false
+	}
 }
 
 // isBoundedToken reports whether a value is a single token safe to write into

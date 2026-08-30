@@ -841,3 +841,27 @@ func TestRelativeIRIReferencesArePreserved(t *testing.T) {
 		t.Fatal("a relative locator was accepted for an SPDX advisory reference")
 	}
 }
+
+// TestIRILocatorsRejectMalformedEscapes pins the one piece of the grammar
+// net/url does not enforce on opaque and relative references. Publishing
+// "urn:x:foo%ZZ" puts a value in the document that every consumer's own
+// parser rejects.
+func TestIRILocatorsRejectMalformedEscapes(t *testing.T) {
+	for _, locator := range []string{
+		"urn:x:foo%ZZ",
+		"urn:x:foo%",
+		"urn:x:foo%A",
+		"../advisories/%GG",
+		"ftp://a.test/%zz",
+	} {
+		if got, ok := (ExternalReference{Type: "distribution", Locator: locator}).Normalized(); ok {
+			t.Errorf("%q was accepted with a malformed escape: %+v", locator, got)
+		}
+	}
+	// Well-formed escapes still pass, in both cases.
+	for _, locator := range []string{"urn:x:foo%2Fbar", "urn:x:foo%2fbar", "../advisories/%20x"} {
+		if _, ok := (ExternalReference{Type: "distribution", Locator: locator}).Normalized(); !ok {
+			t.Errorf("%q was rejected, but its escapes are well formed", locator)
+		}
+	}
+}
