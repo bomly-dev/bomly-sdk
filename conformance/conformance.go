@@ -92,10 +92,196 @@ func Test(t *testing.T, cfg Config) {
 		testRoleSpecific(t, cfg.Module, component)
 	})
 
+	t.Run("graph-wire", func(t *testing.T) {
+		testGraphWireRoundTrip(t)
+	})
+
 	if cfg.ManifestPath != "" {
 		t.Run("manifest", func(t *testing.T) {
 			testManifest(t, cfg.Module, cfg.ManifestPath)
 		})
+	}
+}
+
+// testGraphWireRoundTrip pins the typed graph-node wire contract every
+// plugin shares (ADR-0041): a graph holding all three node kinds survives
+// the module's own JSON codec with identities, kinds, and edges intact.
+// This is the payload shape detector plugins return and matcher, analyzer,
+// and auditor plugins receive, so a codec that cannot reproduce it would
+// break every graph-carrying request.
+func testGraphWireRoundTrip(t *testing.T) {
+	t.Helper()
+	manifest, err := sdk.NewManifestNode("package.json", "")
+	if err != nil {
+		t.Fatalf("NewManifestNode: %v", err)
+	}
+	// Coordinates that mint a package URL, so the module's legacy purl
+	// field carries something a pre-union peer would otherwise lose.
+	module, err := sdk.NewModuleNode("package.json", sdk.Coordinates{
+		Ecosystem: sdk.EcosystemNPM,
+		Name:      "app",
+		Version:   "1.0.0",
+	})
+	if err != nil {
+		t.Fatalf("NewModuleNode: %v", err)
+	}
+	// A qualifier-carrying identity: its coordinates alone cannot rebuild
+	// it, so the encoded purl field has to carry the identity itself.
+	dep, err := sdk.NewDependencyNodeFromPURL("pkg:apk/alpine/musl@1.2.5?arch=x86_64")
+	if err != nil {
+		t.Fatalf("NewDependencyNodeFromPURL: %v", err)
+	}
+	graph := sdk.New()
+	for _, node := range []sdk.GraphNode{manifest, module, dep} {
+		if err := graph.AddNode(node); err != nil {
+			t.Fatalf("AddNode(%s): %v", node.NodeID(), err)
+		}
+	}
+	if err := graph.AddEdge(manifest.NodeID(), module.NodeID()); err != nil {
+		t.Fatalf("AddEdge: %v", err)
+	}
+	if err := graph.AddEdge(module.NodeID(), dep.NodeID()); err != nil {
+		t.Fatalf("AddEdge: %v", err)
+	}
+
+	encoded, err := json.Marshal(graph)
+	if err != nil {
+		t.Fatalf("marshal graph: %v", err)
+	}
+	// Assert the discriminator on the encoded bytes, before decoding: the
+	// decoder's legacy inference would reconstruct these same three kinds
+	// from the manifest package type, the first-party marker, and the
+	// dependency default, so a codec that stopped emitting "kind" would
+	// still round-trip here while misclassifying ambiguous nodes.
+	var emitted struct {
+		Nodes []struct {
+			ID         string          `json:"id"`
+			Kind       sdk.NodeKind    `json:"kind"`
+			Type       sdk.PackageType `json:"type"`
+			PURL       string          `json:"purl"`
+			FirstParty bool            `json:"first_party"`
+		} `json:"nodes"`
+		Edges []map[string]string `json:"edges"`
+	}
+	if err := json.Unmarshal(encoded, &emitted); err != nil {
+		t.Fatalf("inspect encoded graph: %v", err)
+	}
+	if len(emitted.Nodes) != 3 {
+		t.Fatalf("encoded %d nodes, want 3", len(emitted.Nodes))
+	}
+	emittedKinds := make(map[string]sdk.NodeKind, len(emitted.Nodes))
+	for _, node := range emitted.Nodes {
+		if node.Kind == "" {
+			t.Fatalf("node %q was encoded without a kind discriminator", node.ID)
+		}
+		emittedKinds[node.ID] = node.Kind
+		// A pre-union v1 peer has no kind field and classifies from these
+		// legacy markers, so dropping them would misclassify nodes for
+		// older hosts and plugins while every check here still passed.
+		switch node.Kind {
+		case sdk.NodeKindManifest:
+			if node.Type != sdk.PackageTypeManifest {
+				t.Errorf("manifest node %q lost its legacy type marker", node.ID)
+			}
+		case sdk.NodeKindModule:
+			if !node.FirstParty {
+				t.Errorf("module node %q lost its legacy first-party marker", node.ID)
+			}
+			// A pre-union peer reads the module's identity from purl; the
+			// kind-qualified node ID means nothing to it.
+			if node.PURL != module.PURL() {
+				t.Errorf("module node %q encoded purl %q, want %q", node.ID, node.PURL, module.PURL())
+			}
+			if node.Type == sdk.PackageTypeManifest {
+				t.Errorf("module node %q carries the manifest type, which outranks the first-party marker in legacy inference", node.ID)
+			}
+		case sdk.NodeKindDependency:
+			if node.FirstParty {
+				t.Errorf("dependency node %q claims first-party ownership", node.ID)
+			}
+			// A pre-union peer reads purl directly, and an identity with
+			// qualifiers, a subpath, or a custom type cannot be rebuilt
+			// from coordinates — so the field has to carry the identity.
+			if node.PURL != node.ID {
+				t.Errorf("dependency node %q encoded purl %q, want the identity itself", node.ID, node.PURL)
+			}
+			// The manifest type outranks every other legacy marker, so a
+			// dependency carrying it reads as structural to a pre-union
+			// peer and drops out of that peer's matching entirely.
+			if node.Type == sdk.PackageTypeManifest {
+				t.Errorf("dependency node %q carries the manifest type", node.ID)
+			}
+		}
+	}
+
+	// Edges are asserted on the encoded payload, by field name: a single
+	// change to the shared JSON tags could rename or swap fromId and toId
+	// symmetrically, leaving this round trip correct while a version-skewed
+	// peer dropped or reversed every edge. The exact set is pinned too, so
+	// an extra edge the codec invents cannot hide behind per-parent lookups.
+	wantEdges := map[string]string{
+		manifest.NodeID(): module.NodeID(),
+		module.NodeID():   dep.NodeID(),
+	}
+	if len(emitted.Edges) != len(wantEdges) {
+		t.Fatalf("encoded %d edges, want %d: %v", len(emitted.Edges), len(wantEdges), emitted.Edges)
+	}
+	for _, edge := range emitted.Edges {
+		from, ok := edge["fromId"]
+		if !ok {
+			t.Fatalf("encoded edge %v has no fromId field", edge)
+		}
+		to, ok := edge["toId"]
+		if !ok {
+			t.Fatalf("encoded edge %v has no toId field", edge)
+		}
+		if want, known := wantEdges[from]; !known || want != to {
+			t.Fatalf("encoded edge %q -> %q is not part of the expected topology", from, to)
+		}
+	}
+
+	var decoded sdk.Graph
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("unmarshal graph: %v", err)
+	}
+	if decoded.Size() != 3 {
+		t.Fatalf("round-tripped size = %d, want 3", decoded.Size())
+	}
+	for _, want := range []struct {
+		id   string
+		kind sdk.NodeKind
+	}{
+		{manifest.NodeID(), sdk.NodeKindManifest},
+		{module.NodeID(), sdk.NodeKindModule},
+		{dep.NodeID(), sdk.NodeKindDependency},
+	} {
+		node, ok := decoded.Node(want.id)
+		if !ok || node.Kind() != want.kind {
+			t.Fatalf("node %q lost or re-kinded across the wire: %#v", want.id, node)
+		}
+		if emittedKinds[want.id] != want.kind {
+			t.Fatalf("node %q encoded kind %q, want %q", want.id, emittedKinds[want.id], want.kind)
+		}
+	}
+	// Both edges, not just the dependency one: the manifest-to-module edge
+	// is the structural half of the topology, and a codec that dropped only
+	// that half would otherwise pass.
+	for _, edge := range []struct{ parent, child string }{
+		{manifest.NodeID(), module.NodeID()},
+		{module.NodeID(), dep.NodeID()},
+	} {
+		children, err := decoded.DirectDependencies(edge.parent)
+		if err != nil {
+			t.Fatalf("edges of %q lost across the wire: %v", edge.parent, err)
+		}
+		if len(children) != 1 || children[0].NodeID() != edge.child {
+			t.Fatalf("edge %q -> %q lost across the wire: got %v", edge.parent, edge.child, children)
+		}
+	}
+	// The leaf keeps no children: per-parent lookups alone would not catch
+	// an edge the codec invented at the dependency.
+	if children, err := decoded.DirectDependencies(dep.NodeID()); err != nil || len(children) != 0 {
+		t.Fatalf("dependency gained %v children across the wire (%v)", children, err)
 	}
 }
 
