@@ -119,7 +119,9 @@ func testGraphWireRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewModuleNode: %v", err)
 	}
-	dep, err := sdk.NewDependencyNodeFromPURL("pkg:npm/left-pad@1.3.0")
+	// A qualifier-carrying identity: its coordinates alone cannot rebuild
+	// it, so the encoded purl field has to carry the identity itself.
+	dep, err := sdk.NewDependencyNodeFromPURL("pkg:apk/alpine/musl@1.2.5?arch=x86_64")
 	if err != nil {
 		t.Fatalf("NewDependencyNodeFromPURL: %v", err)
 	}
@@ -150,6 +152,7 @@ func testGraphWireRoundTrip(t *testing.T) {
 			ID         string          `json:"id"`
 			Kind       sdk.NodeKind    `json:"kind"`
 			Type       sdk.PackageType `json:"type"`
+			PURL       string          `json:"purl"`
 			FirstParty bool            `json:"first_party"`
 		} `json:"nodes"`
 		Edges []map[string]string `json:"edges"`
@@ -184,6 +187,12 @@ func testGraphWireRoundTrip(t *testing.T) {
 		case sdk.NodeKindDependency:
 			if node.FirstParty {
 				t.Errorf("dependency node %q claims first-party ownership", node.ID)
+			}
+			// A pre-union peer reads purl directly, and an identity with
+			// qualifiers, a subpath, or a custom type cannot be rebuilt
+			// from coordinates — so the field has to carry the identity.
+			if node.PURL != node.ID {
+				t.Errorf("dependency node %q encoded purl %q, want the identity itself", node.ID, node.PURL)
 			}
 			// The manifest type outranks every other legacy marker, so a
 			// dependency carrying it reads as structural to a pre-union
