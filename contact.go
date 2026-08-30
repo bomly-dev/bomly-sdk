@@ -3,6 +3,8 @@ package sdk
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"regexp"
 	"strings"
 )
 
@@ -73,6 +75,31 @@ type Contact struct {
 	URL string `json:"url,omitempty"`
 }
 
+// addressPattern matches an email address embedded in a URL.
+//
+// It requires a local part immediately before the "@" and a dotted domain
+// after it, which is what keeps it off the common case it would otherwise
+// break: an npm scope path such as "/package/@scope/pkg" has no local part
+// before its "@", and a coordinate such as "pkg@1.0.0" has no dotted domain
+// with an alphabetic suffix after it. A blanket "@" test would reject both.
+var addressPattern = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)
+
+// urlCarriesAddress reports whether a URL carries an email address anywhere a
+// reader would see it.
+//
+// NormalizeURL already rejects an address in the userinfo position, but the
+// reference form keeps the path, query, and fragment, and a contact URL like
+// "https://acme.test/contact?email=jane@example.com" would otherwise store the
+// address the type exists not to store. The percent-decoded form is checked as
+// well, since "%40" is the same character to whoever reads the page.
+func urlCarriesAddress(raw string) bool {
+	if addressPattern.MatchString(raw) {
+		return true
+	}
+	decoded, err := url.QueryUnescape(raw)
+	return err == nil && decoded != raw && addressPattern.MatchString(decoded)
+}
+
 // maxContactNameLength bounds a party name. Real supplier names run to a few
 // dozen characters; the allowance covers long legal names without admitting a
 // value that is really a document.
@@ -101,8 +128,8 @@ func (c Contact) Normalized() (Contact, bool) {
 		normalized.Name = ""
 	}
 	normalized.Name = stripAddressTokens(normalized.Name)
-	if url, ok := NormalizeURL(c.URL, URLFormReference); ok {
-		normalized.URL = url
+	if candidate, ok := NormalizeURL(c.URL, URLFormReference); ok && !urlCarriesAddress(candidate) {
+		normalized.URL = candidate
 	}
 	// NOASSERTION is a claim in its own right and needs no name; every other
 	// kind is only meaningful with one.

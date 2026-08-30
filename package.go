@@ -154,7 +154,15 @@ func (l PackageLicense) Normalized() (PackageLicense, bool) {
 	if len(normalized.ExtractedText) > maxExtractedLicenseTextLength || strings.TrimSpace(normalized.ExtractedText) == "" {
 		normalized.ExtractedText = ""
 	}
-	if strings.HasPrefix(normalized.SPDXExpression, spdxkit.LicenseRefPrefix) {
+	// The test is "is this expression a single well-formed reference", not
+	// "does it start with the prefix". A compound whose first operand happens
+	// to be a reference -- "LicenseRef-Acme OR MIT" -- is an expression, and
+	// treating it as a bare reference re-minted the whole thing and dropped
+	// the "OR MIT" operand, while the same claim written the other way round
+	// survived intact. Operand order must not decide whether a license is
+	// kept. Everything that is not a bare reference, malformed references
+	// included, goes to the expression path below.
+	if spdxkit.ValidLicenseRef(normalized.SPDXExpression) {
 		switch {
 		case strings.TrimSpace(normalized.ExtractedText) == "":
 			// A reference with no text cannot be published: the citation
@@ -165,11 +173,6 @@ func (l PackageLicense) Normalized() (PackageLicense, bool) {
 		case strings.HasPrefix(normalized.SPDXExpression, spdxkit.BomlyLicenseRefPrefix):
 			// Bomly's own references are derived from their text, so a
 			// disagreement is repaired by re-minting rather than trusted.
-			normalized.SPDXExpression = spdxkit.MintLicenseRef(normalized.ExtractedText).RefID
-		case !spdxkit.ValidLicenseRef(normalized.SPDXExpression):
-			// A source-defined reference that is not a well-formed idstring
-			// cannot go into an expression field verbatim. Re-mint under
-			// Bomly's prefix so the text still travels with a citation.
 			normalized.SPDXExpression = spdxkit.MintLicenseRef(normalized.ExtractedText).RefID
 		default:
 			// A well-formed reference the source document defined is kept as

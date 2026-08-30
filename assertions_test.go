@@ -61,6 +61,55 @@ func TestParseDigestAlgorithmAcceptsEveryFormatSpelling(t *testing.T) {
 	}
 }
 
+// TestDigestAlgorithmRegistryMatchesTheSpecifications pins every row's format
+// spellings against literals written out independently of the registry.
+//
+// This is the only guard that can catch a typo in a format column. A loop over
+// digestAlgorithmProfiles cannot: the alias index is built from that same
+// table, so a misspelled "ADLR32" would register itself and resolve happily to
+// its own row while every exported document carried a value the format
+// rejects. Checking against the table is checking the table against itself.
+func TestDigestAlgorithmRegistryMatchesTheSpecifications(t *testing.T) {
+	// SPDX 2.3 ChecksumAlgorithm and CycloneDX 1.5/1.6 hash-alg, transcribed
+	// here a second time. An empty string means that format does not define
+	// the algorithm.
+	expected := map[DigestAlgorithm]struct{ spdx, cycloneDX string }{
+		DigestAlgorithmMD2:        {"MD2", ""},
+		DigestAlgorithmMD4:        {"MD4", ""},
+		DigestAlgorithmMD5:        {"MD5", "MD5"},
+		DigestAlgorithmMD6:        {"MD6", ""},
+		DigestAlgorithmSHA1:       {"SHA1", "SHA-1"},
+		DigestAlgorithmSHA224:     {"SHA224", ""},
+		DigestAlgorithmSHA256:     {"SHA256", "SHA-256"},
+		DigestAlgorithmSHA384:     {"SHA384", "SHA-384"},
+		DigestAlgorithmSHA512:     {"SHA512", "SHA-512"},
+		DigestAlgorithmSHA3256:    {"SHA3-256", "SHA3-256"},
+		DigestAlgorithmSHA3384:    {"SHA3-384", "SHA3-384"},
+		DigestAlgorithmSHA3512:    {"SHA3-512", "SHA3-512"},
+		DigestAlgorithmBLAKE2b256: {"BLAKE2b-256", "BLAKE2b-256"},
+		DigestAlgorithmBLAKE2b384: {"BLAKE2b-384", "BLAKE2b-384"},
+		DigestAlgorithmBLAKE2b512: {"BLAKE2b-512", "BLAKE2b-512"},
+		DigestAlgorithmBLAKE3:     {"BLAKE3", "BLAKE3"},
+		DigestAlgorithmADLER32:    {"ADLER32", ""},
+	}
+	if len(expected) != len(digestAlgorithmProfiles) {
+		t.Fatalf("registry holds %d rows, this test pins %d; a row was added without its spellings",
+			len(digestAlgorithmProfiles), len(expected))
+	}
+	for algorithm, want := range expected {
+		if got := algorithm.SPDXName(); got != want.spdx {
+			t.Errorf("%q SPDX spelling = %q, want %q", algorithm, got, want.spdx)
+		}
+		if got := algorithm.CycloneDXName(); got != want.cycloneDX {
+			t.Errorf("%q CycloneDX spelling = %q, want %q", algorithm, got, want.cycloneDX)
+		}
+		// The canonical token is itself a spelling that must resolve back.
+		if got, err := ParseDigestAlgorithm(string(algorithm)); err != nil || got != algorithm {
+			t.Errorf("canonical token %q resolved to %q (err=%v)", algorithm, got, err)
+		}
+	}
+}
+
 // TestDigestAlgorithmFormatProjections pins that an algorithm one format does
 // not define reports no spelling there. A caller treats "" as "omit this
 // digest"; returning the canonical token instead would emit a value that
@@ -602,7 +651,7 @@ func TestDependencyNodeWireGatesArrivingAssertions(t *testing.T) {
 	if got.Description != "badtext" {
 		t.Fatalf("description = %q, want the control character dropped", got.Description)
 	}
-	if got.Supplier != nil && got.Supplier.Name != "" {
+	if got.Supplier != nil {
 		t.Fatalf("an unpublishable supplier survived the decoder: %+v", got.Supplier)
 	}
 }
@@ -1166,5 +1215,66 @@ func TestPackageMergeFromGatesItsDestination(t *testing.T) {
 	}
 	if dst.Supplier == nil || dst.Supplier.Name != "Meta" {
 		t.Fatalf("supplier = %+v, want the valid update to win", dst.Supplier)
+	}
+}
+
+// TestPackageLicenseKeepsCompoundOperandOrderIrrelevant pins that a compound
+// expression is treated as an expression whichever operand comes first.
+// Testing the prefix alone routed "LicenseRef-Acme OR MIT" into the bare
+// reference branch, where it failed the idstring check and was replaced whole
+// by a minted reference — dropping "OR MIT", while the same claim written the
+// other way round survived intact.
+func TestPackageLicenseKeepsCompoundOperandOrderIrrelevant(t *testing.T) {
+	for _, expression := range []string{"LicenseRef-Acme OR MIT", "MIT OR LicenseRef-Acme"} {
+		normalized, ok := PackageLicense{SPDXExpression: expression, ExtractedText: "Acme terms."}.Normalized()
+		if !ok {
+			t.Fatalf("%q was rejected", expression)
+		}
+		if normalized.SPDXExpression != expression {
+			t.Fatalf("%q normalized to %q; operand order must not decide what is kept", expression, normalized.SPDXExpression)
+		}
+	}
+	// A bare reference is still handled as one: Bomly's own is re-minted from
+	// its text, and a malformed one is replaced rather than written verbatim.
+	minted := spdxkit.MintLicenseRef("Acme terms.").RefID
+	malformed, ok := PackageLicense{SPDXExpression: `LicenseRef-Acme Commercial "v2"`, ExtractedText: "Acme terms."}.Normalized()
+	if !ok || malformed.SPDXExpression != minted {
+		t.Fatalf("malformed reference normalized to %+v, want the minted citation", malformed)
+	}
+	source, ok := PackageLicense{SPDXExpression: "LicenseRef-Acme", ExtractedText: "Acme terms."}.Normalized()
+	if !ok || source.SPDXExpression != "LicenseRef-Acme" {
+		t.Fatalf("a bare source-defined reference normalized to %+v, want it preserved", source)
+	}
+}
+
+// TestContactURLCarriesNoAddress pins the privacy rule against the one place
+// an address could still reach a stored contact: NormalizeURL rejects an
+// address in the userinfo position, but the reference form keeps the path,
+// query, and fragment.
+func TestContactURLCarriesNoAddress(t *testing.T) {
+	for _, raw := range []string{
+		"https://acme.test/contact?email=jane@example.com",
+		"https://acme.test/contact?email=jane%40example.com",
+		"https://acme.test/#write-to-jane@example.com",
+	} {
+		contact, ok := (Contact{Kind: ContactKindOrganization, Name: "Acme", URL: raw}).Normalized()
+		if !ok {
+			t.Fatalf("contact with URL %q was rejected outright; the name should survive", raw)
+		}
+		if contact.URL != "" {
+			t.Fatalf("URL %q kept an address: %q", raw, contact.URL)
+		}
+	}
+	// The rule must not catch the shapes that merely contain "@": an npm
+	// scope path and a coordinate are both common and neither is an address.
+	for _, raw := range []string{
+		"https://npmjs.test/package/@scope/pkg",
+		"https://acme.test/releases/pkg@1.0.0",
+		"https://acme.test/",
+	} {
+		contact, ok := (Contact{Kind: ContactKindOrganization, Name: "Acme", URL: raw}).Normalized()
+		if !ok || contact.URL != raw {
+			t.Fatalf("URL %q was dropped as an address: %+v (ok=%v)", raw, contact, ok)
+		}
 	}
 }
