@@ -322,12 +322,23 @@ func resolveLicenseRefCollision(license PackageLicense, textByRef map[string]str
 		return license
 	}
 	ref := refs[0]
+	// Texts are compared by what they mint, not by their bytes. MintLicenseRef
+	// collapses whitespace before hashing, so two texts differing only in
+	// spacing name the same license -- comparing bytes would send them down
+	// the re-mint path, where the mint equals the reference already in hand
+	// and the assignment changes nothing, leaving one reference naming two
+	// texts: precisely the ambiguity this function exists to prevent.
+	minted := spdxkit.MintLicenseRef(license.ExtractedText).RefID
 	prior, seen := textByRef[ref]
 	switch {
 	case !seen:
 		textByRef[ref] = text
-	case prior != text:
-		minted := spdxkit.MintLicenseRef(license.ExtractedText).RefID
+	case spdxkit.MintLicenseRef(prior).RefID == minted:
+		// The same license written differently. Adopt the text already
+		// recorded for this reference so the two records agree byte for byte
+		// rather than differing in whitespace under one identifier.
+		license.ExtractedText = prior
+	default:
 		license.SPDXExpression = spdxkit.ReplaceLicenseRef(license.SPDXExpression, ref, minted)
 		textByRef[minted] = text
 	}
@@ -484,20 +495,39 @@ type Package struct {
 	// Description is the package's own summary of itself, as the source
 	// document or registry stated it. SPDX PackageDescription / CycloneDX
 	// component description.
+	//
+	// Gate: NormalizeDescription -- trimmed and bounded, control characters
+	// dropped, an over-long value cleared rather than truncated.
+	// Merge class: scalar, fill-gaps. The first publishable witness wins and
+	// a later one contributes only what is missing.
 	Description string `json:"description,omitempty"`
 	// Homepage is the package's project page. SPDX PackageHomePage /
-	// CycloneDX an external reference of type website. Held to
-	// URLFormReference: a homepage is a citation, so a bare host and a query
-	// are legitimate where they would not be for an artifact URL.
+	// CycloneDX an external reference of type website.
+	//
+	// Gate: NormalizeHomepage -- URLFormReference, so a bare host and a query
+	// are legitimate where they would not be for an artifact URL, while
+	// credentials, local paths, and non-http schemes are cleared.
+	// Merge class: scalar, fill-gaps.
 	Homepage string `json:"homepage,omitempty"`
 	// Supplier is who distributed the package. SPDX PackageSupplier /
 	// CycloneDX supplier.
+	//
+	// Gate: Contact.Normalized -- an unpublishable contact becomes nil, and
+	// no email address is retained (see Contact).
+	// Merge class: scalar, fill-gaps.
 	Supplier *Contact `json:"supplier,omitempty"`
 	// Originator is who originally authored the package, which is often not
 	// the supplier -- a redistributor supplies what someone else wrote. SPDX
 	// PackageOriginator / CycloneDX author or publisher.
+	//
+	// Gate and merge class: as Supplier.
 	Originator *Contact `json:"originator,omitempty"`
 
+	// CPEs, Digests, and Licenses are set-valued: every witness's claims
+	// survive a merge, because two sources can each know something the other
+	// does not. Gates: Digest.Normalized and PackageLicense.Normalized drop
+	// what cannot be published; MergeLicenses additionally keeps two sources
+	// that reuse one license reference for different terms apart.
 	CPEs            []string             `json:"cpes,omitempty"`
 	Digests         []Digest             `json:"digests,omitempty"`
 	Licenses        []PackageLicense     `json:"licenses,omitempty"`
@@ -582,6 +612,38 @@ func (p *Package) LicenseValues() []string {
 	}
 	sort.Strings(values)
 	return values
+}
+
+// packageWire carries Package's fields without its methods, so the JSON hooks
+// below can encode and decode without recursing.
+type packageWire Package
+
+// UnmarshalJSON applies the package rule as a value arrives, and MarshalJSON
+// applies it again on the way out.
+//
+// The codec lives on the type because the registry is not the only path a
+// package takes. A matcher or analyzer returns PackageUpdates on its result,
+// which the plugin transport serializes directly -- never through
+// PackageRegistry -- so a gate that lived only at the registry let a
+// credential-bearing homepage cross the wire, and let contacts and digests the
+// model had already rejected encode as empty "{}" objects.
+func (p *Package) UnmarshalJSON(data []byte) error {
+	var wire packageWire
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	decoded := Package(wire)
+	decoded.NormalizeAssertions()
+	*p = decoded
+	return nil
+}
+
+// MarshalJSON re-gates on the way out. The receiver is a value, so
+// normalization applies to this copy and never rewrites the record its holder
+// still owns.
+func (p Package) MarshalJSON() ([]byte, error) {
+	p.NormalizeAssertions()
+	return json.Marshal(packageWire(p))
 }
 
 // NormalizeAssertions re-runs the publication gate on every field of p that

@@ -1278,3 +1278,108 @@ func TestContactURLCarriesNoAddress(t *testing.T) {
 		}
 	}
 }
+
+// TestPackageUpdatesAreGatedOnTheWire pins the path the registry gate could
+// never cover. A matcher or analyzer returns PackageUpdates on its result, and
+// the plugin transport serializes those directly — never through
+// PackageRegistry — so a gate that lived only at the registry let a
+// credential-bearing homepage cross the wire and let already-rejected contacts
+// and digests encode as empty "{}" objects.
+func TestPackageUpdatesAreGatedOnTheWire(t *testing.T) {
+	result := MatchResult{PackageUpdates: []*Package{{
+		Coordinates: Coordinates{PURL: "pkg:npm/a@1.0.0"},
+		Homepage:    "https://user:pw@evil.test/",
+		Description: "bad\x07text",
+		Supplier:    &Contact{Kind: ContactKindOrganization},
+		Digests: []Digest{
+			{Algorithm: "crc32", Value: "zz"},
+			{Algorithm: DigestAlgorithmSHA256, Value: "ok"},
+		},
+	}}}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("encode result: %v", err)
+	}
+	for _, forbidden := range []string{"user:pw", "\\u0007", `"supplier"`, "{}"} {
+		if strings.Contains(string(encoded), forbidden) {
+			t.Fatalf("serialized package updates contain %s: %s", forbidden, encoded)
+		}
+	}
+	if !strings.Contains(string(encoded), `"value":"ok"`) {
+		t.Fatalf("the publishable digest was dropped too: %s", encoded)
+	}
+
+	// The gate applies on the way in as well.
+	var decoded Package
+	if err := json.Unmarshal([]byte(`{"purl":"pkg:npm/a@1.0.0","homepage":"https://user:pw@evil.test/"}`), &decoded); err != nil {
+		t.Fatalf("decode package: %v", err)
+	}
+	if decoded.Homepage != "" {
+		t.Fatalf("credentials survived the package decoder: %q", decoded.Homepage)
+	}
+
+	// Marshaling must not rewrite the record its holder still owns.
+	held := &Package{Coordinates: Coordinates{PURL: "pkg:npm/a@1.0.0"}, Homepage: "https://user:pw@evil.test/"}
+	if _, err := json.Marshal(held); err != nil {
+		t.Fatalf("encode package: %v", err)
+	}
+	if held.Homepage != "https://user:pw@evil.test/" {
+		t.Fatalf("marshaling mutated the caller's record: %q", held.Homepage)
+	}
+}
+
+// TestDigestRejectsUnknownSubjects pins the closed subject vocabulary. An
+// unrecognized subject cannot be cleared to the zero value instead: empty
+// means "the published artifact", so treating an uninterpretable label as
+// absent would publish a claim about what the hash covers that its producer
+// never made.
+func TestDigestRejectsUnknownSubjects(t *testing.T) {
+	var digest Digest
+	if err := json.Unmarshal([]byte(`{"algorithm":"sha256","value":"abc","subject":"archive"}`), &digest); err != nil {
+		t.Fatalf("decode digest: %v", err)
+	}
+	if digest != (Digest{}) {
+		t.Fatalf("an unknown subject decoded to %+v, want the digest dropped", digest)
+	}
+	// Validate reports it too, for a caller that asks directly rather than
+	// going through the codec.
+	if err := (Digest{Algorithm: DigestAlgorithmSHA256, Value: "abc", Subject: "archive"}).Validate(); err == nil {
+		t.Fatal("Validate accepted an unknown subject")
+	}
+	// The three declared subjects still round-trip.
+	for _, subject := range []DigestSubject{DigestSubjectArtifact, DigestSubjectSourceTree, DigestSubjectMetadata} {
+		normalized, ok := Digest{Algorithm: DigestAlgorithmSHA256, Value: "abc", Subject: subject}.Normalized()
+		if !ok || normalized.Subject != subject {
+			t.Fatalf("subject %q was rejected: %+v ok=%v", subject, normalized, ok)
+		}
+	}
+	// A declared subject spelled differently is normalized rather than
+	// rejected: the parse is what makes the vocabulary usable, not only what
+	// closes it.
+	normalized, ok := Digest{Algorithm: DigestAlgorithmSHA256, Value: "abc", Subject: "  SOURCE-TREE  "}.Normalized()
+	if !ok || normalized.Subject != DigestSubjectSourceTree {
+		t.Fatalf("a padded, upper-case subject normalized to %+v (ok=%v), want %q", normalized, ok, DigestSubjectSourceTree)
+	}
+}
+
+// TestMergeLicensesTreatsWhitespaceVariantsAsOneText pins the comparison
+// MintLicenseRef implies. It collapses whitespace before hashing, so two texts
+// differing only in spacing name the same license; comparing raw bytes sent
+// them down the re-mint path, where the mint equals the reference already in
+// hand and the assignment changes nothing — leaving one reference naming two
+// texts, the exact ambiguity the resolver exists to prevent.
+func TestMergeLicensesTreatsWhitespaceVariantsAsOneText(t *testing.T) {
+	merged := MergeLicenses(
+		[]PackageLicense{{Value: "A", ExtractedText: "Custom terms."}},
+		[]PackageLicense{{Value: "B", ExtractedText: "Custom    terms."}},
+	)
+	if len(merged) != 2 {
+		t.Fatalf("merged = %+v, want both claims (their Values differ)", merged)
+	}
+	if merged[0].SPDXExpression != merged[1].SPDXExpression {
+		t.Fatalf("one license got two references: %q and %q", merged[0].SPDXExpression, merged[1].SPDXExpression)
+	}
+	if merged[0].ExtractedText != merged[1].ExtractedText {
+		t.Fatalf("one reference names two texts: %q and %q", merged[0].ExtractedText, merged[1].ExtractedText)
+	}
+}

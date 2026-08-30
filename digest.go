@@ -204,6 +204,13 @@ func (d Digest) Validate() error {
 	if !d.Algorithm.Valid() {
 		return fmt.Errorf("unsupported digest algorithm %q", d.Algorithm)
 	}
+	// An unrecognized subject cannot be cleared to the zero value instead:
+	// empty means "the published artifact", so treating an uninterpretable
+	// label as absent would publish a claim the producer never made about
+	// what the hash covers.
+	if !d.Subject.Valid() {
+		return fmt.Errorf("unsupported digest subject %q", d.Subject)
+	}
 	value := strings.TrimSpace(d.Value)
 	if value == "" {
 		return fmt.Errorf("digest value is empty")
@@ -229,7 +236,11 @@ func (d Digest) Normalized() (Digest, bool) {
 	if err != nil {
 		return Digest{}, false
 	}
-	normalized := Digest{Algorithm: algorithm, Value: strings.TrimSpace(d.Value), Subject: d.Subject}
+	subject, err := ParseDigestSubject(string(d.Subject))
+	if err != nil {
+		return Digest{}, false
+	}
+	normalized := Digest{Algorithm: algorithm, Value: strings.TrimSpace(d.Value), Subject: subject}
 	if normalized.Validate() != nil {
 		return Digest{}, false
 	}
@@ -298,6 +309,32 @@ const (
 	// rather than of the package itself, such as a manifest or lockfile entry.
 	DigestSubjectMetadata DigestSubject = "metadata"
 )
+
+// ParseDigestSubject normalizes a digest subject. The vocabulary is closed:
+// Subject says what a hash covers, and it takes part in a digest's identity,
+// so an unrecognized value is an integrity claim no consumer can interpret
+// rather than a label to carry along.
+func ParseDigestSubject(value string) (DigestSubject, error) {
+	switch DigestSubject(strings.ToLower(strings.TrimSpace(value))) {
+	case DigestSubjectArtifact:
+		return DigestSubjectArtifact, nil
+	case DigestSubjectSourceTree:
+		return DigestSubjectSourceTree, nil
+	case DigestSubjectMetadata:
+		return DigestSubjectMetadata, nil
+	default:
+		return "", fmt.Errorf("unsupported digest subject %q", value)
+	}
+}
+
+// Valid reports whether s is a recognized subject.
+func (s DigestSubject) Valid() bool {
+	_, err := ParseDigestSubject(string(s))
+	return err == nil
+}
+
+// String returns the subject token.
+func (s DigestSubject) String() string { return string(s) }
 
 // mergeDigests unions digests rather than keeping whichever record arrived
 // first. Two records can carry genuinely different claims about one package --

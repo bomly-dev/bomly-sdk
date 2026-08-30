@@ -410,15 +410,17 @@ func (r *PackageRegistry) MarshalJSON() ([]byte, error) {
 		if pkg == nil || pkg.PURL == "" {
 			continue
 		}
-		// Re-gated on the way out, on the clone rather than on the stored
-		// record. Add is the door in, but Ensure, Get, and All hand back
-		// mutable pointers and the established pattern is to mutate what
-		// Ensure returns, so a matcher can install an unpublishable homepage
-		// after insertion. Normalizing the copy keeps that from crossing the
-		// wire without rewriting a record its holder still owns.
-		clone := pkg.Clone()
-		clone.NormalizeAssertions()
-		payload[pkg.PURL] = clone
+		// Package's own codec re-gates each record as it is written, so a
+		// value installed after insertion -- Ensure, Get, and All all hand
+		// back mutable pointers -- cannot cross the wire unchecked. The gate
+		// lives on the type rather than here because package updates on a
+		// matcher result never pass through this registry at all.
+		//
+		// No defensive copy: that codec has a value receiver, so it
+		// normalizes its own copy and cannot rewrite the stored record. A
+		// clone here would deep-copy every package on every marshal to
+		// prevent something that can no longer happen.
+		payload[pkg.PURL] = pkg
 	}
 	return json.Marshal(payload)
 }
