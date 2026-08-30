@@ -1,8 +1,12 @@
 package sdk
 
 import (
+	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/bomly-dev/bomly-sdk/spdxkit"
 )
 
 // PackageType describes the broad role or artifact kind of a package node.
@@ -32,20 +36,47 @@ func ParsePackageType(value string) PackageType {
 // String returns the package type value.
 func (t PackageType) String() string { return string(t) }
 
-// LicenseType identifies license provenance.
+// LicenseType identifies license provenance: who is making the claim. Both
+// SBOM formats draw the same distinction -- SPDX as licenseDeclared versus
+// licenseConcluded, CycloneDX 1.6 as the acknowledgement field -- and it
+// matters to a reader, because a declared license is what the package says
+// about itself while a concluded one is what an analysis decided after
+// looking. Collapsing them, as a single-valued vocabulary does, publishes an
+// opinion as if the package had stated it.
 type LicenseType string
 
 const (
+	// LicenseTypeDeclared is the license the package declares about itself:
+	// a manifest field, a registry record, a lockfile entry.
 	LicenseTypeDeclared LicenseType = "declared"
+	// LicenseTypeConcluded is the license an analysis concluded, having
+	// looked at more than the declaration -- a license file's text, a scan
+	// result, a human review. It may contradict the declaration, which is a
+	// fact worth publishing rather than a conflict to resolve.
+	LicenseTypeConcluded LicenseType = "concluded"
 )
 
-// DigestAlgorithm identifies an artifact digest algorithm.
+// ParseLicenseType normalizes a license provenance value. An empty value is
+// unknown provenance, which is legal; anything else unrecognized is an error,
+// since a misspelled provenance would silently publish a conclusion as a
+// declaration.
+func ParseLicenseType(value string) (LicenseType, error) {
+	switch LicenseType(strings.ToLower(strings.TrimSpace(value))) {
+	case "":
+		return "", nil
+	case LicenseTypeDeclared:
+		return LicenseTypeDeclared, nil
+	case LicenseTypeConcluded:
+		return LicenseTypeConcluded, nil
+	default:
+		return "", fmt.Errorf("unsupported license type %q", value)
+	}
+}
+
+// DigestAlgorithm identifies an artifact digest algorithm. The vocabulary is
+// the registry in digest.go, aligned with the SPDX 2.3 and CycloneDX 1.5/1.6
+// hash vocabularies; see DigestAlgorithms.
 type DigestAlgorithm string
-
-const (
-	DigestAlgorithmSHA1   DigestAlgorithm = "sha1"
-	DigestAlgorithmSHA256 DigestAlgorithm = "sha256"
-)
 
 // PackageLocation captures where a package was discovered.
 type PackageLocation struct {
@@ -58,9 +89,161 @@ type PackageLocation struct {
 
 // PackageLicense captures normalized license details for a package.
 type PackageLicense struct {
-	Value          string      `json:"value,omitempty"`
-	SPDXExpression string      `json:"spdx_expression,omitempty"`
-	Type           LicenseType `json:"type,omitempty"`
+	// Value is the license as the source stated it, unmodified.
+	Value string `json:"value,omitempty"`
+	// SPDXExpression is the validated SPDX expression form, when the value
+	// has one. For a license that is not on the SPDX list, this is a minted
+	// LicenseRef-* identifier whose text is carried in ExtractedText.
+	SPDXExpression string `json:"spdx_expression,omitempty"`
+	// Type is who made the claim; see LicenseType.
+	Type LicenseType `json:"type,omitempty"`
+	// Name is the human-readable license name for a LicenseRef-* identifier.
+	// SPDX's hasExtractedLicensingInfos carries one, and a reader given only
+	// "LicenseRef-bomly-3f2a..." has nothing to go on.
+	Name string `json:"name,omitempty"`
+	// ExtractedText is the original license text a LicenseRef-* identifier
+	// names. Both formats require the text to accompany the reference -- an
+	// SPDX document whose expression cites a LicenseRef without a matching
+	// hasExtractedLicensingInfos entry is invalid -- so the pair travels
+	// together on one record rather than in a side table that a merge or a
+	// projection could separate it from (bomly-cli issue #410).
+	//
+	// The text is authoritative and the reference is derived from it, per
+	// spdxkit.MintLicenseRef. Normalized re-mints rather than trusting a
+	// reference that disagrees with its text.
+	ExtractedText string `json:"extracted_text,omitempty"`
+}
+
+// maxExtractedLicenseTextLength bounds carried license text. Long licenses run
+// to a few tens of kilobytes; the allowance covers them with room to spare
+// while keeping a hostile document from carrying a megabyte of text per
+// component through the plugin wire.
+const maxExtractedLicenseTextLength = 128 * 1024
+
+// Normalized returns the license with its claim re-checked, or false when the
+// record says nothing publishable. It is the gate for a license that arrived
+// from a plugin, an ingested document, or a hand-built value.
+//
+// Two rules are enforced. An unrecognized provenance is dropped to unknown
+// rather than published as a claim nobody made. And a LicenseRef-* expression
+// is re-minted from its text, since spdxkit makes the text authoritative: a
+// reference that disagrees with the text it names would produce a document
+// whose citation resolves to the wrong license.
+func (l PackageLicense) Normalized() (PackageLicense, bool) {
+	normalized := PackageLicense{
+		Value:          strings.TrimSpace(l.Value),
+		SPDXExpression: strings.TrimSpace(l.SPDXExpression),
+		Name:           strings.TrimSpace(l.Name),
+		ExtractedText:  l.ExtractedText,
+	}
+	if licenseType, err := ParseLicenseType(string(l.Type)); err == nil {
+		normalized.Type = licenseType
+	}
+	// Whitespace-only text is not text. It would otherwise mint the reference
+	// that empty text mints and publish a citation whose licensing entry says
+	// nothing -- a document that does not validate and, worse, one where
+	// every package with blank text shares one reference.
+	if len(normalized.ExtractedText) > maxExtractedLicenseTextLength || strings.TrimSpace(normalized.ExtractedText) == "" {
+		normalized.ExtractedText = ""
+	}
+	if strings.HasPrefix(normalized.SPDXExpression, spdxkit.LicenseRefPrefix) {
+		switch {
+		case strings.TrimSpace(normalized.ExtractedText) == "":
+			// A reference with no text cannot be published: the citation
+			// would dangle and the document would not validate. The stated
+			// value survives on its own.
+			normalized.SPDXExpression = ""
+			normalized.Name = ""
+		case strings.HasPrefix(normalized.SPDXExpression, spdxkit.BomlyLicenseRefPrefix):
+			// Bomly's own references are derived from their text, so a
+			// disagreement is repaired by re-minting rather than trusted.
+			normalized.SPDXExpression = spdxkit.MintLicenseRef(normalized.ExtractedText).RefID
+		case !spdxkit.ValidLicenseRef(normalized.SPDXExpression):
+			// A source-defined reference that is not a well-formed idstring
+			// cannot go into an expression field verbatim. Re-mint under
+			// Bomly's prefix so the text still travels with a citation.
+			normalized.SPDXExpression = spdxkit.MintLicenseRef(normalized.ExtractedText).RefID
+		default:
+			// A well-formed reference the source document defined is kept as
+			// stated, so re-exporting that document reproduces its own
+			// identifiers instead of renaming them.
+		}
+	} else if normalized.SPDXExpression == "" && normalized.ExtractedText != "" {
+		// Text without a reference is text nothing can cite. Mint the
+		// reference the text implies rather than dropping the text.
+		normalized.SPDXExpression = spdxkit.MintLicenseRef(normalized.ExtractedText).RefID
+	}
+	if normalized.Value == "" && normalized.SPDXExpression == "" {
+		return PackageLicense{}, false
+	}
+	return normalized, true
+}
+
+// licenseKey is the merge identity of a license claim: the same expression
+// asserted as declared and as concluded are two claims, not a duplicate.
+func (l PackageLicense) licenseKey() string {
+	return string(l.Type) + "\x00" + l.SPDXExpression + "\x00" + l.Value
+}
+
+// MergeLicenses unions license claims, keeping the first record of each
+// distinct claim. Licenses are a set: a package whose declaration and whose
+// concluded analysis disagree carries both, and two sources that saw the same
+// declaration contribute one entry.
+func MergeLicenses(existing, additions []PackageLicense) []PackageLicense {
+	if len(additions) == 0 {
+		return existing
+	}
+	merged := make([]PackageLicense, 0, len(existing)+len(additions))
+	seen := make(map[string]struct{}, len(existing)+len(additions))
+	for _, group := range [][]PackageLicense{existing, additions} {
+		for _, license := range group {
+			normalized, ok := license.Normalized()
+			if !ok {
+				continue
+			}
+			key := normalized.licenseKey()
+			if _, found := seen[key]; found {
+				continue
+			}
+			seen[key] = struct{}{}
+			merged = append(merged, normalized)
+		}
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
+}
+
+// packageLicenseWire carries PackageLicense's fields without its methods, so
+// the JSON hooks below can encode and decode without recursing.
+type packageLicenseWire PackageLicense
+
+// UnmarshalJSON applies the license rule as a value arrives, so a claim that
+// would be rejected on read cannot be stored, forwarded, or written back out.
+// A record that says nothing publishable decodes to the zero value, following
+// DependencyOrigin.
+func (l *PackageLicense) UnmarshalJSON(data []byte) error {
+	var wire packageLicenseWire
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	normalized, ok := PackageLicense(wire).Normalized()
+	if !ok {
+		*l = PackageLicense{}
+		return nil
+	}
+	*l = normalized
+	return nil
+}
+
+// MarshalJSON applies the same rule on the way out.
+func (l PackageLicense) MarshalJSON() ([]byte, error) {
+	normalized, ok := l.Normalized()
+	if !ok {
+		return json.Marshal(packageLicenseWire{})
+	}
+	return json.Marshal(packageLicenseWire(normalized))
 }
 
 // PackageEOL captures end-of-life enrichment attached by the EOL matcher.
@@ -179,6 +362,23 @@ type Package struct {
 	// origin codecs' validation. Merge class: union by normalized value.
 	DetectedOrigins []DependencyOrigin `json:"detected_origins,omitempty"`
 
+	// Description is the package's own summary of itself, as the source
+	// document or registry stated it. SPDX PackageDescription / CycloneDX
+	// component description.
+	Description string `json:"description,omitempty"`
+	// Homepage is the package's project page. SPDX PackageHomePage /
+	// CycloneDX an external reference of type website. Held to
+	// URLFormReference: a homepage is a citation, so a bare host and a query
+	// are legitimate where they would not be for an artifact URL.
+	Homepage string `json:"homepage,omitempty"`
+	// Supplier is who distributed the package. SPDX PackageSupplier /
+	// CycloneDX supplier.
+	Supplier *Contact `json:"supplier,omitempty"`
+	// Originator is who originally authored the package, which is often not
+	// the supplier -- a redistributor supplies what someone else wrote. SPDX
+	// PackageOriginator / CycloneDX author or publisher.
+	Originator *Contact `json:"originator,omitempty"`
+
 	CPEs            []string             `json:"cpes,omitempty"`
 	Digests         []Digest             `json:"digests,omitempty"`
 	Licenses        []PackageLicense     `json:"licenses,omitempty"`
@@ -293,6 +493,8 @@ func (p *Package) Clone() *Package {
 	if len(p.DetectedOrigins) > 0 {
 		clone.DetectedOrigins = append([]DependencyOrigin(nil), p.DetectedOrigins...)
 	}
+	clone.Supplier = p.Supplier.Clone()
+	clone.Originator = p.Originator.Clone()
 	clone.Scorecard = p.Scorecard.Clone()
 	clone.EOL = p.EOL.Clone()
 	clone.Remediation = p.Remediation.Clone()
@@ -342,14 +544,32 @@ func (p *Package) MergeFrom(src *Package) {
 	if p.ResolvedURL == "" {
 		p.ResolvedURL = src.ResolvedURL
 	}
+	if strings.TrimSpace(p.Description) == "" {
+		p.Description = src.Description
+	}
+	if p.Homepage == "" {
+		p.Homepage = src.Homepage
+	}
+	if p.Supplier == nil {
+		p.Supplier = src.Supplier.Clone()
+	}
+	if p.Originator == nil {
+		p.Originator = src.Originator.Clone()
+	}
 	p.mergeAttestations(src.Attestations)
-	if len(p.CPEs) == 0 {
-		p.CPEs = cloneStrings(src.CPEs)
-	}
+	// CPEs are a set, not a first-wins scalar. Two matchers can each know a
+	// CPE the other does not -- a vendor-specific one from a distro record and
+	// a generic one from an advisory -- and keeping only the first seeded
+	// slice loses whichever arrived second, which is a matching miss rather
+	// than a cosmetic difference.
+	p.CPEs = mergeStringSet(p.CPEs, src.CPEs)
 	p.mergeDigests(src.Digests)
-	if len(p.Licenses) == 0 && len(src.Licenses) > 0 {
-		p.Licenses = append([]PackageLicense(nil), src.Licenses...)
-	}
+	// Licenses are a set too, and the declared/concluded distinction makes the
+	// old first-wins behavior actively wrong: a source that concluded a
+	// license and a source that read the declaration are two claims about one
+	// package, and dropping either publishes a partial answer as a complete
+	// one.
+	p.Licenses = MergeLicenses(p.Licenses, src.Licenses)
 	if p.Scorecard == nil {
 		p.Scorecard = src.Scorecard.Clone()
 	}
@@ -447,10 +667,37 @@ func PackageFromDependencyNode(dep *DependencyNode) *Package {
 			PackageManager: dep.PackageManager,
 			Language:       dep.Language,
 		},
-		ID:              purl,
-		ResolvedURL:     dep.ResolvedURL,
+		ID:          purl,
+		ResolvedURL: dep.ResolvedURL,
+		Copyright:   dep.Copyright,
+		CPEs:        cloneStrings(dep.CPEs),
+		// The component-level assertions the detecting or ingesting source
+		// made travel with the package, so an ingested document's supplier
+		// and description reach the registry rather than stopping at the
+		// graph node. Each is re-gated by its own helper: seeding must not be
+		// a way around the boundary the wire enforces.
+		Description:     NormalizeDescription(dep.Description),
+		Homepage:        NormalizeHomepage(dep.Homepage),
+		Supplier:        normalizedContact(dep.Supplier),
+		Originator:      normalizedContact(dep.Originator),
+		Licenses:        MergeLicenses(nil, dep.Licenses),
+		Digests:         mergeDigestSet(nil, dep.Digests),
 		DetectedOrigins: MergeOrigins(nil, dep.Origins),
 	}
+}
+
+// normalizedContact re-runs a contact's gate and returns nil when it says
+// nothing publishable, so a hand-built value cannot reach a package by way of
+// seeding.
+func normalizedContact(contact *Contact) *Contact {
+	if contact == nil {
+		return nil
+	}
+	normalized, ok := contact.Normalized()
+	if !ok {
+		return nil
+	}
+	return &normalized
 }
 
 func qualifiedName(org, name string) string {

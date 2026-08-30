@@ -65,25 +65,55 @@ func RepositoryOrigin(rawURL, revision string) *DependencyOrigin {
 	return origin
 }
 
-// NormalizeOriginURL is the single rule every published origin URL satisfies.
-// Apply it when recording a URL and again when reading one back, so an origin
-// that arrives from a plugin or a hand-built graph is held to the same standard
-// as one from a built-in component.
-//
-// A value passes only when it is an absolute http or https URL with a host, a
-// non-empty path, and no embedded credentials; the result is re-serialized from
-// the parse rather than returned as given. Everything else -- local paths,
-// file://, git@host:org/repo, ssh://, git+ssh://, "git+" prefixes, registry and
-// index roots, and URLs carrying userinfo -- is rejected, so filesystem layout
-// and credentials cannot reach a published document.
-//
-// The repository argument selects the repository form: query and fragment are
-// dropped, because they carry the ref that was requested rather than the one
-// that was resolved, which callers pass separately. The artifact form drops the
-// fragment (a checksum or anchor, never part of the location) and rejects a
-// value carrying a query, which marks a signed or tokenized link rather than a
-// stable location.
+// URLForm selects which published-URL rule a value is held to. Every form
+// shares the same safety floor -- absolute http or https, a real host, no
+// embedded credentials -- and differs only in what the location half of the
+// URL is allowed to look like, because the three kinds of value answer
+// different questions.
+type URLForm int
+
+const (
+	// URLFormArtifact is the exact file a package was downloaded from. It
+	// requires a non-empty path and rejects a query, which marks a signed or
+	// tokenized link rather than a stable location.
+	URLFormArtifact URLForm = iota
+	// URLFormRepository is the source repository a package was resolved from.
+	// It requires a non-empty path and drops the query, which carries the ref
+	// that was requested rather than the one that was resolved.
+	URLFormRepository
+	// URLFormReference is a citation: a homepage, an advisory page, a
+	// documentation link -- a URL published so a reader can follow it, never
+	// one Bomly fetches to establish a fact. It keeps the query and the
+	// fragment, and it permits a host root, because "https://example.com/" is
+	// a legitimate homepage while it is never a package artifact. The safety
+	// floor is unchanged: credentials, local paths, and non-http schemes are
+	// rejected exactly as they are for the other two forms.
+	URLFormReference
+)
+
+// NormalizeOriginURL is the origin-specific spelling of NormalizeURL, kept as
+// the name detectors and plugins already call. The repository argument selects
+// URLFormRepository; false selects URLFormArtifact.
 func NormalizeOriginURL(raw string, repository bool) (string, bool) {
+	if repository {
+		return NormalizeURL(raw, URLFormRepository)
+	}
+	return NormalizeURL(raw, URLFormArtifact)
+}
+
+// NormalizeURL is the single rule every published URL satisfies. Apply it when
+// recording a URL and again when reading one back, so a value that arrives
+// from a plugin or a hand-built graph is held to the same standard as one from
+// a built-in component.
+//
+// A value passes only when it is an absolute http or https URL with a host and
+// no embedded credentials; the result is re-serialized from the parse rather
+// than returned as given. Everything else -- local paths, file://,
+// git@host:org/repo, ssh://, git+ssh://, "git+" prefixes, and URLs carrying
+// userinfo -- is rejected, so filesystem layout and credentials cannot reach a
+// published document. The form argument selects the remaining rules; see
+// URLForm.
+func NormalizeURL(raw string, form URLForm) (string, bool) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
 		return "", false
@@ -135,19 +165,31 @@ func NormalizeOriginURL(raw string, repository bool) (string, bool) {
 			parsed.Host = host + ":" + strconv.Itoa(number)
 		}
 	}
-	parsed.Fragment = ""
-	parsed.RawFragment = ""
+	// A citation is followed by a reader, so its fragment is part of what was
+	// cited -- an advisory that names one anchor on a page of many loses its
+	// subject without it. For the other two forms the fragment is a checksum
+	// or an anchor and never part of the location.
+	if form != URLFormReference {
+		parsed.Fragment = ""
+		parsed.RawFragment = ""
+	}
 	// A host root names a server, not a package: a registry or index root on
 	// the artifact side, and no repository at all on the other. An empty path
-	// would also make a "<url>@<revision>" locator re-parse as userinfo.
-	if strings.Trim(parsed.Path, "/") == "" {
+	// would also make a "<url>@<revision>" locator re-parse as userinfo. A
+	// citation is exempt: a bare host is a normal homepage.
+	if form != URLFormReference && strings.Trim(parsed.Path, "/") == "" {
 		return "", false
 	}
-	if repository {
+	switch form {
+	case URLFormRepository:
 		parsed.RawQuery = ""
 		parsed.ForceQuery = false
-	} else if parsed.RawQuery != "" || parsed.ForceQuery {
-		return "", false
+	case URLFormReference:
+		// Kept: a citation's query selects what is being cited.
+	default:
+		if parsed.RawQuery != "" || parsed.ForceQuery {
+			return "", false
+		}
 	}
 	// Canonicalize the escaped form, not parsed.Path: Path is already decoded,
 	// where "%2F" and "/" are indistinguishable, and re-encoding from it would

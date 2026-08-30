@@ -34,6 +34,11 @@ type nodeWire struct {
 	ResolvedURL           string                 `json:"resolved_url,omitempty"`
 	Origin                *DependencyOrigin      `json:"origin,omitempty"`
 	Origins               []DependencyOrigin     `json:"origins,omitempty"`
+	Licenses              []PackageLicense       `json:"licenses,omitempty"`
+	Description           string                 `json:"description,omitempty"`
+	Homepage              string                 `json:"homepage,omitempty"`
+	Supplier              *Contact               `json:"supplier,omitempty"`
+	Originator            *Contact               `json:"originator,omitempty"`
 	DeclaringManifestPath string                 `json:"declaring_manifest_path,omitempty"`
 	ManifestKind          ManifestKind           `json:"manifest_kind,omitempty"`
 	Metadata              map[string]any         `json:"metadata,omitempty"`
@@ -152,6 +157,14 @@ func (w *nodeWire) decodeDependencyNode() (*DependencyNode, error) {
 	node.FoundBy = w.FoundBy
 	node.ResolvedURL = w.ResolvedURL
 	node.Origins = MergeOrigins(node.Origins, w.wireOrigins())
+	// MergeLicenses re-runs each claim's gate, so a payload that reached the
+	// slice without passing through PackageLicense's codec — a hand-built
+	// value, or one an older producer wrote — is still held to it here.
+	node.Licenses = MergeLicenses(nil, w.Licenses)
+	node.Description = NormalizeDescription(w.Description)
+	node.Homepage = NormalizeHomepage(w.Homepage)
+	node.Supplier = w.Supplier.Clone()
+	node.Originator = w.Originator.Clone()
 	if len(w.Metadata) > 0 {
 		if node.Metadata == nil {
 			node.Metadata = make(map[string]any, len(w.Metadata))
@@ -236,6 +249,13 @@ func encodeNodeWire(node GraphNode) nodeWire {
 			Metadata:       n.Metadata,
 			Matched:        n.Matched,
 			PackageRef:     n.PackageRef,
+			// Re-gated on the way out as well as in, so a field set directly
+			// on a hand-built node never reaches a reader unchecked.
+			Licenses:    MergeLicenses(nil, n.Licenses),
+			Description: NormalizeDescription(n.Description),
+			Homepage:    NormalizeHomepage(n.Homepage),
+			Supplier:    n.Supplier.Clone(),
+			Originator:  n.Originator.Clone(),
 		}
 		if len(n.Origins) > 0 {
 			legacy := n.Origins[0]

@@ -6,9 +6,55 @@ import (
 	"strings"
 )
 
-// licenseRefPrefix marks Bomly-minted license references. The charset of the
-// full reference is restricted to what the SPDX idstring grammar allows.
-const licenseRefPrefix = "LicenseRef-bomly-"
+// LicenseRefPrefix is the SPDX grammar's marker for a license identifier that
+// is not on the SPDX license list. A document may define its own references
+// under it, so seeing this prefix says the identifier needs accompanying
+// extracted text -- not that Bomly minted it.
+const LicenseRefPrefix = "LicenseRef-"
+
+// BomlyLicenseRefPrefix marks Bomly-minted license references. The charset of
+// the full reference is restricted to what the SPDX idstring grammar allows.
+// A reference under this prefix is derived from its text (MintLicenseRef), so
+// it is re-minted rather than trusted; a reference under LicenseRefPrefix but
+// not this one was defined by the source document and is preserved as stated.
+const BomlyLicenseRefPrefix = LicenseRefPrefix + "bomly-"
+
+// licenseRefPrefix is retained as the internal spelling used when minting.
+const licenseRefPrefix = BomlyLicenseRefPrefix
+
+// ValidLicenseRef reports whether id is a well-formed SPDX license reference:
+// the LicenseRef- prefix followed by a non-empty idstring, which the SPDX
+// grammar restricts to letters, digits, "." and "-".
+//
+// This is a publication gate, not a formality. License identifiers arrive from
+// untrusted documents and are written verbatim into an expression field, so a
+// value carrying a space, a quote, or an operator word would either corrupt
+// the emitted document or change what the expression means.
+func ValidLicenseRef(id string) bool {
+	if !strings.HasPrefix(id, LicenseRefPrefix) {
+		return false
+	}
+	body := strings.TrimPrefix(id, LicenseRefPrefix)
+	if body == "" || len(id) > maxLicenseRefLength {
+		return false
+	}
+	for _, r := range body {
+		switch {
+		case r >= 'a' && r <= 'z',
+			r >= 'A' && r <= 'Z',
+			r >= '0' && r <= '9',
+			r == '.', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// maxLicenseRefLength bounds a license reference. Bomly's own minted form is
+// 49 characters; the allowance leaves room for a document's own descriptive
+// references without admitting an identifier that is really a payload.
+const maxLicenseRefLength = 256
 
 // ExtractedText pairs a minted license reference with the original text it
 // names, ready for SPDX hasExtractedLicensingInfos and the CycloneDX

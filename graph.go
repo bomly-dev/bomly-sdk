@@ -257,6 +257,26 @@ func foldNodes(surviving, witness GraphNode) {
 		// digests from a second SBOM witness on insertion order alone.
 		survivor.CPEs = mergeStringSet(survivor.CPEs, incoming.CPEs)
 		survivor.Digests = mergeDigestSet(survivor.Digests, incoming.Digests)
+		// License claims are a set for the same reason they are on Package: a
+		// declaration and a conclusion are two claims about one package, and
+		// two witnesses that read different sources both have something to
+		// say.
+		survivor.Licenses = MergeLicenses(survivor.Licenses, incoming.Licenses)
+		// The component-level document assertions are scalars — one supplier,
+		// one homepage — so a later witness contributes only what the first
+		// did not know.
+		if strings.TrimSpace(survivor.Description) == "" {
+			survivor.Description = incoming.Description
+		}
+		if survivor.Homepage == "" {
+			survivor.Homepage = incoming.Homepage
+		}
+		if survivor.Supplier == nil {
+			survivor.Supplier = incoming.Supplier.Clone()
+		}
+		if survivor.Originator == nil {
+			survivor.Originator = incoming.Originator.Clone()
+		}
 		if survivor.Copyright == "" {
 			survivor.Copyright = incoming.Copyright
 		}
