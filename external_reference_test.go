@@ -925,3 +925,55 @@ func TestIRILocatorsRejectExcludedCharacters(t *testing.T) {
 		}
 	}
 }
+
+// TestIRICharacterRuleIsAnAllowlist pins the closed form of the rule. A
+// denylist is never finished -- the ASCII exclusions could not have caught a
+// Unicode noncharacter -- so a character is publishable because the
+// specification names it, not because nobody has reported it yet.
+func TestIRICharacterRuleIsAnAllowlist(t *testing.T) {
+	t.Run("excluded Unicode is refused", func(t *testing.T) {
+		for _, locator := range []string{
+			"urn:example:\ufdd0",     // noncharacter, between the ucschar ranges
+			"urn:example:\ufdef",     // the other end of that block
+			"urn:example:\ufffe",     // plane-ending noncharacter
+			"urn:example:\U0001fffe", // and on a supplementary plane
+			// A C1 control mid-string: at the end it would simply be
+			// trimmed as Unicode whitespace, which is a different rule.
+			"urn:example:a\u0085b",
+			"urn:example:a\u0080b",
+		} {
+			if got, ok := (ExternalReference{Type: "distribution", Locator: locator}).Normalized(); ok {
+				t.Errorf("%q was accepted: %+v", locator, got)
+			}
+		}
+	})
+
+	t.Run("permitted Unicode survives", func(t *testing.T) {
+		for _, locator := range []string{
+			"ftp://\u4f8b\u3048.\u30c6\u30b9\u30c8/\u8cc7\u6599", // CJK and kana, inside A0-D7FF
+			"urn:example:\ufdf0",     // just past the noncharacter block
+			"urn:example:\U0001f600", // a supplementary-plane character
+		} {
+			if _, ok := (ExternalReference{Type: "distribution", Locator: locator}).Normalized(); !ok {
+				t.Errorf("%q was rejected, but the grammar admits it", locator)
+			}
+		}
+	})
+
+	t.Run("the ASCII set is the specification's", func(t *testing.T) {
+		// Every reserved and unreserved character, unescaped.
+		legal := "urn:example:aZ09-._~:/?#[]@!$&'()*+,;="
+		if _, ok := (ExternalReference{Type: "distribution", Locator: legal}).Normalized(); !ok {
+			t.Errorf("%q was rejected, but every character in it is legal", legal)
+		}
+		for _, locator := range []string{
+			"urn:example:{v}", `urn:example:a\b`, "urn:example:a|b",
+			"urn:example:a^b", "urn:example:a`b", `urn:example:a"b`,
+			"urn:example:a<b>",
+		} {
+			if _, ok := (ExternalReference{Type: "distribution", Locator: locator}).Normalized(); ok {
+				t.Errorf("%q was accepted with an excluded character", locator)
+			}
+		}
+	})
+}

@@ -514,29 +514,82 @@ func isWebScheme(locator string) bool {
 	}
 }
 
-// excludedIRIBytes are the ASCII characters RFC 3986 excludes from a URI, and
-// which RFC 3987 does not add back: they are legal only percent-encoded.
+// The IRI character rule, stated as an allowlist rather than a list of
+// exclusions.
 //
-// This is a fixed list from the specification, not a grammar -- non-ASCII is
-// deliberately absent, because an IRI is exactly the thing that may carry it.
-// Whitespace and control characters are already refused by isBoundedToken.
-// Together those two cover the character-level rule completely, so a further
-// character finding is answered by extending this list rather than by
-// another pass over the parser.
-var excludedIRIBytes = [...]bool{
-	'"': true, '<': true, '>': true, '\\': true,
-	'^': true, '`': true, '{': true, '|': true, '}': true,
+// A denylist is never finished: the first round here excluded the ASCII
+// characters RFC 3986 forbids, and the next finding was a Unicode
+// noncharacter that no ASCII table could have caught. An allowlist is closed
+// by construction -- a character is publishable because the specification
+// names it, not because nobody has reported it yet.
+//
+// Below 0x80 the permitted set is RFC 3986's: unreserved, the reserved
+// gen-delims and sub-delims, and "%" as the escape introducer. At or above
+// 0x80 it is RFC 3987's ucschar, plus iprivate -- which the grammar admits
+// only in a query, allowed here anywhere rather than tracking component
+// position for a distinction nothing downstream reads.
+
+// allowedASCIIIRIBytes marks the ASCII characters an IRI may carry unescaped.
+var allowedASCIIIRIBytes = buildAllowedASCIIIRIBytes()
+
+func buildAllowedASCIIIRIBytes() [128]bool {
+	var allowed [128]bool
+	for b := byte('a'); b <= 'z'; b++ {
+		allowed[b] = true
+	}
+	for b := byte('A'); b <= 'Z'; b++ {
+		allowed[b] = true
+	}
+	for b := byte('0'); b <= '9'; b++ {
+		allowed[b] = true
+	}
+	// unreserved beyond the alphanumerics, then gen-delims, sub-delims, and
+	// the escape introducer.
+	for _, b := range []byte("-._~:/?#[]@!$&'()*+,;=%") {
+		allowed[b] = true
+	}
+	return allowed
 }
 
-// hasLegalIRICharacters reports whether every ASCII byte in a value is one an
+// ucscharRanges is RFC 3987's ucschar production, followed by iprivate. The
+// gaps are the point: U+FDD0-U+FDEF and every plane's final two code points
+// are noncharacters and fall outside these ranges.
+var ucscharRanges = [...][2]rune{
+	{0x000A0, 0x0D7FF}, {0x0F900, 0x0FDCF}, {0x0FDF0, 0x0FFEF},
+	{0x10000, 0x1FFFD}, {0x20000, 0x2FFFD}, {0x30000, 0x3FFFD},
+	{0x40000, 0x4FFFD}, {0x50000, 0x5FFFD}, {0x60000, 0x6FFFD},
+	{0x70000, 0x7FFFD}, {0x80000, 0x8FFFD}, {0x90000, 0x9FFFD},
+	{0xA0000, 0xAFFFD}, {0xB0000, 0xBFFFD}, {0xC0000, 0xCFFFD},
+	{0xD0000, 0xDFFFD}, {0xE1000, 0xEFFFD},
+	// iprivate
+	{0x0E000, 0x0F8FF}, {0xF0000, 0xFFFFD}, {0x100000, 0x10FFFD},
+}
+
+// hasLegalIRICharacters reports whether every character in a value is one an
 // IRI may carry unescaped.
 func hasLegalIRICharacters(value string) bool {
-	for i := 0; i < len(value); i++ {
-		if b := value[i]; int(b) < len(excludedIRIBytes) && excludedIRIBytes[b] {
+	for _, r := range value {
+		if r < 0x80 {
+			if !allowedASCIIIRIBytes[r] {
+				return false
+			}
+			continue
+		}
+		if !isUCSChar(r) {
 			return false
 		}
 	}
 	return true
+}
+
+// isUCSChar reports whether a rune is in the ranges an IRI admits above ASCII.
+func isUCSChar(r rune) bool {
+	for _, span := range ucscharRanges {
+		if r >= span[0] && r <= span[1] {
+			return true
+		}
+	}
+	return false
 }
 
 // hasValidPercentEscapes reports whether every "%" in a value introduces a
