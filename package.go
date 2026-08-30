@@ -220,12 +220,24 @@ func normalizedSPDXExpression(expression, extractedText string) string {
 		if strings.TrimSpace(extractedText) == "" {
 			return ""
 		}
+		refs := spdxkit.LicenseRefsIn(expression)
 		// One record carries one ExtractedText, so an expression naming two
 		// references cannot supply the text for both, and at least one
 		// citation in it would dangle. Refused for the same reason a bare
 		// reference without text is.
-		if len(spdxkit.LicenseRefsIn(expression)) > 1 {
+		if len(refs) > 1 {
 			return ""
+		}
+		// Every reference published inside an expression is held to the same
+		// standard as one published on its own. The expression parser does
+		// not bound identifier length, so without this a reference far too
+		// long to be an identifier -- a payload wearing the prefix -- would
+		// be refused when it stood alone and accepted when it appeared in an
+		// expression. The fuzzer found exactly that divergence.
+		for _, ref := range refs {
+			if !spdxkit.ValidLicenseRef(ref) {
+				return ""
+			}
 		}
 	}
 	// Canonicalize first, then validate what would actually be published: a

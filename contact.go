@@ -77,12 +77,20 @@ type Contact struct {
 
 // addressPattern matches an email address embedded in a URL.
 //
-// It requires a local part immediately before the "@" and a dotted domain
-// after it, which is what keeps it off the common case it would otherwise
-// break: an npm scope path such as "/package/@scope/pkg" has no local part
-// before its "@", and a coordinate such as "pkg@1.0.0" has no dotted domain
-// with an alphabetic suffix after it. A blanket "@" test would reject both.
-var addressPattern = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)
+// The character classes are Unicode, not ASCII. Addresses are
+// internationalized -- "josé@bücher.example" is an address, and so is one
+// written entirely in Cyrillic -- and an ASCII-only pattern would enforce the
+// no-email contract for English-speaking users and quietly publish everyone
+// else's personal data. A percent-decoded URL carries those characters
+// directly, so the decode does not turn them back into ASCII.
+//
+// The shape requirement is what keeps this off the cases it would otherwise
+// break: a local part is required immediately before the "@" and a dotted
+// domain with an alphabetic suffix after it. An npm scope path such as
+// "/package/@scope/pkg" has no local part before its "@", and a coordinate
+// such as "pkg@1.0.0" has no alphabetic suffix after its final dot. A blanket
+// "@" test would reject both.
+var addressPattern = regexp.MustCompile(`[\p{L}\p{N}._%+\-]+@[\p{L}\p{N}.\-]+\.\p{L}{2,}`)
 
 // urlCarriesAddress reports whether a URL carries an email address anywhere a
 // reader would see it.

@@ -1256,6 +1256,12 @@ func TestContactURLCarriesNoAddress(t *testing.T) {
 		"https://acme.test/contact?email=jane@example.com",
 		"https://acme.test/contact?email=jane%40example.com",
 		"https://acme.test/#write-to-jane@example.com",
+		// Addresses are internationalized. An ASCII-only check would enforce
+		// the no-email contract for English-speaking users and publish
+		// everyone else's personal data.
+		"https://acme.test/?email=josé@bücher.example",
+		"https://acme.test/?email=Жан@почта.рф",
+		"https://acme.test/?email=%D0%96%D0%B0%D0%BD@почта.рф",
 	} {
 		contact, ok := (Contact{Kind: ContactKindOrganization, Name: "Acme", URL: raw}).Normalized()
 		if !ok {
@@ -1381,5 +1387,31 @@ func TestMergeLicensesTreatsWhitespaceVariantsAsOneText(t *testing.T) {
 	}
 	if merged[0].ExtractedText != merged[1].ExtractedText {
 		t.Fatalf("one reference names two texts: %q and %q", merged[0].ExtractedText, merged[1].ExtractedText)
+	}
+}
+
+// TestLicenseReferenceBoundHoldsInsideExpressions pins a divergence the fuzzer
+// found. ValidLicenseRef bounds an identifier's length, because a value far
+// longer than any real reference is a payload wearing the prefix rather than
+// an identifier. The expression parser applies no such bound, so the same
+// reference was refused when it stood alone and published when it appeared
+// inside an expression.
+func TestLicenseReferenceBoundHoldsInsideExpressions(t *testing.T) {
+	oversized := spdxkit.LicenseRefPrefix + strings.Repeat("A", 300)
+	if spdxkit.ValidLicenseRef(oversized) {
+		t.Fatal("fixture is not oversized; the bound must reject it")
+	}
+	for _, expression := range []string{oversized, "MIT OR " + oversized} {
+		normalized, ok := PackageLicense{SPDXExpression: expression, ExtractedText: "Terms."}.Normalized()
+		if !ok {
+			t.Fatalf("%q was rejected outright", expression)
+		}
+		if strings.Contains(normalized.SPDXExpression, oversized) {
+			t.Fatalf("an oversized reference survived in %q", normalized.SPDXExpression)
+		}
+		// The text is not lost with it.
+		if normalized.SPDXExpression != spdxkit.MintLicenseRef("Terms.").RefID {
+			t.Fatalf("expression = %q, want the text's own minted citation", normalized.SPDXExpression)
+		}
 	}
 }
