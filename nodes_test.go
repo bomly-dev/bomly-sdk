@@ -438,3 +438,103 @@ func TestModuleProjectsCoordinatesFromAssertedIdentity(t *testing.T) {
 		t.Fatalf("contradicting coordinates survived: name=%q version=%q", contradicting.Name, contradicting.Version)
 	}
 }
+
+func TestFoldPreservesEveryWitnessAssertion(t *testing.T) {
+	// Two SBOM witnesses of one package must not lose security identifiers,
+	// integrity claims, or detection metadata to insertion order.
+	graph := New()
+	first := mustDepPURL(t, "pkg:npm/left-pad@1.3.0")
+	first.CPEs = []string{"cpe:2.3:a:left-pad:left-pad:1.3.0:*:*:*:*:*:*:*"}
+	first.Digests = []Digest{{Algorithm: DigestAlgorithmSHA256, Value: "aaa"}}
+	first.FoundBy = "node"
+	if err := graph.AddNode(first); err != nil {
+		t.Fatal(err)
+	}
+
+	second := mustDepPURL(t, "pkg:npm/left-pad@1.3.0")
+	second.CPEs = []string{"cpe:2.3:a:other:left-pad:1.3.0:*:*:*:*:*:*:*"}
+	second.Digests = []Digest{{Algorithm: DigestAlgorithmSHA256, Value: "bbb"}}
+	second.Copyright = "Copyright (c) contributors"
+	second.ResolvedURL = "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz"
+	second.Metadata = map[string]any{"witness": "sbom"}
+	survivor, err := graph.InsertNode(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, ok := survivor.(*DependencyNode)
+	if !ok {
+		t.Fatalf("survivor is %T", survivor)
+	}
+	if len(dep.CPEs) != 2 {
+		t.Errorf("CPEs = %v, want both witnesses' identifiers", dep.CPEs)
+	}
+	if len(dep.Digests) != 2 {
+		t.Errorf("Digests = %v, want both witnesses' claims", dep.Digests)
+	}
+	if dep.Copyright == "" || dep.ResolvedURL == "" {
+		t.Errorf("scalar gaps were not filled: copyright=%q resolvedURL=%q", dep.Copyright, dep.ResolvedURL)
+	}
+	if dep.FoundBy != "node" {
+		t.Errorf("surviving scalar was overwritten: %q", dep.FoundBy)
+	}
+	if dep.Metadata["witness"] != "sbom" {
+		t.Errorf("metadata lost: %v", dep.Metadata)
+	}
+	// Repeated identifiers do not accumulate.
+	if _, err := graph.InsertNode(second); err != nil {
+		t.Fatal(err)
+	}
+	if len(dep.CPEs) != 2 || len(dep.Digests) != 2 {
+		t.Errorf("re-folding the same witness duplicated entries: %v %v", dep.CPEs, dep.Digests)
+	}
+}
+
+func TestManifestFoldFillsClassificationGap(t *testing.T) {
+	// A manifest's kind lives only on the node, so an unclassified first
+	// witness must not block a later classified one.
+	graph := New()
+	unclassified, err := NewManifestNode("pom.xml", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.AddNode(unclassified); err != nil {
+		t.Fatal(err)
+	}
+	classified, err := NewManifestNode("pom.xml", ManifestKindPackageJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	survivor, err := graph.InsertNode(classified)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := survivor.(*ManifestNode).FileKind; got != ManifestKindPackageJSON {
+		t.Fatalf("manifest kind = %q, want the later witness's classification", got)
+	}
+}
+
+func TestDecodeRejectsConflictingWireIDs(t *testing.T) {
+	// One wire ID minting two identities makes every edge referencing it
+	// order-dependent; the pre-union decoder rejected duplicate graph IDs
+	// and that guarantee is kept where it still means something.
+	raw := `{"nodes":[
+	  {"id":"dup","ecosystem":"npm","name":"foo","version":"1.0.0"},
+	  {"id":"dup","ecosystem":"npm","name":"bar","version":"1.0.0"}
+	]}`
+	var graph Graph
+	if err := json.Unmarshal([]byte(raw), &graph); err == nil {
+		t.Fatal("a wire id minting two identities must be a decode error")
+	}
+	// The same wire ID minting one identity still folds.
+	same := `{"nodes":[
+	  {"id":"dup","ecosystem":"npm","name":"foo","version":"1.0.0"},
+	  {"id":"dup","ecosystem":"npm","name":"Foo","version":"1.0.0"}
+	]}`
+	var folded Graph
+	if err := json.Unmarshal([]byte(same), &folded); err != nil {
+		t.Fatalf("agreeing duplicate wire ids must fold: %v", err)
+	}
+	if folded.Size() != 1 {
+		t.Fatalf("size = %d, want the witnesses folded", folded.Size())
+	}
+}

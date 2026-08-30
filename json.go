@@ -336,6 +336,13 @@ func (g *Graph) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		if wire.ID != "" {
+			// Two payload nodes reusing one wire ID while minting different
+			// identities make every edge referencing it order-dependent.
+			// The pre-union decoder rejected duplicate graph IDs outright;
+			// this keeps that guarantee where it still means something.
+			if previous, seen := idMapping[wire.ID]; seen && previous != survivor.NodeID() {
+				return fmt.Errorf("%w: wire id %q maps to both %q and %q", ErrNodeAlreadyExist, wire.ID, previous, survivor.NodeID())
+			}
 			idMapping[wire.ID] = survivor.NodeID()
 		}
 		selfAliases = append(selfAliases, survivor.NodeID())
