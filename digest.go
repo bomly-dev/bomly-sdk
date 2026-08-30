@@ -90,6 +90,13 @@ func buildDigestAlgorithmIndex() map[string]DigestAlgorithm {
 	return index
 }
 
+// maxDigestAlgorithmLength bounds an algorithm spelling. The longest
+// registered name is "BLAKE2b-256" at eleven characters; the allowance leaves
+// room for a separator-heavy variant without admitting a value that is
+// obviously not an algorithm name. digest_test.go asserts every registered
+// spelling fits, so a future row cannot silently exceed it.
+const maxDigestAlgorithmLength = 64
+
 // squashDigestAlgorithm reduces a spelling to its comparison key.
 func squashDigestAlgorithm(value string) string {
 	var b strings.Builder
@@ -108,6 +115,14 @@ func squashDigestAlgorithm(value string) string {
 // format defines, because such a digest has no export projection and a
 // consumer is better told than handed a value it cannot publish.
 func ParseDigestAlgorithm(value string) (DigestAlgorithm, error) {
+	// Bounded before any work is done on it. Algorithm tokens arrive from
+	// plugin payloads and ingested documents, and every registered spelling
+	// is under 16 bytes, so a longer value cannot match -- lowercasing it and
+	// building a squashed copy first would let a document of digest records
+	// spend memory and CPU proportional to what it chose to send.
+	if len(value) > maxDigestAlgorithmLength {
+		return "", fmt.Errorf("digest algorithm is %d bytes, over the %d byte limit", len(value), maxDigestAlgorithmLength)
+	}
 	squashed := squashDigestAlgorithm(value)
 	if squashed == "" {
 		return "", fmt.Errorf("digest algorithm is empty")

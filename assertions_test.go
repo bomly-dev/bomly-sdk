@@ -893,3 +893,186 @@ func TestPackageLicenseNormalizationIsIdempotent(t *testing.T) {
 		t.Fatal("text was left with no citation after its expression was dropped")
 	}
 }
+
+// TestMergeLicensesKeepsCollidingReferencesApart pins that a document-local
+// identifier reused by two sources for different terms does not silently lose
+// one of them. Source-defined references are preserved rather than re-minted,
+// so two SBOMs can each arrive naming "LicenseRef-Custom" for unrelated
+// licenses; merging them on the identifier alone dropped the second document's
+// text and left the survivor's identifier naming the wrong terms.
+func TestMergeLicensesKeepsCollidingReferencesApart(t *testing.T) {
+	merged := MergeLicenses(
+		[]PackageLicense{{Value: "Custom", SPDXExpression: "LicenseRef-Custom", ExtractedText: "Doc A terms."}},
+		[]PackageLicense{{Value: "Custom", SPDXExpression: "LicenseRef-Custom", ExtractedText: "Doc B terms."}},
+	)
+	if len(merged) != 2 {
+		t.Fatalf("merged = %+v, want both documents' terms", merged)
+	}
+	texts := map[string]string{}
+	for _, license := range merged {
+		if prior, seen := texts[license.SPDXExpression]; seen {
+			t.Fatalf("reference %q names two texts (%q and %q); the merged set is ambiguous",
+				license.SPDXExpression, prior, license.ExtractedText)
+		}
+		texts[license.SPDXExpression] = license.ExtractedText
+	}
+	// The first claim keeps the identifier it arrived with.
+	if texts["LicenseRef-Custom"] != "Doc A terms." {
+		t.Fatalf("the first claim lost its identifier: %+v", texts)
+	}
+	// The same text twice is still one claim -- this must not turn every
+	// merge into an append.
+	same := MergeLicenses(
+		[]PackageLicense{{Value: "Custom", SPDXExpression: "LicenseRef-Custom", ExtractedText: "Doc A terms."}},
+		[]PackageLicense{{Value: "Custom", SPDXExpression: "LicenseRef-Custom", ExtractedText: "Doc A terms."}},
+	)
+	if len(same) != 1 {
+		t.Fatalf("identical claims merged to %+v, want one", same)
+	}
+
+	// The collision resolver only rewrites license references. A listed
+	// identifier carrying two different texts is the case the key itself has
+	// to keep apart -- contradictions survive as distinct claims (ADR-0033)
+	// rather than one being dropped for sharing an expression.
+	listed := MergeLicenses(
+		[]PackageLicense{{SPDXExpression: "MIT", ExtractedText: "Doc A copy of the MIT text."}},
+		[]PackageLicense{{SPDXExpression: "MIT", ExtractedText: "Doc B copy of the MIT text."}},
+	)
+	if len(listed) != 2 {
+		t.Fatalf("merged = %+v, want both texts kept under the shared identifier", listed)
+	}
+}
+
+// TestFoldGatesBothWitnessesBeforeMeasuringTheGap pins the ordering. A node
+// built in process never passed a codec, so a survivor can hold a value that
+// is non-empty (and so blocks the gap-fill) but unpublishable (and so is
+// dropped at encode) — losing a good assertion to a witness that never had one.
+func TestFoldGatesBothWitnessesBeforeMeasuringTheGap(t *testing.T) {
+	graph := New()
+	first := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "react", Version: "18.2.0"})
+	first.Homepage = "https://user:pw@evil.test/"
+	first.Supplier = &Contact{Kind: ContactKindOrganization, Name: "Acme\nInc"}
+	if err := graph.AddNode(first); err != nil {
+		t.Fatalf("add first: %v", err)
+	}
+
+	second := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "react", Version: "18.2.0"})
+	second.Homepage = "https://react.test"
+	second.Supplier = &Contact{Kind: ContactKindOrganization, Name: "Meta"}
+	if _, err := graph.InsertNode(second); err != nil {
+		t.Fatalf("insert second: %v", err)
+	}
+
+	folded := graph.DependencyNodes()[0]
+	if folded.Homepage != "https://react.test" {
+		t.Fatalf("homepage = %q, want the valid witness to win over the unpublishable one", folded.Homepage)
+	}
+	if folded.Supplier == nil || folded.Supplier.Name != "Meta" {
+		t.Fatalf("supplier = %+v, want the valid witness to win", folded.Supplier)
+	}
+	encoded, err := json.Marshal(graph)
+	if err != nil {
+		t.Fatalf("encode graph: %v", err)
+	}
+	if !strings.Contains(string(encoded), "https://react.test") {
+		t.Fatalf("the valid homepage did not survive to the wire: %s", encoded)
+	}
+}
+
+// TestRegistryMarshalReGatesMutatedRecords pins the second door. Add gates
+// what comes in, but Ensure, Get, and All hand back mutable pointers and the
+// established pattern is to mutate what Ensure returns, so an assertion
+// installed after insertion would otherwise reach every reader unchecked.
+func TestRegistryMarshalReGatesMutatedRecords(t *testing.T) {
+	registry := NewPackageRegistry()
+	registry.Add(&Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}})
+	stored := registry.Ensure("pkg:npm/react@18.2.0")
+	stored.Homepage = "https://user:pw@evil.test/"
+	stored.Description = "bad\x07text"
+	stored.Supplier = &Contact{Kind: ContactKindOrganization, Name: "Acme\nInc"}
+
+	encoded, err := json.Marshal(registry)
+	if err != nil {
+		t.Fatalf("encode registry: %v", err)
+	}
+	for _, forbidden := range []string{"user:pw", "\\u0007", `"supplier"`} {
+		if strings.Contains(string(encoded), forbidden) {
+			t.Fatalf("encoded registry contains %s: %s", forbidden, encoded)
+		}
+	}
+	// Normalizing the copy must not rewrite the record its holder still owns.
+	if stored.Homepage != "https://user:pw@evil.test/" {
+		t.Fatalf("marshal mutated the stored record: %q", stored.Homepage)
+	}
+}
+
+// TestParseDigestAlgorithmBoundsItsInput pins the bound, and that the bound is
+// comfortably above every registered spelling — a limit that clipped a real
+// algorithm name would be a silent correctness bug rather than a guard.
+func TestParseDigestAlgorithmBoundsItsInput(t *testing.T) {
+	// The error must come from the bound, not from the registry lookup that
+	// would reject it anyway: the point is that an arbitrarily large token is
+	// refused before it is lowercased and copied into a squashed key, so
+	// asserting only "it errors" would pass with the bound removed.
+	_, err := ParseDigestAlgorithm(strings.Repeat("a", maxDigestAlgorithmLength+1))
+	if err == nil {
+		t.Fatal("an over-long algorithm token was accepted")
+	}
+	if !strings.Contains(err.Error(), "over the") {
+		t.Fatalf("error = %v, want the length bound to have rejected it before the lookup", err)
+	}
+	for _, profile := range digestAlgorithmProfiles {
+		for _, spelling := range []string{string(profile.canonical), profile.spdx, profile.cycloneDX} {
+			if len(spelling) > maxDigestAlgorithmLength {
+				t.Fatalf("registered spelling %q is %d bytes, over the parse limit", spelling, len(spelling))
+			}
+		}
+	}
+}
+
+// TestContactPreservesNonEmailParentheticals pins a round-trip break the
+// fuzzer caught: stripping every trailing "(...)" group meant a name that
+// legitimately ends in one lost it on the *second* read, so a contact exported
+// and re-ingested did not survive its own round trip.
+func TestContactPreservesNonEmailParentheticals(t *testing.T) {
+	contact, ok := ParseSPDXContact("Organization: Acme Inc (Europe)")
+	if !ok {
+		t.Fatal("a valid supplier was rejected")
+	}
+	if contact.Name != "Acme Inc (Europe)" {
+		t.Fatalf("name = %q, want the qualifier preserved", contact.Name)
+	}
+	// Exporting and re-reading reaches the same value.
+	again, ok := ParseSPDXContact(contact.SPDXString())
+	if !ok || again != contact {
+		t.Fatalf("round trip gave %+v (ok=%v), want %+v", again, ok, contact)
+	}
+	// An address parenthetical is still stripped.
+	withEmail, ok := ParseSPDXContact("Organization: Acme Inc (info@acme.com)")
+	if !ok || withEmail.Name != "Acme Inc" {
+		t.Fatalf("name = %+v, want the address parenthetical removed", withEmail)
+	}
+}
+
+// TestReferenceURLRejectsRawQueryWhitespace pins the other fixed-point break
+// the fuzzer caught. A URL's query is the one part url.URL writes back
+// verbatim rather than re-encoding, so a raw space survived one pass and was
+// trimmed on the next -- and this rule runs on both write and read.
+func TestReferenceURLRejectsRawQueryWhitespace(t *testing.T) {
+	for _, raw := range []string{"http://0? #", "https://example.test/docs?a= b", "https://example.test/?\x01"} {
+		if got, ok := NormalizeURL(raw, URLFormReference); ok {
+			// If it is accepted at all, it must at least be a fixed point.
+			again, _ := NormalizeURL(got, URLFormReference)
+			t.Fatalf("NormalizeURL(%q, reference) = %q, which re-normalizes to %q", raw, got, again)
+		}
+	}
+	// An escaped space is fine: it round-trips as written.
+	got, ok := NormalizeURL("https://example.test/docs?a=%20b", URLFormReference)
+	if !ok {
+		t.Fatal("an escaped query space was rejected")
+	}
+	again, ok := NormalizeURL(got, URLFormReference)
+	if !ok || again != got {
+		t.Fatalf("re-normalizing %q gave %q (ok=%v)", got, again, ok)
+	}
+}

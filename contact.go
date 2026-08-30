@@ -264,8 +264,15 @@ func stripAddressTokens(value string) string {
 	return strings.Join(kept, " ")
 }
 
-// stripEmailParenthetical removes a trailing "(...)" group, which is where
-// SPDX puts the optional email address.
+// stripEmailParenthetical removes a trailing "(...)" group when it holds an
+// address, which is where SPDX puts the optional email.
+//
+// The address test is what keeps the group from being removed on sight. A
+// party name may legitimately end in parentheses -- "Acme Inc (Europe)" -- and
+// stripping every trailing group would drop that qualifier the second time the
+// value was read, so a contact exported and re-ingested would not survive its
+// own round trip. stripAddressTokens is the backstop for an address written
+// outside the parentheses.
 func stripEmailParenthetical(value string) string {
 	trimmed := strings.TrimSpace(value)
 	if !strings.HasSuffix(trimmed, ")") {
@@ -273,6 +280,9 @@ func stripEmailParenthetical(value string) string {
 	}
 	open := strings.LastIndex(trimmed, "(")
 	if open < 0 {
+		return trimmed
+	}
+	if !strings.Contains(trimmed[open:], "@") {
 		return trimmed
 	}
 	return strings.TrimSpace(trimmed[:open])

@@ -228,8 +228,19 @@ func normalizedSPDXExpression(expression, extractedText string) string {
 
 // licenseKey is the merge identity of a license claim: the same expression
 // asserted as declared and as concluded are two claims, not a duplicate.
+//
+// The text takes part in the identity, by its minted reference rather than by
+// its bytes. Source-defined references are document-local -- two SBOMs can
+// each define "LicenseRef-Custom" for entirely different terms -- so a key
+// without the text would call those one claim and silently drop the second
+// document's license text. Keying on the mint keeps the map small while
+// keeping distinct texts distinct.
 func (l PackageLicense) licenseKey() string {
-	return string(l.Type) + "\x00" + l.SPDXExpression + "\x00" + l.Value
+	textKey := ""
+	if strings.TrimSpace(l.ExtractedText) != "" {
+		textKey = spdxkit.MintLicenseRef(l.ExtractedText).RefID
+	}
+	return string(l.Type) + "\x00" + l.SPDXExpression + "\x00" + l.Value + "\x00" + textKey
 }
 
 // MergeLicenses unions license claims, keeping the first record of each
@@ -242,12 +253,16 @@ func MergeLicenses(existing, additions []PackageLicense) []PackageLicense {
 	}
 	merged := make([]PackageLicense, 0, len(existing)+len(additions))
 	seen := make(map[string]struct{}, len(existing)+len(additions))
+	// textByRef records which text each surviving reference names, so a second
+	// claim reusing that reference for different terms can be spotted.
+	textByRef := make(map[string]string, len(existing)+len(additions))
 	for _, group := range [][]PackageLicense{existing, additions} {
 		for _, license := range group {
 			normalized, ok := license.Normalized()
 			if !ok {
 				continue
 			}
+			normalized = resolveLicenseRefCollision(normalized, textByRef)
 			key := normalized.licenseKey()
 			if _, found := seen[key]; found {
 				continue
@@ -260,6 +275,36 @@ func MergeLicenses(existing, additions []PackageLicense) []PackageLicense {
 		return nil
 	}
 	return merged
+}
+
+// resolveLicenseRefCollision keeps a merged license set unambiguous when two
+// sources use one reference for different terms.
+//
+// A source-defined reference is document-local: preserving it (so re-exporting
+// a document reproduces its own identifiers) means two documents can each
+// arrive naming "LicenseRef-Custom" for unrelated licenses. Merging them into
+// one set would leave that identifier naming two texts, which is not a valid
+// document in either format, and a reader would see whichever entry the
+// exporter happened to write.
+//
+// The first claim to use a reference keeps it. A later claim that reuses it
+// for different text is re-minted under Bomly's prefix, which is derived from
+// its own text and so cannot collide again. The contradiction survives as two
+// distinct, citable claims rather than being resolved by dropping one.
+func resolveLicenseRefCollision(license PackageLicense, textByRef map[string]string) PackageLicense {
+	text := strings.TrimSpace(license.ExtractedText)
+	if text == "" || !strings.HasPrefix(license.SPDXExpression, spdxkit.LicenseRefPrefix) {
+		return license
+	}
+	prior, seen := textByRef[license.SPDXExpression]
+	switch {
+	case !seen:
+		textByRef[license.SPDXExpression] = text
+	case prior != text:
+		license.SPDXExpression = spdxkit.MintLicenseRef(license.ExtractedText).RefID
+		textByRef[license.SPDXExpression] = text
+	}
+	return license
 }
 
 // packageLicenseWire carries PackageLicense's fields without its methods, so

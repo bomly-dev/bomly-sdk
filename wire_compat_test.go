@@ -139,6 +139,10 @@ func TestWireV1NewFieldsAreOmitEmpty(t *testing.T) {
 		for _, forbidden := range []string{
 			"acceptPackageUpdates", "packageUpdates", "capabilities", "configSchema",
 			"detected_origins",
+			// The ADR-0037 package-level assertions. TestWireV1NodeFieldsAreOmitEmpty
+			// covers the node encoder's copies of these; these are Package's
+			// own tags, which that test never reaches.
+			"description", "homepage", "supplier", "originator", "licenses",
 		} {
 			if _, ok := decoded[forbidden]; ok {
 				t.Errorf("%s: zero-valued %q must be omitted from the wire", name, forbidden)

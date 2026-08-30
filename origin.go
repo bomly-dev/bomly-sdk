@@ -185,7 +185,18 @@ func NormalizeURL(raw string, form URLForm) (string, bool) {
 		parsed.RawQuery = ""
 		parsed.ForceQuery = false
 	case URLFormReference:
-		// Kept: a citation's query selects what is being cited.
+		// Kept: a citation's query selects what is being cited. It is also
+		// the one part of a URL that url.URL writes back verbatim instead of
+		// re-encoding, so a raw space or control character in it would
+		// survive this pass and then be trimmed on the next one -- two
+		// normalizations, two answers, on a rule that runs on both write and
+		// read. Such a query is malformed regardless: RFC 3986 requires those
+		// characters to be escaped.
+		for i := 0; i < len(parsed.RawQuery); i++ {
+			if b := parsed.RawQuery[i]; b <= ' ' || b == 0x7f {
+				return "", false
+			}
+		}
 	default:
 		if parsed.RawQuery != "" || parsed.ForceQuery {
 			return "", false

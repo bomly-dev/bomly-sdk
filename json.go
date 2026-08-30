@@ -410,7 +410,15 @@ func (r *PackageRegistry) MarshalJSON() ([]byte, error) {
 		if pkg == nil || pkg.PURL == "" {
 			continue
 		}
-		payload[pkg.PURL] = pkg.Clone()
+		// Re-gated on the way out, on the clone rather than on the stored
+		// record. Add is the door in, but Ensure, Get, and All hand back
+		// mutable pointers and the established pattern is to mutate what
+		// Ensure returns, so a matcher can install an unpublishable homepage
+		// after insertion. Normalizing the copy keeps that from crossing the
+		// wire without rewriting a record its holder still owns.
+		clone := pkg.Clone()
+		clone.NormalizeAssertions()
+		payload[pkg.PURL] = clone
 	}
 	return json.Marshal(payload)
 }

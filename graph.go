@@ -265,17 +265,28 @@ func foldNodes(surviving, witness GraphNode) {
 		// The component-level document assertions are scalars — one supplier,
 		// one homepage — so a later witness contributes only what the first
 		// did not know.
-		if strings.TrimSpace(survivor.Description) == "" {
-			survivor.Description = incoming.Description
+		//
+		// Both sides are gated before the gap is measured, not after. A node
+		// built in process never passed a codec, so a survivor could hold an
+		// unpublishable value — a homepage carrying credentials — which is
+		// non-empty and therefore blocks a valid incoming one, and is then
+		// dropped at encode. The result would be that a witness with a good
+		// homepage lost it to a witness that never had one.
+		survivor.Description = NormalizeDescription(survivor.Description)
+		survivor.Homepage = NormalizeHomepage(survivor.Homepage)
+		survivor.Supplier = normalizedContact(survivor.Supplier)
+		survivor.Originator = normalizedContact(survivor.Originator)
+		if survivor.Description == "" {
+			survivor.Description = NormalizeDescription(incoming.Description)
 		}
 		if survivor.Homepage == "" {
-			survivor.Homepage = incoming.Homepage
+			survivor.Homepage = NormalizeHomepage(incoming.Homepage)
 		}
 		if survivor.Supplier == nil {
-			survivor.Supplier = incoming.Supplier.Clone()
+			survivor.Supplier = normalizedContact(incoming.Supplier)
 		}
 		if survivor.Originator == nil {
-			survivor.Originator = incoming.Originator.Clone()
+			survivor.Originator = normalizedContact(incoming.Originator)
 		}
 		if survivor.Copyright == "" {
 			survivor.Copyright = incoming.Copyright
