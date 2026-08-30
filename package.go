@@ -884,28 +884,42 @@ func (p *Package) mergeVulnerabilities(incoming []Vulnerability) {
 	}
 }
 
-// SetDetectionLicenses stashes detection-time license facts on dep's metadata
-// under MetadataKeyDetectionLicenses, so consolidation can lift them into the
-// package registry. No-op when dep is nil or licenses is empty.
+// SetDetectionLicenses records detection-time license facts on dep, so
+// consolidation can lift them into the package registry. No-op when dep is nil
+// or licenses is empty.
+//
+// It now writes the typed DependencyNode.Licenses field rather than the
+// metadata stash, which is the migration ADR-0037 calls for: the path for a
+// metadata key is a typed field. Callers of this helper need no change, and
+// payloads written by an older producer are still read — see
+// DetectionLicenses.
 func SetDetectionLicenses(dep *DependencyNode, licenses []PackageLicense) {
 	if dep == nil || len(licenses) == 0 {
 		return
 	}
-	if dep.Metadata == nil {
-		dep.Metadata = make(map[string]any, 1)
-	}
-	dep.Metadata[MetadataKeyDetectionLicenses] = licenses
+	dep.Licenses = MergeLicenses(dep.Licenses, licenses)
 }
 
-// DetectionLicenses returns license facts stashed on dep at detection time.
+// DetectionLicenses returns the license facts recorded on dep at detection
+// time: the typed field unioned with anything a producer left under the
+// deprecated MetadataKeyDetectionLicenses stash.
+//
+// Both are read because the stash outlives this release. A node decoded from
+// an older producer's payload, or built by a component still pinned to an
+// earlier SDK, carries its licenses only in metadata, and a consumer that
+// looked at the typed field alone would silently see a package with no
+// licenses at all.
 func DetectionLicenses(dep *DependencyNode) []PackageLicense {
-	if dep == nil || dep.Metadata == nil {
+	if dep == nil {
 		return nil
 	}
-	if v, ok := dep.Metadata[MetadataKeyDetectionLicenses].([]PackageLicense); ok {
-		return v
+	licenses := dep.Licenses
+	if dep.Metadata != nil {
+		if stashed, ok := dep.Metadata[MetadataKeyDetectionLicenses].([]PackageLicense); ok {
+			licenses = MergeLicenses(licenses, stashed)
+		}
 	}
-	return nil
+	return MergeLicenses(nil, licenses)
 }
 
 // PackageFromDependencyNode seeds a registry package from a dependency
@@ -940,11 +954,15 @@ func PackageFromDependencyNode(dep *DependencyNode) *Package {
 		// and description reach the registry rather than stopping at the
 		// graph node. Each is re-gated by its own helper: seeding must not be
 		// a way around the boundary the wire enforces.
-		Description:     NormalizeDescription(dep.Description),
-		Homepage:        NormalizeHomepage(dep.Homepage),
-		Supplier:        normalizedContact(dep.Supplier),
-		Originator:      normalizedContact(dep.Originator),
-		Licenses:        MergeLicenses(nil, dep.Licenses),
+		Description: NormalizeDescription(dep.Description),
+		Homepage:    NormalizeHomepage(dep.Homepage),
+		Supplier:    normalizedContact(dep.Supplier),
+		Originator:  normalizedContact(dep.Originator),
+		// DetectionLicenses, not the typed field alone: a node from an older
+		// producer carries its licenses in the deprecated metadata stash, and
+		// seeding from the field alone would hand the registry a package with
+		// no licenses.
+		Licenses:        DetectionLicenses(dep),
 		Digests:         mergeDigestSet(nil, dep.Digests),
 		DetectedOrigins: MergeOrigins(nil, dep.Origins),
 	}

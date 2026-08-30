@@ -32,6 +32,14 @@ const (
 // ParseContactKind normalizes a contact kind. An empty value is unknown, which
 // is legal; anything else unrecognized is an error.
 func ParseContactKind(value string) (ContactKind, error) {
+	// Bounded before any work is done on it, as ParseDigestAlgorithm is. The
+	// longest kind is eleven characters, so a longer value cannot match --
+	// lowercasing it and then formatting it into an error message would spend
+	// memory proportional to whatever an untrusted contact chose to send, for
+	// an error the caller discards.
+	if len(value) > maxContactKindLength {
+		return ContactKindUnknown, fmt.Errorf("contact kind is %d bytes, over the %d byte limit", len(value), maxContactKindLength)
+	}
 	switch ContactKind(strings.ToLower(strings.TrimSpace(value))) {
 	case "":
 		return ContactKindUnknown, nil
@@ -45,6 +53,11 @@ func ParseContactKind(value string) (ContactKind, error) {
 		return ContactKindUnknown, fmt.Errorf("unsupported contact kind %q", value)
 	}
 }
+
+// maxContactKindLength bounds a contact kind spelling. The longest is
+// "noassertion" at eleven characters; the allowance leaves room for
+// whitespace padding without admitting a value that is really a payload.
+const maxContactKindLength = 64
 
 // Contact names a party a document makes a claim about: who supplied a package
 // (SPDX PackageSupplier, CycloneDX supplier) or who originally authored it
@@ -84,13 +97,19 @@ type Contact struct {
 // else's personal data. A percent-decoded URL carries those characters
 // directly, so the decode does not turn them back into ASCII.
 //
+// The domain half accepts either form the address grammar allows: a dotted
+// name, or a bracketed address literal ("jane@[192.0.2.1]",
+// "jane@[IPv6:2001:db8::1]"). The literal form has no dotted alphabetic
+// suffix, so a name-only pattern published it.
+//
 // The shape requirement is what keeps this off the cases it would otherwise
-// break: a local part is required immediately before the "@" and a dotted
-// domain with an alphabetic suffix after it. An npm scope path such as
-// "/package/@scope/pkg" has no local part before its "@", and a coordinate
-// such as "pkg@1.0.0" has no alphabetic suffix after its final dot. A blanket
-// "@" test would reject both.
-var addressPattern = regexp.MustCompile(`[\p{L}\p{N}._%+\-]+@[\p{L}\p{N}.\-]+\.\p{L}{2,}`)
+// break: a local part is required immediately before the "@" and one of those
+// two domain forms after it. An npm scope path such as "/package/@scope/pkg"
+// has no local part before its "@", and a coordinate such as "pkg@1.0.0" has
+// no alphabetic suffix after its final dot. A blanket "@" test would reject
+// both.
+var addressPattern = regexp.MustCompile(
+	`[\p{L}\p{N}._%+\-]+@(?:[\p{L}\p{N}.\-]+\.\p{L}{2,}|\[[^\[\]\s]{1,64}\])`)
 
 // urlCarriesAddress reports whether a URL carries an email address anywhere a
 // reader would see it.

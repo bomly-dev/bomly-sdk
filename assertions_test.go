@@ -1562,3 +1562,99 @@ func TestOversizedSPDXExpressionNeverSurvives(t *testing.T) {
 		t.Fatalf("an oversized expression survived: %d bytes", len(normalized.SPDXExpression))
 	}
 }
+
+// TestDetectionLicensesSurviveBothRecordings pins that introducing the typed
+// field did not strand the established API. A detector calling
+// SetDetectionLicenses used to write only the metadata stash, which the new
+// seeding path did not read — so those claims reached the registry as a
+// package with no licenses at all.
+func TestDetectionLicensesSurviveBothRecordings(t *testing.T) {
+	t.Run("through the helper", func(t *testing.T) {
+		dep := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "react", Version: "18.2.0"})
+		SetDetectionLicenses(dep, []PackageLicense{{Value: "MIT", SPDXExpression: "MIT", Type: LicenseTypeDeclared}})
+		if len(dep.Licenses) != 1 {
+			t.Fatalf("the helper did not record on the typed field: %+v", dep.Licenses)
+		}
+		if got := PackageFromDependencyNode(dep).Licenses; len(got) != 1 {
+			t.Fatalf("seeded licenses = %+v, want the recorded claim", got)
+		}
+	})
+
+	t.Run("from an older producer's stash", func(t *testing.T) {
+		// A node decoded from a payload written before the typed field
+		// existed, or built by a component still pinned to an earlier SDK.
+		dep := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "left-pad", Version: "1.3.0"})
+		dep.Metadata = map[string]any{
+			MetadataKeyDetectionLicenses: []PackageLicense{{Value: "ISC", SPDXExpression: "ISC"}},
+		}
+		if got := DetectionLicenses(dep); len(got) != 1 {
+			t.Fatalf("DetectionLicenses = %+v, want the stashed claim", got)
+		}
+		if got := PackageFromDependencyNode(dep).Licenses; len(got) != 1 {
+			t.Fatalf("seeded licenses = %+v, want the stashed claim", got)
+		}
+	})
+
+	t.Run("both, without duplication", func(t *testing.T) {
+		dep := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "react", Version: "18.2.0"})
+		SetDetectionLicenses(dep, []PackageLicense{{Value: "MIT", SPDXExpression: "MIT"}})
+		dep.Metadata = map[string]any{
+			MetadataKeyDetectionLicenses: []PackageLicense{
+				{Value: "MIT", SPDXExpression: "MIT"},               // the same claim
+				{Value: "Apache-2.0", SPDXExpression: "Apache-2.0"}, // a second one
+			},
+		}
+		if got := DetectionLicenses(dep); len(got) != 2 {
+			t.Fatalf("DetectionLicenses = %+v, want the union without a duplicate", got)
+		}
+	})
+}
+
+// TestContactURLRejectsAddressLiterals pins the second domain form the address
+// grammar allows. A bracketed literal has no dotted alphabetic suffix, so a
+// name-only pattern published "jane@[192.0.2.1]" intact.
+func TestContactURLRejectsAddressLiterals(t *testing.T) {
+	for _, raw := range []string{
+		"https://acme.test/?email=jane@[192.0.2.1]",
+		"https://acme.test/?email=jane@[IPv6:2001:db8::1]",
+		"https://acme.test/?email=jane%40%5B192.0.2.1%5D",
+	} {
+		contact, ok := (Contact{Kind: ContactKindOrganization, Name: "Acme", URL: raw}).Normalized()
+		if !ok {
+			t.Fatalf("contact with URL %q was rejected outright; the name should survive", raw)
+		}
+		if contact.URL != "" {
+			t.Fatalf("URL %q kept an address literal: %q", raw, contact.URL)
+		}
+	}
+	// The bracket form must not swallow unrelated URLs.
+	for _, raw := range []string{"https://acme.test/docs%5Bv2%5D", "https://npmjs.test/package/@scope/pkg"} {
+		contact, ok := (Contact{Kind: ContactKindOrganization, Name: "Acme", URL: raw}).Normalized()
+		if !ok || contact.URL == "" {
+			t.Fatalf("URL %q was dropped as an address: %+v", raw, contact)
+		}
+	}
+}
+
+// TestParseContactKindBoundsItsInput pins the bound, and that it sits well
+// above every real spelling.
+func TestParseContactKindBoundsItsInput(t *testing.T) {
+	oversized := strings.Repeat("x", maxContactKindLength+1)
+	_, err := ParseContactKind(oversized)
+	if err == nil {
+		t.Fatal("an over-long contact kind was accepted")
+	}
+	// The error must come from the bound, not from the vocabulary lookup that
+	// would reject it anyway — and it must not quote the whole input back.
+	if !strings.Contains(err.Error(), "over the") {
+		t.Fatalf("error = %v, want the length bound to have rejected it", err)
+	}
+	if len(err.Error()) > 200 {
+		t.Fatalf("error message is %d bytes; it echoes the rejected input", len(err.Error()))
+	}
+	for _, kind := range []ContactKind{ContactKindOrganization, ContactKindPerson, ContactKindNoAssertion} {
+		if len(kind) > maxContactKindLength {
+			t.Fatalf("declared kind %q is over the parse limit", kind)
+		}
+	}
+}
