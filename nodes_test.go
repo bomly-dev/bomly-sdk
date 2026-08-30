@@ -339,3 +339,55 @@ func TestEcosystemProjectsFromTheIdentity(t *testing.T) {
 		t.Fatalf("custom ecosystem token = %q, want it preserved", custom.Ecosystem)
 	}
 }
+
+func TestPathRelationshipAgreesWithGraphDerivation(t *testing.T) {
+	// The path's first node is the owner, never a hop — including the
+	// legacy dependency-only shape, where a root dependency's immediate
+	// child must stay direct. Both derivations must agree, or Compare and
+	// explain would classify the same edge differently.
+	module := mustModule(t, "package.json", Coordinates{Name: "app"})
+	rootDep := mustDepPURL(t, "pkg:npm/root@1.0.0")
+	child := mustDepPURL(t, "pkg:npm/child@1.0.0")
+	grandchild := mustDepPURL(t, "pkg:npm/grandchild@1.0.0")
+
+	cases := []struct {
+		name string
+		path []GraphNode
+		want DependencyRelationship
+	}{
+		{"lone target", []GraphNode{child}, DependencyRelationshipDirect},
+		{"legacy root then child", []GraphNode{rootDep, child}, DependencyRelationshipDirect},
+		{"legacy root then two hops", []GraphNode{rootDep, child, grandchild}, DependencyRelationshipTransitive},
+		{"module owner", []GraphNode{module, child}, DependencyRelationshipDirect},
+		{"module owner then hop", []GraphNode{module, child, grandchild}, DependencyRelationshipTransitive},
+	}
+	for _, tc := range cases {
+		if got := RelationshipForPath(tc.path); got != tc.want {
+			t.Errorf("%s: RelationshipForPath = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+
+	// The graph-wide derivation must reach the same verdict for the legacy
+	// dependency-only shape that motivated this rule.
+	graph := New()
+	for _, node := range []GraphNode{rootDep, child, grandchild} {
+		if err := graph.AddNode(node); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, edge := range [][2]string{
+		{rootDep.NodeID(), child.NodeID()},
+		{child.NodeID(), grandchild.NodeID()},
+	} {
+		if err := graph.AddEdge(edge[0], edge[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	relationships := dependencyRelationshipsForGraph(graph)
+	if relationships[child.NodeID()] != DependencyRelationshipDirect {
+		t.Errorf("graph derivation for a root dependency's child = %q, want direct", relationships[child.NodeID()])
+	}
+	if relationships[grandchild.NodeID()] != DependencyRelationshipTransitive {
+		t.Errorf("graph derivation two hops down = %q, want transitive", relationships[grandchild.NodeID()])
+	}
+}
