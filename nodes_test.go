@@ -391,3 +391,50 @@ func TestPathRelationshipAgreesWithGraphDerivation(t *testing.T) {
 		t.Errorf("graph derivation two hops down = %q, want transitive", relationships[grandchild.NodeID()])
 	}
 }
+
+func TestDecodeKeepsWireIDMappingsOverCanonicalAliases(t *testing.T) {
+	// A legacy node's arbitrary wire ID can equal another node's newly
+	// minted identity. The wire ID a payload actually used must win, or
+	// edges referencing the first node are silently redirected to the
+	// second — and reversing the node order would change the result.
+	raw := `{"nodes":[
+	  {"id":"pkg:npm/foo@1.0.0","ecosystem":"npm","name":"bar","version":"1.0.0"},
+	  {"id":"legacy-b","ecosystem":"npm","name":"foo","version":"1.0.0"},
+	  {"id":"root","first_party":true,"name":"app","locations":[{"real_path":"package.json"}]}
+	],"edges":[{"fromId":"root","toId":"pkg:npm/foo@1.0.0"}]}`
+	var graph Graph
+	if err := json.Unmarshal([]byte(raw), &graph); err != nil {
+		t.Fatal(err)
+	}
+	modules := graph.ModuleNodes()
+	if len(modules) != 1 {
+		t.Fatalf("want one module root, got %v", modules)
+	}
+	children, err := graph.DirectDependencies(modules[0].NodeID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(children) != 1 || children[0].NodeID() != "pkg:npm/bar@1.0.0" {
+		t.Fatalf("edge followed the wrong node: %v — the wire ID names the record that carried it", idsOf(children))
+	}
+}
+
+func TestModuleProjectsCoordinatesFromAssertedIdentity(t *testing.T) {
+	// A module keyed by an asserted package URL must not present an empty
+	// or contradictory name, version, or ecosystem — consumers read those
+	// fields, and they travel on the wire.
+	node, err := NewModuleNode("package.json", Coordinates{PURL: "pkg:npm/app@1.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node.Name != "app" || node.Version != "1.0.0" || node.Ecosystem != EcosystemNPM {
+		t.Fatalf("coordinates not projected: name=%q version=%q ecosystem=%q", node.Name, node.Version, node.Ecosystem)
+	}
+	contradicting, err := NewModuleNode("package.json", Coordinates{PURL: "pkg:npm/app@1.0.0", Name: "other", Version: "9.9.9"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contradicting.Name != "app" || contradicting.Version != "1.0.0" {
+		t.Fatalf("contradicting coordinates survived: name=%q version=%q", contradicting.Name, contradicting.Version)
+	}
+}
