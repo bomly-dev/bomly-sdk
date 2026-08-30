@@ -35,6 +35,7 @@ type nodeWire struct {
 	Origin                *DependencyOrigin      `json:"origin,omitempty"`
 	Origins               []DependencyOrigin     `json:"origins,omitempty"`
 	DeclaringManifestPath string                 `json:"declaring_manifest_path,omitempty"`
+	ManifestKind          ManifestKind           `json:"manifest_kind,omitempty"`
 	Metadata              map[string]any         `json:"metadata,omitempty"`
 	Matched               bool                   `json:"matched,omitempty"`
 	PackageRef            string                 `json:"package_ref,omitempty"`
@@ -106,7 +107,7 @@ func (w *nodeWire) manifestPath() string {
 }
 
 func (w *nodeWire) decodeManifestNode() (*ManifestNode, error) {
-	node, err := NewManifestNode(w.manifestPath(), "")
+	node, err := NewManifestNode(w.manifestPath(), w.ManifestKind)
 	if err != nil {
 		return nil, fmt.Errorf("decode manifest node %q: %w", w.ID, err)
 	}
@@ -185,12 +186,13 @@ func encodeNodeWire(node GraphNode) nodeWire {
 	switch n := node.(type) {
 	case *ManifestNode:
 		return nodeWire{
-			Kind:      NodeKindManifest,
-			ID:        n.NodeID(),
-			Type:      PackageTypeManifest,
-			Name:      path.Base(n.Path),
-			Locations: n.NodeLocations(),
-			Metadata:  n.Metadata,
+			Kind:         NodeKindManifest,
+			ID:           n.NodeID(),
+			Type:         PackageTypeManifest,
+			Name:         path.Base(n.Path),
+			ManifestKind: n.FileKind,
+			Locations:    n.NodeLocations(),
+			Metadata:     n.Metadata,
 		}
 	case *ModuleNode:
 		return nodeWire{

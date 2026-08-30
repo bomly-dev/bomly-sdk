@@ -1,6 +1,10 @@
 package sdk
 
-import "testing"
+import (
+	"encoding/json"
+	"errors"
+	"testing"
+)
 
 // mustDepPURL constructs a dependency node from a raw package URL, failing
 // the test on constructor error.
@@ -43,4 +47,160 @@ func mustManifest(t testing.TB, path string) *ManifestNode {
 		t.Fatalf("NewManifestNode(%q): %v", path, err)
 	}
 	return node
+}
+
+func TestAddNodeRejectsTypedNilPointers(t *testing.T) {
+	// A failed constructor's zero return is a typed nil: a non-nil
+	// interface whose methods would panic. Insertion must report
+	// ErrNilNode instead of crashing.
+	graph := New()
+	var dep *DependencyNode
+	var module *ModuleNode
+	var manifest *ManifestNode
+	for _, node := range []GraphNode{dep, module, manifest, nil} {
+		if err := graph.AddNode(node); !errors.Is(err, ErrNilNode) {
+			t.Fatalf("AddNode(%T nil) = %v, want ErrNilNode", node, err)
+		}
+		if _, err := graph.InsertNode(node); !errors.Is(err, ErrNilNode) {
+			t.Fatalf("InsertNode(%T nil) = %v, want ErrNilNode", node, err)
+		}
+	}
+}
+
+func TestDependencyIdentityOverridesContradictingCoordinates(t *testing.T) {
+	// Coordinates are the identity's projection, never a second opinion:
+	// contradicting name and version are replaced by the identity's split,
+	// so presentation and registry seeding cannot disagree with the key.
+	node, err := NewDependencyNode(Coordinates{PURL: "pkg:npm/foo@1.0.0", Name: "bar", Version: "2.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node.NodeID() != "pkg:npm/foo@1.0.0" {
+		t.Fatalf("identity = %q", node.NodeID())
+	}
+	if node.Name != "foo" || node.Version != "1.0.0" {
+		t.Fatalf("coordinates still contradict the identity: %s@%s", node.Name, node.Version)
+	}
+	if pkg := PackageFromDependencyNode(node); pkg.Name != "foo" || pkg.Version != "1.0.0" {
+		t.Fatalf("seeded package contradicts the identity: %s@%s", pkg.Name, pkg.Version)
+	}
+	// An ecosystem-native spelling that re-mints the same identity survives:
+	// a Go module keeps its whole path in Name even though the package URL
+	// splits the trailing segment off.
+	goNode, err := NewDependencyNode(Coordinates{Ecosystem: EcosystemGo, Name: "github.com/example/lib/v2", Version: "v2.1.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if goNode.Name != "github.com/example/lib/v2" {
+		t.Fatalf("ecosystem-native path spelling was overwritten: %q", goNode.Name)
+	}
+}
+
+func TestDependencyFromPURLResolvesDirectEcosystemTypes(t *testing.T) {
+	// Direct purl types (npm, apk, …) are absent from the type→ecosystem
+	// table by design; without the alias lookup a node built from a bare
+	// package URL would carry no ecosystem and lose ecosystem-specific
+	// behavior — the npm scope in EcosystemName(), for one.
+	cases := map[string]struct {
+		ecosystem Ecosystem
+		name      string
+	}{
+		"pkg:npm/%40scope/name@1.0.0":     {EcosystemNPM, "@scope/name"},
+		"pkg:apk/alpine/musl@1.2.5":       {Ecosystem("apk"), "musl"},
+		"pkg:golang/example.com/m@v1.0.0": {EcosystemGo, "example.com/m"},
+	}
+	for raw, want := range cases {
+		node, err := NewDependencyNodeFromPURL(raw)
+		if err != nil {
+			t.Fatalf("NewDependencyNodeFromPURL(%q): %v", raw, err)
+		}
+		if node.Ecosystem != want.ecosystem {
+			t.Errorf("%s: ecosystem = %q, want %q", raw, node.Ecosystem, want.ecosystem)
+		}
+		if got := node.EcosystemName(); got != want.name {
+			t.Errorf("%s: EcosystemName() = %q, want %q", raw, got, want.name)
+		}
+	}
+}
+
+func TestStructuralNodesAreNotDependencyHops(t *testing.T) {
+	// manifest → module → dependency is a direct dependency of that module:
+	// structural nodes are not hops, so the manifest projection must not
+	// turn direct dependencies into transitive ones.
+	manifest := mustManifest(t, "package.json")
+	module := mustModule(t, "package.json", Coordinates{Name: "app"})
+	direct := mustDepPURL(t, "pkg:npm/left-pad@1.3.0")
+	transitive := mustDepPURL(t, "pkg:npm/deep@2.0.0")
+	graph := New()
+	for _, node := range []GraphNode{manifest, module, direct, transitive} {
+		if err := graph.AddNode(node); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, edge := range [][2]string{
+		{manifest.NodeID(), module.NodeID()},
+		{module.NodeID(), direct.NodeID()},
+		{direct.NodeID(), transitive.NodeID()},
+	} {
+		if err := graph.AddEdge(edge[0], edge[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := RelationshipForPath([]GraphNode{manifest, module, direct}); got != DependencyRelationshipDirect {
+		t.Fatalf("path relationship = %q, want direct", got)
+	}
+	if got := RelationshipForPath([]GraphNode{manifest, module, direct, transitive}); got != DependencyRelationshipTransitive {
+		t.Fatalf("nested path relationship = %q, want transitive", got)
+	}
+	relationships := dependencyRelationshipsForGraph(graph)
+	if relationships[direct.NodeID()] != DependencyRelationshipDirect {
+		t.Fatalf("graph-derived relationship for the module's own dependency = %q, want direct", relationships[direct.NodeID()])
+	}
+	if relationships[transitive.NodeID()] != DependencyRelationshipTransitive {
+		t.Fatalf("graph-derived nested relationship = %q, want transitive", relationships[transitive.NodeID()])
+	}
+}
+
+func TestManifestFileKindSurvivesTheWire(t *testing.T) {
+	manifest, err := NewManifestNode("pom.xml", ManifestKindPackageJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph := New()
+	if err := graph.AddNode(manifest); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(graph)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Graph
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	node, ok := decoded.Node(manifest.NodeID())
+	if !ok {
+		t.Fatal("manifest node lost")
+	}
+	if got := node.(*ManifestNode).FileKind; got != ManifestKindPackageJSON {
+		t.Fatalf("manifest kind = %q, want it to survive the round trip", got)
+	}
+}
+
+func TestPackageCloneAndMergeCarryDetectedOrigins(t *testing.T) {
+	origin := DependencyOrigin{ArtifactURL: "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz"}
+	repo := DependencyOrigin{Repository: "https://github.com/left-pad/left-pad"}
+	pkg := &Package{Coordinates: Coordinates{PURL: "pkg:npm/left-pad@1.3.0"}, DetectedOrigins: []DependencyOrigin{origin}}
+	clone := pkg.Clone()
+	clone.DetectedOrigins[0] = repo
+	if pkg.DetectedOrigins[0] != origin {
+		t.Fatal("Clone shares the detected-origins backing array")
+	}
+	// Merge unions rather than dropping: a package seeded from two nodes
+	// keeps every vetted origin regardless of seeding order.
+	target := &Package{Coordinates: Coordinates{PURL: "pkg:npm/left-pad@1.3.0"}, DetectedOrigins: []DependencyOrigin{origin}}
+	target.MergeFrom(&Package{DetectedOrigins: []DependencyOrigin{origin, repo}})
+	if len(target.DetectedOrigins) != 2 {
+		t.Fatalf("MergeFrom detected origins = %+v, want the deduplicated union", target.DetectedOrigins)
+	}
 }

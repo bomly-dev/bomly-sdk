@@ -36,10 +36,12 @@ func RegistryPackagesForGraph(g *sdk.Graph, reg *sdk.PackageRegistry, target *sd
 		}
 		seen[purl] = struct{}{}
 
-		pkg, ok := reg.Get(purl)
-		if !ok {
-			pkg = reg.Add(sdk.PackageFromDependencyNode(dep))
-		}
+		// Always seed through Add: it merges into an existing record rather
+		// than replacing it, so a package the registry already holds (from
+		// GraphEntry.Packages, say) still receives this node's detected
+		// origins — the repository signal that replaced the URL-valued purl
+		// qualifiers.
+		pkg := reg.Add(sdk.PackageFromDependencyNode(dep))
 		if pkg != nil {
 			out = append(out, pkg)
 		}

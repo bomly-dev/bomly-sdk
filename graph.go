@@ -168,7 +168,7 @@ func NewWithCapacity(nodeCount int) *Graph {
 // AddNode inserts a node, rejecting a duplicate identity. Use InsertNode
 // for fold-by-identity insertion.
 func (g *Graph) AddNode(node GraphNode) error {
-	if node == nil {
+	if isNilNode(node) {
 		return ErrNilNode
 	}
 	if node.NodeID() == "" {
@@ -199,7 +199,7 @@ func (g *Graph) AddNode(node GraphNode) error {
 // vulnerabilities). Module folds union locations; manifest folds are
 // no-ops beyond the identity match.
 func (g *Graph) InsertNode(node GraphNode) (GraphNode, error) {
-	if node == nil {
+	if isNilNode(node) {
 		return nil, ErrNilNode
 	}
 	if node.NodeID() == "" {
@@ -214,6 +214,25 @@ func (g *Graph) InsertNode(node GraphNode) (GraphNode, error) {
 	}
 	foldNodes(existing, node)
 	return existing, nil
+}
+
+// isNilNode reports whether a GraphNode is absent — including a typed nil
+// such as (*DependencyNode)(nil), which is a non-nil interface value whose
+// methods would panic. A failed constructor's zero return must surface as
+// ErrNilNode, not a crash.
+func isNilNode(node GraphNode) bool {
+	switch n := node.(type) {
+	case nil:
+		return true
+	case *ManifestNode:
+		return n == nil
+	case *ModuleNode:
+		return n == nil
+	case *DependencyNode:
+		return n == nil
+	default:
+		return false
+	}
 }
 
 // foldNodes unions one witness into the surviving record of the same
@@ -746,14 +765,27 @@ func dependencyRelationshipsForGraph(graph *Graph) map[string]DependencyRelation
 	}
 	roots := graph.Roots()
 	hasUsableEdges := len(roots) > 0 && len(roots) != graph.Size()
+	// A dependency is direct when it hangs off a root or off any structural
+	// node — manifest and module nodes are not dependency hops, so a
+	// manifest → module → dependency chain must not read as transitive.
 	direct := make(map[int]struct{})
 	if hasUsableEdges {
+		owners := make(map[int]struct{}, len(roots))
 		for _, root := range roots {
-			rootIndex, ok := graph.indexByID[root.NodeID()]
-			if !ok {
+			if index, ok := graph.indexByID[root.NodeID()]; ok {
+				owners[index] = struct{}{}
+			}
+		}
+		for index, node := range graph.nodes {
+			if node == nil || !graph.alive[index] {
 				continue
 			}
-			for childIndex := range graph.outgoing[rootIndex] {
+			if _, isDependency := node.(*DependencyNode); !isDependency {
+				owners[index] = struct{}{}
+			}
+		}
+		for ownerIndex := range owners {
+			for childIndex := range graph.outgoing[ownerIndex] {
 				direct[childIndex] = struct{}{}
 			}
 		}
