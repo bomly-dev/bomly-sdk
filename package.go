@@ -276,7 +276,7 @@ func MergeLicenses(existing, additions []PackageLicense) []PackageLicense {
 		return existing
 	}
 	merged := make([]PackageLicense, 0, len(existing)+len(additions))
-	seen := make(map[string]struct{}, len(existing)+len(additions))
+	seen := make(map[string]int, len(existing)+len(additions))
 	// textByRef records which text each surviving reference names, so a second
 	// claim reusing that reference for different terms can be spotted.
 	textByRef := make(map[string]string, len(existing)+len(additions))
@@ -288,10 +288,20 @@ func MergeLicenses(existing, additions []PackageLicense) []PackageLicense {
 			}
 			normalized = resolveLicenseRefCollision(normalized, textByRef)
 			key := normalized.licenseKey()
-			if _, found := seen[key]; found {
+			if at, found := seen[key]; found {
+				// The same claim seen twice, but one witness may carry the
+				// human-readable name and the other may not. Dropping the
+				// later record wholesale threw that name away, which matters
+				// most for a LicenseRef-* claim: without it a reader has only
+				// "LicenseRef-bomly-3f2a..." to go on. Name is not part of
+				// the identity -- two records naming one license are still
+				// one claim -- so it fills the gap instead.
+				if merged[at].Name == "" {
+					merged[at].Name = normalized.Name
+				}
 				continue
 			}
-			seen[key] = struct{}{}
+			seen[key] = len(merged)
 			merged = append(merged, normalized)
 		}
 	}

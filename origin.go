@@ -7,6 +7,11 @@ import (
 	"strings"
 )
 
+// maxPublishedURLLength bounds any URL Bomly will publish. Browsers and
+// servers cap URLs well below this; the allowance leaves room for a long
+// signed-artifact path without admitting a value that is really a payload.
+const maxPublishedURLLength = 8192
+
 // maxOriginRevisionLength bounds a recorded revision. Commit hashes and tags
 // are far shorter; anything longer is not a revision.
 const maxOriginRevisionLength = 128
@@ -118,6 +123,15 @@ func NormalizeURL(raw string, form URLForm) (string, bool) {
 	if trimmed == "" {
 		return "", false
 	}
+	// Bounded before parsing. A homepage or citation arrives from an
+	// untrusted registry record or SBOM document, and the reference form
+	// keeps the path, query, and fragment -- so without a limit one component
+	// could hand url.Parse and the escape canonicalizer a multi-megabyte
+	// value and then carry it on every wire round trip. No real URL comes
+	// close to the limit.
+	if len(trimmed) > maxPublishedURLLength {
+		return "", false
+	}
 	parsed, err := url.Parse(trimmed)
 	if err != nil {
 		return "", false
@@ -214,6 +228,14 @@ func NormalizeURL(raw string, form URLForm) (string, bool) {
 	parsed.RawPath = escaped
 	normalized := parsed.String()
 	if normalized == "" {
+		return "", false
+	}
+	// The result is bounded as well as the input. Canonicalizing escapes can
+	// make a value longer than it arrived, so a URL just under the limit can
+	// normalize to one just over it -- accepted on write and rejected on
+	// read, which breaks the fixed point this rule promises and would let a
+	// stored value fail its own gate later. The fuzzer found exactly that.
+	if len(normalized) > maxPublishedURLLength {
 		return "", false
 	}
 	return normalized, true

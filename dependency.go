@@ -111,12 +111,28 @@ type DependencyNode struct {
 	// about this dependency. Detection-time facts belong on the node;
 	// consolidation lifts them into the registry package. This is the typed
 	// replacement for the MetadataKeyDetectionLicenses stash.
+	//
+	// Gate: PackageLicense.Normalized. Merge class: set, unioned by
+	// MergeLicenses -- a declaration and a conclusion are two claims about
+	// one package, and two sources reusing one license reference for
+	// different terms are kept apart.
 	Licenses []PackageLicense
 	// Description, Homepage, Supplier, and Originator are the component-level
 	// SBOM assertions a source document made about this dependency
 	// (ADR-0037). They live on the node as well as on Package because an
 	// ingested document asserts them per component, before matching has
 	// produced a registry package to hold them.
+	//
+	// Gates, applied on both wire directions and again when a node seeds a
+	// registry package: NormalizeDescription (trimmed, bounded, control
+	// characters dropped), NormalizeHomepage (URLFormReference, so a bare
+	// host and a query are fine while credentials and local paths are
+	// cleared), and Contact.Normalized for both contacts, which yields nil
+	// for an unpublishable party and never retains an email address.
+	//
+	// Merge class for all four: scalar, fill-gaps. Both witnesses are gated
+	// before the gap is measured, so a value that could not be published
+	// never blocks one that can.
 	Description string
 	Homepage    string
 	Supplier    *Contact
