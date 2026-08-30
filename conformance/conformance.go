@@ -147,9 +147,12 @@ func testGraphWireRoundTrip(t *testing.T) {
 	// still round-trip here while misclassifying ambiguous nodes.
 	var emitted struct {
 		Nodes []struct {
-			ID   string       `json:"id"`
-			Kind sdk.NodeKind `json:"kind"`
+			ID         string          `json:"id"`
+			Kind       sdk.NodeKind    `json:"kind"`
+			Type       sdk.PackageType `json:"type"`
+			FirstParty bool            `json:"first_party"`
 		} `json:"nodes"`
+		Edges []map[string]string `json:"edges"`
 	}
 	if err := json.Unmarshal(encoded, &emitted); err != nil {
 		t.Fatalf("inspect encoded graph: %v", err)
@@ -163,6 +166,49 @@ func testGraphWireRoundTrip(t *testing.T) {
 			t.Fatalf("node %q was encoded without a kind discriminator", node.ID)
 		}
 		emittedKinds[node.ID] = node.Kind
+		// A pre-union v1 peer has no kind field and classifies from these
+		// legacy markers, so dropping them would misclassify nodes for
+		// older hosts and plugins while every check here still passed.
+		switch node.Kind {
+		case sdk.NodeKindManifest:
+			if node.Type != sdk.PackageTypeManifest {
+				t.Errorf("manifest node %q lost its legacy type marker", node.ID)
+			}
+		case sdk.NodeKindModule:
+			if !node.FirstParty {
+				t.Errorf("module node %q lost its legacy first-party marker", node.ID)
+			}
+		case sdk.NodeKindDependency:
+			if node.FirstParty {
+				t.Errorf("dependency node %q claims first-party ownership", node.ID)
+			}
+		}
+	}
+
+	// Edges are asserted on the encoded payload, by field name: a single
+	// change to the shared JSON tags could rename or swap fromId and toId
+	// symmetrically, leaving this round trip correct while a version-skewed
+	// peer dropped or reversed every edge. The exact set is pinned too, so
+	// an extra edge the codec invents cannot hide behind per-parent lookups.
+	wantEdges := map[string]string{
+		manifest.NodeID(): module.NodeID(),
+		module.NodeID():   dep.NodeID(),
+	}
+	if len(emitted.Edges) != len(wantEdges) {
+		t.Fatalf("encoded %d edges, want %d: %v", len(emitted.Edges), len(wantEdges), emitted.Edges)
+	}
+	for _, edge := range emitted.Edges {
+		from, ok := edge["fromId"]
+		if !ok {
+			t.Fatalf("encoded edge %v has no fromId field", edge)
+		}
+		to, ok := edge["toId"]
+		if !ok {
+			t.Fatalf("encoded edge %v has no toId field", edge)
+		}
+		if want, known := wantEdges[from]; !known || want != to {
+			t.Fatalf("encoded edge %q -> %q is not part of the expected topology", from, to)
+		}
 	}
 
 	var decoded sdk.Graph
@@ -202,6 +248,11 @@ func testGraphWireRoundTrip(t *testing.T) {
 		if len(children) != 1 || children[0].NodeID() != edge.child {
 			t.Fatalf("edge %q -> %q lost across the wire: got %v", edge.parent, edge.child, children)
 		}
+	}
+	// The leaf keeps no children: per-parent lookups alone would not catch
+	// an edge the codec invented at the dependency.
+	if children, err := decoded.DirectDependencies(dep.NodeID()); err != nil || len(children) != 0 {
+		t.Fatalf("dependency gained %v children across the wire (%v)", children, err)
 	}
 }
 
