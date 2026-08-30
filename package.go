@@ -598,6 +598,13 @@ type Package struct {
 	//
 	// Gate and merge class: as Supplier.
 	Originator *Contact `json:"originator,omitempty"`
+	// ExternalReferences are the references a source document attached to
+	// this component: advisories, repositories, package-manager coordinates,
+	// CPE values. SPDX externalRefs / CycloneDX externalReferences.
+	//
+	// Gate: ExternalReference.Normalized. Merge class: set, unioned by the
+	// (category, type, locator) triple through MergeExternalReferences.
+	ExternalReferences []ExternalReference `json:"external_references,omitempty"`
 
 	// CPEs, Digests, and Licenses are set-valued: every witness's claims
 	// survive a merge, because two sources can each know something the other
@@ -741,6 +748,7 @@ func (p *Package) NormalizeAssertions() {
 	p.Supplier = normalizedContact(p.Supplier)
 	p.Originator = normalizedContact(p.Originator)
 	p.Licenses = MergeLicenses(nil, p.Licenses)
+	p.ExternalReferences = MergeExternalReferences(nil, p.ExternalReferences)
 	p.Digests = mergeDigestSet(nil, p.Digests)
 	p.DetectedOrigins = MergeOrigins(nil, p.DetectedOrigins)
 }
@@ -754,6 +762,14 @@ func (p *Package) Clone() *Package {
 	clone.CPEs = cloneStrings(p.CPEs)
 	if len(p.Digests) > 0 {
 		clone.Digests = append([]Digest(nil), p.Digests...)
+	}
+	if len(p.ExternalReferences) > 0 {
+		clone.ExternalReferences = make([]ExternalReference, 0, len(p.ExternalReferences))
+		for _, reference := range p.ExternalReferences {
+			copied := reference
+			copied.Hashes = append([]Digest(nil), reference.Hashes...)
+			clone.ExternalReferences = append(clone.ExternalReferences, copied)
+		}
 	}
 	if len(p.Licenses) > 0 {
 		clone.Licenses = append([]PackageLicense(nil), p.Licenses...)
@@ -869,6 +885,7 @@ func (p *Package) MergeFrom(src *Package) {
 	// package, and dropping either publishes a partial answer as a complete
 	// one.
 	p.Licenses = MergeLicenses(p.Licenses, src.Licenses)
+	p.ExternalReferences = MergeExternalReferences(p.ExternalReferences, src.ExternalReferences)
 	if p.Scorecard == nil {
 		p.Scorecard = src.Scorecard.Clone()
 	}
@@ -1023,9 +1040,10 @@ func PackageFromDependencyNode(dep *DependencyNode) *Package {
 		// producer carries its licenses in the deprecated metadata stash, and
 		// seeding from the field alone would hand the registry a package with
 		// no licenses.
-		Licenses:        DetectionLicenses(dep),
-		Digests:         mergeDigestSet(nil, dep.Digests),
-		DetectedOrigins: MergeOrigins(nil, dep.Origins),
+		Licenses:           DetectionLicenses(dep),
+		ExternalReferences: MergeExternalReferences(nil, dep.ExternalReferences),
+		Digests:            mergeDigestSet(nil, dep.Digests),
+		DetectedOrigins:    MergeOrigins(nil, dep.Origins),
 	}
 }
 

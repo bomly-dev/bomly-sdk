@@ -143,6 +143,7 @@ func TestWireV1NewFieldsAreOmitEmpty(t *testing.T) {
 			// covers the node encoder's copies of these; these are Package's
 			// own tags, which that test never reaches.
 			"description", "homepage", "supplier", "originator", "licenses",
+			"external_references",
 		} {
 			if _, ok := decoded[forbidden]; ok {
 				t.Errorf("%s: zero-valued %q must be omitted from the wire", name, forbidden)
@@ -389,7 +390,7 @@ func TestWireV1NodeFieldsAreOmitEmpty(t *testing.T) {
 	// kind, so an unset one must not appear either: a reader on an older
 	// build would see a key it does not know, and an explicit null supplier
 	// is not the same statement as an absent one.
-	assertions := []string{"licenses", "description", "homepage", "supplier", "originator"}
+	assertions := []string{"licenses", "description", "homepage", "supplier", "originator", "external_references"}
 	forbidden := map[NodeKind][]string{
 		NodeKindManifest:   append([]string{"manifest_kind", "declaring_manifest_path", "origins", "origin", "purl", "scopes", "package_ref"}, assertions...),
 		NodeKindModule:     append([]string{"manifest_kind", "origins", "origin", "scopes", "package_ref"}, assertions...),
@@ -470,6 +471,11 @@ func TestWireV1NestedAssertionFieldsAreOmitEmpty(t *testing.T) {
 			name:      "Contact",
 			value:     Contact{Kind: ContactKindOrganization, Name: "Acme Inc"},
 			forbidden: []string{"url"},
+		},
+		{
+			name:      "ExternalReference",
+			value:     ExternalReference{Type: "website", Locator: "https://example.test"},
+			forbidden: []string{"category", "comment", "hashes"},
 		},
 		{
 			name:      "DependencyOrigin",

@@ -35,6 +35,7 @@ type nodeWire struct {
 	Origin                *DependencyOrigin      `json:"origin,omitempty"`
 	Origins               []DependencyOrigin     `json:"origins,omitempty"`
 	Licenses              []PackageLicense       `json:"licenses,omitempty"`
+	ExternalReferences    []ExternalReference    `json:"external_references,omitempty"`
 	Description           string                 `json:"description,omitempty"`
 	Homepage              string                 `json:"homepage,omitempty"`
 	Supplier              *Contact               `json:"supplier,omitempty"`
@@ -163,6 +164,7 @@ func (w *nodeWire) decodeDependencyNode() (*DependencyNode, error) {
 	// slice without passing through PackageLicense's codec — a hand-built
 	// value, or one an older producer wrote — is still held to it here.
 	node.Licenses = MergeLicenses(nil, w.Licenses)
+	node.ExternalReferences = MergeExternalReferences(nil, w.ExternalReferences)
 	node.Description = NormalizeDescription(w.Description)
 	node.Homepage = NormalizeHomepage(w.Homepage)
 	// normalizedContact returns nil for a contact the codec rejected, so a
@@ -256,11 +258,12 @@ func encodeNodeWire(node GraphNode) nodeWire {
 			PackageRef:     n.PackageRef,
 			// Re-gated on the way out as well as in, so a field set directly
 			// on a hand-built node never reaches a reader unchecked.
-			Licenses:    MergeLicenses(nil, n.Licenses),
-			Description: NormalizeDescription(n.Description),
-			Homepage:    NormalizeHomepage(n.Homepage),
-			Supplier:    normalizedContact(n.Supplier),
-			Originator:  normalizedContact(n.Originator),
+			Licenses:           MergeLicenses(nil, n.Licenses),
+			ExternalReferences: MergeExternalReferences(nil, n.ExternalReferences),
+			Description:        NormalizeDescription(n.Description),
+			Homepage:           NormalizeHomepage(n.Homepage),
+			Supplier:           normalizedContact(n.Supplier),
+			Originator:         normalizedContact(n.Originator),
 		}
 		if len(n.Origins) > 0 {
 			legacy := n.Origins[0]

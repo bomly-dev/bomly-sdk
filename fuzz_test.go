@@ -565,3 +565,94 @@ func assertPublishableURL(t *testing.T, form URLForm, raw string) {
 		}
 	}
 }
+
+// FuzzExternalReference drives the reference gate with arbitrary values.
+// References arrive verbatim from ingested SBOM documents and plugin
+// payloads, and their locator is written into a published document.
+func FuzzExternalReference(f *testing.F) {
+	for _, seed := range []struct{ category, refType, locator, comment string }{
+		{"security", "advisory", "https://advisories.test/GHSA-1", ""},
+		{"security", "cpe23Type", "cpe:2.3:a:v:p:1.0:*:*:*:*:*:*:*", ""},
+		{"security", "cpe22Type", "cpe:/a:v:p:1.0", ""},
+		{"package-manager", "purl", "pkg:npm/left-pad@1.3.0", ""},
+		{"package-manager", "maven-central", "org.apache.tomcat:tomcat:9.0.0.M4", ""},
+		{"persistent-id", "gitoid", "gitoid:blob:sha1:261eeb", ""},
+		{"other", "other", "anything", "a note"},
+		{"", "website", "https://example.test", ""},
+		{"", "", "", ""},
+		{"invented", "x", "y", "z"},
+		{"security", "advisory", "https://user:pw@x.test/a", ""},
+		{"package-manager", "purl", "https://npmjs.test/a", ""},
+	} {
+		f.Add(seed.category, seed.refType, seed.locator, seed.comment)
+	}
+
+	f.Fuzz(func(t *testing.T, category, refType, locator, comment string) {
+		reference := ExternalReference{
+			Category: ExternalReferenceCategory(category),
+			Type:     refType,
+			Locator:  locator,
+			Comment:  comment,
+		}
+		normalized, ok := reference.Normalized()
+		if !ok {
+			if normalized.Locator != "" || normalized.Type != "" || normalized.Category != "" ||
+				normalized.Comment != "" || len(normalized.Hashes) != 0 {
+				t.Fatalf("a rejected reference returned %+v, want the zero value", normalized)
+			}
+			return
+		}
+		assertPublishableReference(t, normalized)
+		// Normalizing twice is a fixed point: the gate runs on both marshal
+		// and unmarshal, so a value that changed each pass would change shape
+		// every time it crossed the wire.
+		twice, ok := normalized.Normalized()
+		if !ok || twice.referenceKey() != normalized.referenceKey() || twice.Comment != normalized.Comment {
+			t.Fatalf("normalizing twice changed the reference: %+v then %+v", normalized, twice)
+		}
+		// Merging a reference with itself is one reference, not two.
+		if merged := MergeExternalReferences([]ExternalReference{normalized}, []ExternalReference{normalized}); len(merged) != 1 {
+			t.Fatalf("a reference merged with itself gave %d records", len(merged))
+		}
+	})
+}
+
+// assertPublishableReference fails when a reference carries anything a
+// published document must never show.
+func assertPublishableReference(t *testing.T, reference ExternalReference) {
+	t.Helper()
+	if reference.Locator == "" {
+		t.Fatal("a published reference has no locator")
+	}
+	if len(reference.Locator) > maxLocatorLength {
+		t.Fatalf("locator is %d bytes, over the limit", len(reference.Locator))
+	}
+	if _, err := ParseExternalReferenceCategory(string(reference.Category)); err != nil {
+		t.Fatalf("published reference carries unrecognized category %q", reference.Category)
+	}
+	// The locator satisfies the grammar its own pair names -- never one it
+	// happens to pass.
+	switch reference.LocatorKind() {
+	case LocatorKindURL:
+		if _, ok := NormalizeURL(reference.Locator, URLFormReference); !ok {
+			t.Fatalf("url locator %q would be rejected on read", reference.Locator)
+		}
+	case LocatorKindPURL:
+		if err := purlkit.ValidateString(reference.Locator); err != nil {
+			t.Fatalf("purl locator %q is not a valid package URL: %v", reference.Locator, err)
+		}
+	case LocatorKindCPE:
+		if !isCPELocator(reference.Locator) {
+			t.Fatalf("cpe locator %q is not a CPE", reference.Locator)
+		}
+	default:
+		if !isBoundedToken(reference.Locator) {
+			t.Fatalf("identifier locator %q is not a bounded token", reference.Locator)
+		}
+	}
+	for _, digest := range reference.Hashes {
+		if err := digest.Validate(); err != nil {
+			t.Fatalf("published reference carries an invalid hash: %v", err)
+		}
+	}
+}

@@ -267,6 +267,7 @@ func foldNodes(surviving, witness GraphNode) {
 		// survivor's value -- so the incoming witness's licenses would be
 		// dropped before seeding ever saw them.
 		survivor.Licenses = MergeLicenses(DetectionLicenses(survivor), DetectionLicenses(incoming))
+		survivor.ExternalReferences = MergeExternalReferences(survivor.ExternalReferences, incoming.ExternalReferences)
 		// The component-level document assertions are scalars — one supplier,
 		// one homepage — so a later witness contributes only what the first
 		// did not know.

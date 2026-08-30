@@ -137,7 +137,12 @@ type DependencyNode struct {
 	Homepage    string
 	Supplier    *Contact
 	Originator  *Contact
-	Metadata    map[string]any
+	// ExternalReferences are the references the source document attached to
+	// this component. Gate: ExternalReference.Normalized, on both wire
+	// directions and again when a node seeds a registry package. Merge class:
+	// set, unioned by the (category, type, locator) triple.
+	ExternalReferences []ExternalReference
+	Metadata           map[string]any
 	// Matched is true when the referenced package was enriched by a matcher.
 	Matched bool
 	// PackageRef is the PURL of this dependency's matching artifact. It is
@@ -476,6 +481,14 @@ func (n *DependencyNode) Clone() *DependencyNode {
 	}
 	if len(n.Licenses) > 0 {
 		clone.Licenses = append([]PackageLicense(nil), n.Licenses...)
+	}
+	if len(n.ExternalReferences) > 0 {
+		clone.ExternalReferences = make([]ExternalReference, 0, len(n.ExternalReferences))
+		for _, reference := range n.ExternalReferences {
+			copied := reference
+			copied.Hashes = append([]Digest(nil), reference.Hashes...)
+			clone.ExternalReferences = append(clone.ExternalReferences, copied)
+		}
 	}
 	clone.Supplier = n.Supplier.Clone()
 	clone.Originator = n.Originator.Clone()
