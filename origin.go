@@ -5,6 +5,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"golang.org/x/net/idna"
 )
 
 // maxPublishedURLLength bounds any URL Bomly will publish. Browsers and
@@ -146,10 +148,32 @@ func NormalizeURL(raw string, form URLForm) (string, bool) {
 		return "", false
 	}
 	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	// A Unicode host is rewritten to its ASCII form. url.URL renders a URI,
+	// so it percent-encodes the authority -- "https://例え.テスト/docs" would
+	// publish as "https://%E4%BE%8B%E3%81%88.../docs", which no client
+	// resolves, because a host is carried as punycode and not as escapes.
+	//
+	// This runs before the host is lowercased, and the order is load-bearing.
+	// strings.ToLower applies Go's simple case mapping, which is not the case
+	// mapping IDNA specifies: it turns "İ" into "i", dropping the dot that
+	// UTS #46 keeps, so "İSTANBUL.example" lowercases to "istanbul.example"
+	// while the library gives "xn--istanbul-o0e.example". Those are different
+	// hosts, and publishing the first for a manifest that said the second is
+	// publishing the wrong location. Case-mapping a name is the library's job,
+	// and it does it -- "EXAMPLE.COM" comes back lowercased.
+	asciiHost, ok := hostToASCII(parsed)
+	if !ok {
+		return "", false
+	}
+	parsed.Host = asciiHost
 	// Hosts are case-insensitive, so two records writing one host differently
 	// name the same location. Without this they would compare unequal and
 	// reconcile to a disagreement, losing an origin to formatting alone. The
 	// path is left alone: it is case-sensitive.
+	//
+	// A converted host is already lowercase ASCII, so this is a no-op for it.
+	// It remains for the hosts that never reach the library: the ASCII ones,
+	// which take the fast path so their bytes are preserved.
 	parsed.Host = strings.ToLower(parsed.Host)
 	// An explicit default port names the same origin as no port at all, so
 	// dropping it keeps two spellings of one location from reading as a
@@ -215,10 +239,18 @@ func NormalizeURL(raw string, form URLForm) (string, bool) {
 		// normalizations, two answers, on a rule that runs on both write and
 		// read. Such a query is malformed regardless: RFC 3986 requires those
 		// characters to be escaped.
-		for i := 0; i < len(parsed.RawQuery); i++ {
-			if b := parsed.RawQuery[i]; b <= ' ' || b == 0x7f {
-				return "", false
-			}
+		//
+		// The check is the package's own isBoundedToken, which is Unicode
+		// aware. It was written out here as a byte scan for "b <= ' '", which
+		// is only the ASCII half of the rule the comment above states: a
+		// U+2000 EN QUAD is whitespace to the TrimSpace at the top of this
+		// function but not to that scan, so "http://0?<U+2000>#" published on
+		// the first pass and normalized to something shorter on the second.
+		// The fuzzer found it. isBoundedToken also rejects invalid UTF-8,
+		// which encoding/json would rewrite to U+FFFD -- a value serializing
+		// differently than it validated.
+		if parsed.RawQuery != "" && !isBoundedToken(parsed.RawQuery) {
+			return "", false
 		}
 	default:
 		if parsed.RawQuery != "" || parsed.ForceQuery {
@@ -248,6 +280,111 @@ func NormalizeURL(raw string, form URLForm) (string, bool) {
 		return "", false
 	}
 	return normalized, true
+}
+
+// hostToASCII rewrites a host into the form a resolver accepts, converting a
+// Unicode domain name to punycode. It reports false when the name cannot be
+// converted, since a host Bomly cannot render publishably is not a location it
+// should publish.
+//
+// golang.org/x/net/idna owns the conversion: it is the Go project's IDNA
+// implementation, already an indirect dependency here, and Lookup is the
+// profile meant for names that will be resolved. Reimplementing punycode would
+// be the mirroring the delegation rule warns against.
+//
+// An ASCII host takes a fast path and is returned untouched, so nothing about
+// the existing behavior of ordinary hosts changes -- including hosts already
+// written in punycode, which are ASCII and so pass through as given.
+func hostToASCII(parsed *url.URL) (string, bool) {
+	host := parsed.Host
+	if host == "" || isASCIIHost(host) {
+		return host, true
+	}
+	// A bracketed host is an IP literal, which has no name to convert. It
+	// reaches here rather than taking the fast path when a zone identifier
+	// carries non-ASCII bytes: url.Parse decodes "[fe80::1%25eth%C3%A9]" into
+	// "[fe80::1%ethé]", and url.URL re-encodes it on output. Handing that to
+	// IDNA would reject an address the parser handles correctly.
+	//
+	// The brackets are enough to know it is one, because net/url validates
+	// the enclosed address -- "https://[例え]/x" fails url.Parse with
+	// ParseAddr's error, never reaching this function. That is the standard
+	// library's behavior rather than this package's, so
+	// TestBracketedHostsAreValidatedByTheParser states the assumption and
+	// fails if a future Go loosens it.
+	if strings.HasPrefix(host, "[") {
+		return host, true
+	}
+	// The port comes from the parser rather than from scanning for a colon.
+	// IDNA rejects the colon as a disallowed rune, so it has to be held back
+	// -- but an authority is not a "split at the last colon" grammar, and
+	// reading it as one truncates an IPv6 literal. net/url owns that split.
+	// A colon with no port after it is dropped, since RFC 3986 makes an empty
+	// port the same as none.
+	name, port := parsed.Hostname(), ""
+	if p := parsed.Port(); p != "" {
+		port = ":" + p
+	}
+	// Two passes, each doing the job the library documents for it. Lookup
+	// maps and canonicalizes: punycode, case, and the label separators.
+	mapped, err := idna.Lookup.ToASCII(name)
+	if err != nil {
+		return "", false
+	}
+	// hostLengths then validates what the mapping produced. Its output is the
+	// input again -- the value is already mapped -- so only its verdict is
+	// used; TestTheValidationPassOnlyJudges pins that.
+	//
+	// A trailing separator does not survive this. It marks an absolute name
+	// and is legal, but label validation reads it as an empty final label and
+	// refuses the host, so a Unicode name written "例え.テスト." is refused
+	// while the ASCII "example.com." publishes on the fast path.
+	//
+	// That asymmetry is deliberate as of 2026-08-30. Earlier revisions held
+	// the separator back so both spellings published; it worked, but it drew
+	// three rounds of review findings of its own -- more than the defect this
+	// function exists to fix -- and each round answered them by making it
+	// cleverer. It was a convenience, not part of the fix, so it was removed
+	// rather than sharpened again. The cost is refusing a rare legal name,
+	// which is the direction this gate errs in everywhere else. Restoring it
+	// needs a reason better than symmetry.
+	if _, err := hostLengths.ToASCII(mapped); err != nil {
+		return "", false
+	}
+	return mapped + port, true
+}
+
+// hostLengths is the IDNA lookup profile plus DNS length verification.
+//
+// The library's Lookup profile maps and validates code points but does not
+// check label lengths, and an ignorable code point such as a soft hyphen maps
+// away to nothing: "­.example" converts to ".example", and a host made
+// only of ignorables converts to the empty string, both without an error.
+// Publishing either is publishing a name no resolver accepts. VerifyDNSLength
+// is the library's own switch for that check -- an empty label, a label over
+// 63 bytes, and a name over 253 bytes -- so the rule stays where it is
+// maintained rather than being written out here as a scan for empty labels.
+//
+// The options reproduce Lookup (MapForLookup, BidiRule, non-transitional) and
+// add VerifyDNSLength, which is how the library composes such a profile in its
+// own ValidateForRegistration. Naming them freezes today's Lookup
+// configuration, which the library documents as free to change; that is the
+// price of the length check, and a narrower one than the alternative.
+var hostLengths = idna.New(
+	idna.MapForLookup(),
+	idna.BidiRule(),
+	idna.Transitional(false),
+	idna.VerifyDNSLength(true),
+)
+
+// isASCIIHost reports whether every byte of a host is ASCII.
+func isASCIIHost(host string) bool {
+	for i := 0; i < len(host); i++ {
+		if host[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
 }
 
 // canonicalEscapes rewrites a path so two spellings of one location compare
