@@ -698,3 +698,65 @@ func assertPublishableReference(t *testing.T, reference ExternalReference) {
 		}
 	}
 }
+
+// FuzzDecodeScopeSet exercises the scope carrier, which is parsed from a
+// CycloneDX property and so arrives from an untrusted document.
+//
+// The invariants are the ones the round trip depends on: a value that decodes
+// must re-encode to something that decodes to the same set, and decoding is
+// deterministic. A carrier that read differently on the second pass would let
+// a scope set drift each time it crossed a document.
+func FuzzDecodeScopeSet(f *testing.F) {
+	for _, seed := range []string{
+		"", "runtime", "development", "development,runtime", "runtime,development",
+		"runtime,runtime", "runtime,", ",", "  runtime  ", "required", "runtime,production",
+		"RUNTIME", "runtime,,development", strings.Repeat("runtime,", 64),
+	} {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, raw string) {
+		if len(raw) > maxFuzzInputSize {
+			t.Skip()
+		}
+		scopes, err := DecodeScopeSet(raw)
+		again, err2 := DecodeScopeSet(raw)
+		if (err == nil) != (err2 == nil) || len(scopes) != len(again) {
+			t.Fatalf("decoding %q twice disagreed: %v/%v and %v/%v", raw, scopes, err, again, err2)
+		}
+		if err != nil {
+			if scopes != nil {
+				t.Fatalf("DecodeScopeSet(%q) failed but returned %v", raw, scopes)
+			}
+			return
+		}
+		for _, scope := range scopes {
+			if scope == ScopeUnknown {
+				t.Fatalf("DecodeScopeSet(%q) yielded an unknown scope", raw)
+			}
+		}
+		// Sorted and deduplicated, so a document built from it is stable.
+		for i := 1; i < len(scopes); i++ {
+			if scopes[i-1] >= scopes[i] {
+				t.Fatalf("DecodeScopeSet(%q) = %v, which is not sorted and deduplicated", raw, scopes)
+			}
+		}
+		// Re-encoding reaches a fixed point.
+		encoded := EncodeScopeSet(scopes)
+		reparsed, err := DecodeScopeSet(encoded)
+		if err != nil {
+			t.Fatalf("re-decoding %q (from %q) failed: %v", encoded, raw, err)
+		}
+		if EncodeScopeSet(reparsed) != encoded {
+			t.Fatalf("encoding is not a fixed point: %q then %q", encoded, EncodeScopeSet(reparsed))
+		}
+		// The projection never invents a scope the library does not declare.
+		if projected := CycloneDXScope(scopes); projected != "" {
+			switch cdx.Scope(projected) {
+			case cdx.ScopeRequired, cdx.ScopeOptional, cdx.ScopeExcluded:
+			default:
+				t.Fatalf("CycloneDXScope(%v) = %q, which cyclonedx-go does not declare", scopes, projected)
+			}
+		}
+	})
+}
