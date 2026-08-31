@@ -252,6 +252,15 @@ func TestOverlongLabelsAreRefused(t *testing.T) {
 // was removed rather than sharpened again; see hostToASCII. The asymmetry is
 // between untouched legacy behavior and validated new behavior, not between
 // two spellings of one rule.
+//
+// Two review rounds have now asserted the opposite -- that VerifyDNSLength
+// permits a trailing root dot because the length arithmetic excludes it. Half
+// of that is true: x/net does subtract the root label and its dot before
+// measuring the name. But it rejects a trailing dot outright a few lines
+// earlier, so ToASCII returns an error either way. Probed, not reasoned:
+// hostLengths.ToASCII("example.com.") returns `idna: invalid label
+// "example.com."`. The subtest at the end asserts that directly, so the next
+// reading of that arithmetic has its answer already in the tree.
 func TestTrailingSeparatorsOnUnicodeHostsAreRefused(t *testing.T) {
 	for _, raw := range []string{
 		"https://" + idnHost + "./docs",
@@ -272,6 +281,13 @@ func TestTrailingSeparatorsOnUnicodeHostsAreRefused(t *testing.T) {
 	// marker rather than the host.
 	if got, ok := NormalizeURL("https://"+idnHost+"/docs", URLFormReference); !ok || got != "https://"+punyHost+"/docs" {
 		t.Fatalf("got %q ok=%v, want the same host without a trailing separator to publish", got, ok)
+	}
+	// The library's own verdict, asserted directly rather than through
+	// NormalizeURL, since it is the step under dispute.
+	for _, name := range []string{"example.com.", "xn--r8jz45g.xn--zckzah."} {
+		if _, err := hostLengths.ToASCII(name); err == nil {
+			t.Errorf("hostLengths.ToASCII(%q) accepted a trailing root dot; the refusal above no longer follows from the library", name)
+		}
 	}
 }
 
