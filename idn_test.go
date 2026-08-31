@@ -3,6 +3,8 @@ package sdk
 import (
 	"strings"
 	"testing"
+
+	"golang.org/x/net/idna"
 )
 
 const idnHost = "\u4f8b\u3048.\u30c6\u30b9\u30c8"
@@ -150,5 +152,84 @@ func TestTrailingDotHostsSurvive(t *testing.T) {
 	once, _ := NormalizeURL("https://"+idnHost+"./docs", URLFormReference)
 	if twice, ok := NormalizeURL(once, URLFormReference); !ok || twice != once {
 		t.Fatalf("re-normalizing %q gave %q (ok=%v)", once, twice, ok)
+	}
+}
+
+// TestUnicodeLabelSeparatorsAreTheLibrarysToKnow pins that a name written with
+// a Unicode label separator publishes like the ASCII spelling it means. IDNA
+// treats U+3002, U+FF0E and U+FF61 as separators and maps each to ".", so a
+// trailing one is a root marker exactly as a trailing "." is -- which only
+// holds because the dot is held back after the mapping pass rather than
+// before. Recognizing those code points here instead would be this package
+// keeping its own copy of a Unicode table.
+func TestUnicodeLabelSeparatorsAreTheLibrarysToKnow(t *testing.T) {
+	for _, sep := range []string{"。", "．", "｡"} {
+		raw := "https://例え" + sep + "テスト/docs"
+		if got, ok := NormalizeURL(raw, URLFormReference); !ok || got != "https://"+punyHost+"/docs" {
+			t.Errorf("separator %q: got %q ok=%v, want %q", sep, got, ok, "https://"+punyHost+"/docs")
+		}
+		// ... and as a trailing root marker.
+		rooted := "https://例え" + sep + "テスト" + sep + "/docs"
+		if got, ok := NormalizeURL(rooted, URLFormReference); !ok || got != "https://"+punyHost+"./docs" {
+			t.Errorf("trailing %q: got %q ok=%v, want %q", sep, got, ok, "https://"+punyHost+"./docs")
+		}
+	}
+}
+
+// TestScopedIPLiteralsSkipConversion pins that an IP literal is never handed
+// to IDNA. A zone identifier can carry non-ASCII bytes -- url.Parse decodes
+// "%25eth%C3%A9" into "%ethé" -- so such a literal misses the ASCII fast path
+// and reaches the conversion, where reading the authority as "split at the
+// last colon" truncated it to "[fe80:" and rejected an address net/url handles
+// correctly.
+func TestScopedIPLiteralsSkipConversion(t *testing.T) {
+	for raw, want := range map[string]string{
+		"http://[fe80::1%25ethé]/x":            "http://[fe80::1%25eth%C3%A9]/x",
+		"http://[fe80::1%25ethé]:8443/x":       "http://[fe80::1%25eth%C3%A9]:8443/x",
+		"http://[fe80::1%25ethé]:80/x":         "http://[fe80::1%25eth%C3%A9]/x",
+		"http://[fe80::1%25eth0]/x":            "http://[fe80::1%25eth0]/x",
+		"https://[2001:db8::1]:8443/pkg.tgz":   "https://[2001:db8::1]:8443/pkg.tgz",
+		"https://[2001:db8::1]/a/pkg-1.0.0.tz": "https://[2001:db8::1]/a/pkg-1.0.0.tz",
+	} {
+		got, ok := NormalizeURL(raw, URLFormReference)
+		if !ok {
+			t.Errorf("%q was rejected", raw)
+			continue
+		}
+		if got != want {
+			t.Errorf("%q = %q, want %q", raw, got, want)
+		}
+	}
+}
+
+// TestTheValidationPassOnlyJudges pins the contract hostToASCII relies on: the
+// second IDNA pass runs on a value the first already mapped, so it returns
+// that value unchanged and only its error matters. If that stopped holding,
+// the published host would be the un-revalidated one.
+func TestTheValidationPassOnlyJudges(t *testing.T) {
+	names := []string{
+		idnHost, punyHost, "例え。テスト", "例え.テスト.",
+		"example.com", "a-b.example", "EXAMPLE.com",
+	}
+	checked := 0
+	for _, name := range names {
+		mapped, err := idna.Lookup.ToASCII(name)
+		if err != nil {
+			continue
+		}
+		mapped = strings.TrimSuffix(mapped, ".")
+		got, err := hostLengths.ToASCII(mapped)
+		if err != nil {
+			continue
+		}
+		checked++
+		if got != mapped {
+			t.Errorf("the validation pass rewrote %q to %q", mapped, got)
+		}
+	}
+	// Both passes reject on their own terms, so a case that never reaches the
+	// comparison asserts nothing. Fail rather than pass vacuously.
+	if checked != len(names) {
+		t.Fatalf("only %d of %d names reached the comparison", checked, len(names))
 	}
 }

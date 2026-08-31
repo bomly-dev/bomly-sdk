@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/net/idna"
 )
@@ -185,7 +186,7 @@ func NormalizeURL(raw string, form URLForm) (string, bool) {
 	// so it percent-encodes the authority -- "https://例え.テスト/docs" would
 	// publish as "https://%E4%BE%8B%E3%81%88.../docs", which no client
 	// resolves, because a host is carried as punycode and not as escapes.
-	asciiHost, ok := hostToASCII(parsed.Host)
+	asciiHost, ok := hostToASCII(parsed)
 	if !ok {
 		return "", false
 	}
@@ -267,46 +268,79 @@ func NormalizeURL(raw string, form URLForm) (string, bool) {
 // should publish.
 //
 // golang.org/x/net/idna owns the conversion: it is the Go project's IDNA
-// implementation, already an indirect dependency here, and hostProfile is the
+// implementation, already an indirect dependency here, and Lookup is the
 // profile meant for names that will be resolved. Reimplementing punycode would
 // be the mirroring the delegation rule warns against.
 //
 // An ASCII host takes a fast path and is returned untouched, so nothing about
 // the existing behavior of ordinary hosts changes -- including hosts already
 // written in punycode, which are ASCII and so pass through as given.
-func hostToASCII(host string) (string, bool) {
+func hostToASCII(parsed *url.URL) (string, bool) {
+	host := parsed.Host
 	if host == "" || isASCIIHost(host) {
 		return host, true
 	}
-	// An IP literal needs no special case here: literals are ASCII, so they
-	// have already returned above, and url.Parse rejects a bracketed host
-	// that is not one before this is ever reached.
-	//
-	// The port must be held back: IDNA rejects the colon as a disallowed
-	// rune, so converting "例え.テスト:8443" whole would fail a valid host.
-	name, port := host, ""
-	if colon := strings.LastIndex(host, ":"); colon >= 0 {
-		name, port = host[:colon], host[colon:]
+	// A bracketed host is an IP literal, which has no name to convert. It
+	// reaches here rather than taking the fast path when a zone identifier
+	// carries non-ASCII bytes: url.Parse decodes "[fe80::1%25eth%C3%A9]" into
+	// "[fe80::1%ethé]", and url.URL re-encodes it on output. Handing that to
+	// IDNA would reject an address the parser handles correctly.
+	if strings.HasPrefix(host, "[") {
+		return host, true
 	}
-	// One trailing dot is held back for the same reason as the port: it marks
-	// an absolute name, and label validation reads it as an empty final label
-	// and refuses the whole host. An ASCII host keeps its trailing dot on the
-	// fast path, so converting one would otherwise reject the Unicode
-	// spelling of a name the ASCII spelling publishes. A second dot is not
-	// held back -- only one is legal, and the leftover trailing dot is then
-	// refused as the empty label it is.
-	root := ""
-	if strings.HasSuffix(name, ".") {
-		name, root = name[:len(name)-1], "."
+	// The port comes from the parser rather than from scanning for a colon.
+	// IDNA rejects the colon as a disallowed rune, so it has to be held back
+	// -- but an authority is not a "split at the last colon" grammar, and
+	// reading it as one truncates an IPv6 literal. net/url owns that split.
+	// A colon with no port after it is dropped, since RFC 3986 makes an empty
+	// port the same as none.
+	name, port := parsed.Hostname(), ""
+	if p := parsed.Port(); p != "" {
+		port = ":" + p
 	}
-	ascii, err := hostProfile.ToASCII(name)
+	// Two passes, each doing the job the library documents for it. Lookup
+	// maps and canonicalizes: punycode, case, and the label separators.
+	mapped, err := idna.Lookup.ToASCII(name)
 	if err != nil {
 		return "", false
 	}
-	return ascii + root + port, true
+	// One trailing separator is held back before the second pass. It marks an
+	// absolute name, and label validation reads it as an empty final label
+	// and refuses the whole host. An ASCII host keeps its trailing dot on the
+	// fast path, so refusing it here would reject the Unicode spelling of a
+	// name whose ASCII spelling publishes.
+	//
+	// The test is on the source rune, not on the mapped form, because the
+	// mapping produces a trailing dot two ways that must not be confused:
+	// from a real separator, and from a final label that mapped away to
+	// nothing -- "example.<soft hyphen>" also becomes "example.", and that is
+	// the unresolvable name this check exists to refuse. A second trailing
+	// separator is not held back either: only one is legal, and what is left
+	// is then refused as the empty label it is.
+	root := ""
+	if r, size := utf8.DecodeLastRuneInString(name); size > 0 && isLabelSeparator(r) && strings.HasSuffix(mapped, ".") {
+		mapped, root = mapped[:len(mapped)-1], "."
+	}
+	// hostLengths then validates what the mapping produced. Its output is the
+	// input again -- the value is already mapped -- so only its verdict is
+	// used; TestTheValidationPassOnlyJudges pins that.
+	if _, err := hostLengths.ToASCII(mapped); err != nil {
+		return "", false
+	}
+	return mapped + root + port, true
 }
 
-// hostProfile is the IDNA lookup profile plus DNS length verification.
+// isLabelSeparator reports whether a rune ends a domain label. IDNA counts
+// U+3002, U+FF0E and U+FF61 as separators alongside ASCII ".", so a name can
+// be written "例え。テスト" and mean what "例え.テスト" means. The library is
+// asked which runes those are rather than a copy of the set being kept here:
+// a separator is exactly a rune the mapping turns into ".".
+func isLabelSeparator(r rune) bool {
+	mapped, err := idna.Lookup.ToASCII(string(r))
+	return err == nil && mapped == "."
+}
+
+// hostLengths is the IDNA lookup profile plus DNS length verification.
 //
 // The library's Lookup profile maps and validates code points but does not
 // check label lengths, and an ignorable code point such as a soft hyphen maps
@@ -322,7 +356,7 @@ func hostToASCII(host string) (string, bool) {
 // own ValidateForRegistration. Naming them freezes today's Lookup
 // configuration, which the library documents as free to change; that is the
 // price of the length check, and a narrower one than the alternative.
-var hostProfile = idna.New(
+var hostLengths = idna.New(
 	idna.MapForLookup(),
 	idna.BidiRule(),
 	idna.Transitional(false),
