@@ -1,6 +1,7 @@
 package sdk
 
 import (
+	"net/url"
 	"strings"
 	"testing"
 
@@ -106,10 +107,43 @@ func TestHostsThatMapToEmptyLabelsAreRefused(t *testing.T) {
 			t.Errorf("%q was published as %q, which no resolver accepts", raw, got)
 		}
 	}
-	// A bracketed host that is not an IP literal never reaches the
-	// conversion: url.Parse refuses it first.
-	if got, ok := NormalizeURL("https://[\u4f8b\u3048]/x", URLFormReference); ok {
-		t.Errorf("a bracketed non-literal host was published as %q", got)
+}
+
+// TestBracketedHostsAreValidatedByTheParser states an assumption hostToASCII
+// depends on but does not enforce. It skips the conversion for any bracketed
+// host, on the grounds that brackets mean an IP literal -- which holds only
+// because net/url validates the enclosed address with ParseAddr and refuses
+// "https://[\u4f8b\u3048]/x" outright. That is the standard library's behavior, not
+// this package's, so it is asserted here: if a future Go accepts bracket
+// syntax around a name, this fails rather than the bypass quietly publishing
+// a percent-encoded authority.
+func TestBracketedHostsAreValidatedByTheParser(t *testing.T) {
+	for _, raw := range []string{
+		"https://[\u4f8b\u3048]/x",       // a name in brackets
+		"https://[\u4f8b\u3048]:8443/x",  // ... with a port
+		"https://[%E4%BE%8B%E3%81%88]/x", // ... written pre-escaped
+		"https://[not-an-ip]/x",
+		"https://[example.com]/x",
+		"https://[v7.abc]/x", // an IPvFuture literal, which ParseAddr refuses
+	} {
+		if _, err := url.Parse(raw); err == nil {
+			t.Errorf("url.Parse accepted %q; the bracketed-host bypass in hostToASCII is no longer safe", raw)
+		}
+		if got, ok := NormalizeURL(raw, URLFormReference); ok {
+			t.Errorf("%q was published as %q", raw, got)
+		}
+	}
+	// The literals the bypass exists for still parse and still publish.
+	for _, raw := range []string{
+		"https://[2001:db8::1]/x",
+		"http://[fe80::1%25eth0]/x",
+	} {
+		if _, err := url.Parse(raw); err != nil {
+			t.Errorf("url.Parse rejected the valid literal %q: %v", raw, err)
+		}
+		if _, ok := NormalizeURL(raw, URLFormReference); !ok {
+			t.Errorf("%q was rejected", raw)
+		}
 	}
 }
 

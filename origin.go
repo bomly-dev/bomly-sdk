@@ -285,6 +285,13 @@ func hostToASCII(parsed *url.URL) (string, bool) {
 	// carries non-ASCII bytes: url.Parse decodes "[fe80::1%25eth%C3%A9]" into
 	// "[fe80::1%ethé]", and url.URL re-encodes it on output. Handing that to
 	// IDNA would reject an address the parser handles correctly.
+	//
+	// The brackets are enough to know it is one, because net/url validates
+	// the enclosed address -- "https://[例え]/x" fails url.Parse with
+	// ParseAddr's error, never reaching this function. That is the standard
+	// library's behavior rather than this package's, so
+	// TestBracketedHostsAreValidatedByTheParser states the assumption and
+	// fails if a future Go loosens it.
 	if strings.HasPrefix(host, "[") {
 		return host, true
 	}
