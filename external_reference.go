@@ -670,9 +670,9 @@ const cpe23FieldCount = 13
 // language.
 const cpe22ComponentCount = 7
 
-// The CPE validators below are deliberately not delegated. Two CPE libraries
-// already in the CLI's dependency graph were probed against the exact inputs
-// under review, and neither is usable here:
+// The CPE validators below are deliberately not delegated. Three CPE
+// libraries were probed against the exact inputs under review, and none is
+// usable here. The first two are already in the CLI's dependency graph:
 //
 //   - facebookincubator/nvdtools/wfn correctly rejects a mismatched binding,
 //     but accepts "cpe:2.3:x:..." and "cpe:/aardvark" (the part component is
@@ -683,16 +683,39 @@ const cpe22ComponentCount = 7
 //     "cpe:/aardvark" to "cpe:/".
 //
 // Both also fail the maintenance bar: nvdtools was archived upstream in
-// 2024, and go-cpe has not been pushed since 2019. Neither is a dependency
-// to take on a module every plugin imports.
+// 2024, and umisama/go-cpe has not been pushed since 2019. Neither is a
+// dependency to take on a module every plugin imports.
 //
 // Both silently repair malformed input into valid-looking values, which is
-// the worst outcome for something Bomly publishes as an assertion. What is
-// checked here is the part vocabulary and the component count -- fixed since
-// CPE 2.3 was published, and small enough to state -- while the component
-// grammar itself is left alone, because nothing in Bomly interprets the
-// components. This only keeps a value that is plainly not a CPE out of a
-// field consumers read as one.
+// the worst outcome for something Bomly publishes as an assertion.
+//
+// The third was probed later and is a closer call, so its result is recorded
+// rather than left to be rediscovered:
+//
+//   - knqyf263/go-cpe (the Trivy maintainer's) is BETTER behaved than either
+//     of the above on the cases that disqualified them. It rejects the
+//     invalid part in both bindings, rejects empty components, and rejects an
+//     overlong 2.3 string and an overlong 2.2 URI rather than truncating. It
+//     still repairs silently in one place -- an unquoted "!" is accepted and
+//     rewritten as "\!" -- and it refuses "cpe:2.3:a:v\\:p:..." , a legal
+//     quoted backslash, so it would trade a class of false accepts for a rare
+//     false reject.
+//
+// Declined on 2026-08-30 all the same, and on authority rather than on
+// behavior: it carries no tagged release (the newest version is a
+// pseudo-version from a 2023 commit), and unlike the other two it is not
+// already in the graph, so it would be a new direct dependency on the module
+// every plugin imports. That bar is higher here than the behavior gap is
+// wide. If it gains releases and broader adoption, this is the candidate to
+// reconsider first -- do not re-probe the other two.
+//
+// What is checked here is the part vocabulary and the component count --
+// fixed since CPE 2.3 was published, and small enough to state -- while the
+// component grammar itself is left alone, because nothing in Bomly
+// interprets the components. This only keeps a value that is plainly not a
+// CPE out of a field consumers read as one. The known gap is an unquoted "!"
+// in a component, which is accepted; no probed library closes it without
+// also repairing the value.
 
 // isCPE23Locator reports whether a value is a CPE 2.3 formatted string.
 func isCPE23Locator(value string) bool {
