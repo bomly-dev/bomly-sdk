@@ -648,6 +648,15 @@ func assertPublishableReference(t *testing.T, reference ExternalReference) {
 		if isURL || cdx.IsBOMLink(reference.Locator) {
 			break
 		}
+		// The character and escape rules apply to every published IRI, so
+		// they are asserted here rather than only exercised through the
+		// hand-written fixtures.
+		if !hasValidPercentEscapes(reference.Locator) {
+			t.Fatalf("iri locator %q carries a malformed percent escape", reference.Locator)
+		}
+		if !hasLegalIRICharacters(reference.Locator) {
+			t.Fatalf("iri locator %q carries a character the grammar excludes", reference.Locator)
+		}
 		parsed, err := url.Parse(reference.Locator)
 		if err != nil {
 			t.Fatalf("iri locator %q does not parse", reference.Locator)

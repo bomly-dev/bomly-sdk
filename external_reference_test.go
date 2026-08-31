@@ -794,8 +794,15 @@ func TestCPEEscapedBackslashesCountAsSeparators(t *testing.T) {
 		t.Fatalf("%s was rejected, but it is a well-formed CPE", valid)
 	}
 	// An odd run still quotes the colon, so this one is a component short.
-	short := `cpe:2.3:a:vendor\\\\\\:product:1:*:*:*:*:*:*:*`
-	_ = short
+	// A longer even run behaves the same way: three escaped
+	// backslashes still leave the colon unquoted.
+	longEven := `cpe:2.3:a:vendor\\\\\\:product:1:*:*:*:*:*:*:*`
+	if got := countUnescapedColons(longEven); got != cpe23FieldCount-1 {
+		t.Fatalf("counted %d separators in %s, want %d", got, longEven, cpe23FieldCount-1)
+	}
+	if _, ok := (ExternalReference{Category: ExternalReferenceCategorySecurity, Type: "cpe23Type", Locator: longEven}).Normalized(); !ok {
+		t.Fatalf("%s was rejected, but its backslash run is even", longEven)
+	}
 	odd := `cpe:2.3:a:vendor\:product:1:*:*:*:*:*:*:*`
 	if got := countUnescapedColons(odd); got != cpe23FieldCount-2 {
 		t.Fatalf("counted %d separators in %s, want %d", got, odd, cpe23FieldCount-2)
