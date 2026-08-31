@@ -147,6 +147,42 @@ func TestBracketedHostsAreValidatedByTheParser(t *testing.T) {
 	}
 }
 
+// TestCaseMappingIsTheLibrarysToDo pins that the conversion runs before the
+// generic lowercasing, and why the order matters. strings.ToLower applies Go's
+// simple case mapping, which is not the mapping IDNA specifies: it turns "İ"
+// into "i" and drops the dot UTS #46 keeps. Lowercasing first therefore hands
+// the library a different name than the one that arrived -- and since the
+// result is plain ASCII it never reaches the library at all -- so a manifest
+// naming one host published another.
+func TestCaseMappingIsTheLibrarysToDo(t *testing.T) {
+	for raw, want := range map[string]string{
+		"https://İ.example/x":        "https://xn--i-9bb.example/x",
+		"https://İSTANBUL.example/x": "https://xn--istanbul-o0e.example/x",
+		// A case where the two mappings agree, so the fix is not just
+		// "anything with an uppercase letter changed".
+		"https://ẞ.example/x": "https://xn--zca.example/x",
+		// ASCII still lowercases: the generic pass is what handles the hosts
+		// that never reach the library.
+		"https://EXAMPLE.com/X":   "https://example.com/X",
+		"https://Example.COM/x":   "https://example.com/x",
+		"https://[2001:DB8::1]/x": "https://[2001:db8::1]/x",
+	} {
+		got, ok := NormalizeURL(raw, URLFormReference)
+		if !ok {
+			t.Errorf("%q was rejected", raw)
+			continue
+		}
+		if got != want {
+			t.Errorf("%q = %q, want %q", raw, got, want)
+		}
+		// Whatever it published must survive a second pass unchanged: this
+		// rule runs on write and again on read.
+		if twice, ok := NormalizeURL(got, URLFormReference); !ok || twice != got {
+			t.Errorf("re-normalizing %q gave %q (ok=%v)", got, twice, ok)
+		}
+	}
+}
+
 // TestOverlongLabelsAreRefused pins the rest of what the library's length
 // check buys: a label a resolver cannot carry is not a location to publish.
 func TestOverlongLabelsAreRefused(t *testing.T) {

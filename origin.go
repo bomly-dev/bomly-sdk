@@ -149,10 +149,32 @@ func NormalizeURL(raw string, form URLForm) (string, bool) {
 		return "", false
 	}
 	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	// A Unicode host is rewritten to its ASCII form. url.URL renders a URI,
+	// so it percent-encodes the authority -- "https://例え.テスト/docs" would
+	// publish as "https://%E4%BE%8B%E3%81%88.../docs", which no client
+	// resolves, because a host is carried as punycode and not as escapes.
+	//
+	// This runs before the host is lowercased, and the order is load-bearing.
+	// strings.ToLower applies Go's simple case mapping, which is not the case
+	// mapping IDNA specifies: it turns "İ" into "i", dropping the dot that
+	// UTS #46 keeps, so "İSTANBUL.example" lowercases to "istanbul.example"
+	// while the library gives "xn--istanbul-o0e.example". Those are different
+	// hosts, and publishing the first for a manifest that said the second is
+	// publishing the wrong location. Case-mapping a name is the library's job,
+	// and it does it -- "EXAMPLE.COM" comes back lowercased.
+	asciiHost, ok := hostToASCII(parsed)
+	if !ok {
+		return "", false
+	}
+	parsed.Host = asciiHost
 	// Hosts are case-insensitive, so two records writing one host differently
 	// name the same location. Without this they would compare unequal and
 	// reconcile to a disagreement, losing an origin to formatting alone. The
 	// path is left alone: it is case-sensitive.
+	//
+	// A converted host is already lowercase ASCII, so this is a no-op for it.
+	// It remains for the hosts that never reach the library: the ASCII ones,
+	// which take the fast path so their bytes are preserved.
 	parsed.Host = strings.ToLower(parsed.Host)
 	// An explicit default port names the same origin as no port at all, so
 	// dropping it keeps two spellings of one location from reading as a
@@ -182,15 +204,6 @@ func NormalizeURL(raw string, form URLForm) (string, bool) {
 			parsed.Host = host + ":" + strconv.Itoa(number)
 		}
 	}
-	// A Unicode host is rewritten to its ASCII form. url.URL renders a URI,
-	// so it percent-encodes the authority -- "https://例え.テスト/docs" would
-	// publish as "https://%E4%BE%8B%E3%81%88.../docs", which no client
-	// resolves, because a host is carried as punycode and not as escapes.
-	asciiHost, ok := hostToASCII(parsed)
-	if !ok {
-		return "", false
-	}
-	parsed.Host = asciiHost
 	// A citation is followed by a reader, so its fragment is part of what was
 	// cited -- an advisory that names one anchor on a page of many loses its
 	// subject without it. For the other two forms the fragment is a checksum
