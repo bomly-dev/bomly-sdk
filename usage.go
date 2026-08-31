@@ -186,7 +186,19 @@ func DeriveReachability(evidence []ReachabilityEvidence) Reachability {
 			AnalyzedAt: summary.AnalyzedAt,
 		}
 	}
-	return Reachability{Status: ReachabilityUnknown}
+	// Nothing was decided. The summary still carries the first evidence's
+	// explanation: "unknown" without a reason tells a reader nothing, and the
+	// reason is the whole content of an unknown result -- "missing-toolchain"
+	// is actionable where a bare unknown is not.
+	summary := evidence[0].Clone()
+	return Reachability{
+		Status:     ReachabilityUnknown,
+		Tier:       summary.Tier,
+		Analyzer:   summary.Analyzer,
+		Reason:     summary.Reason,
+		Confidence: summary.Confidence,
+		AnalyzedAt: summary.AnalyzedAt,
+	}
 }
 
 // tierPrecision orders the tiers so the most precise evidence wins a summary.
