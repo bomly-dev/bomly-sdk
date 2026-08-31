@@ -317,6 +317,14 @@ func hostToASCII(parsed *url.URL) (string, bool) {
 	// the unresolvable name this check exists to refuse. A second trailing
 	// separator is not held back either: only one is legal, and what is left
 	// is then refused as the empty label it is.
+	//
+	// Standing decision, agreed 2026-08-30: this hold-back is a convenience,
+	// not a requirement of the defect it ships with -- that defect was the
+	// percent-encoded authority. It has already drawn two rounds of review
+	// findings of its own, each fixed by making it cleverer. If a third
+	// arrives, delete it: refuse a trailing separator on a Unicode host and
+	// accept the rare false rejection, which is the direction this gate errs
+	// in everywhere else. Do not sharpen it a third time.
 	root := ""
 	if r, size := utf8.DecodeLastRuneInString(name); size > 0 && isLabelSeparator(r) && strings.HasSuffix(mapped, ".") {
 		mapped, root = mapped[:len(mapped)-1], "."
