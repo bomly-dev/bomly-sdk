@@ -98,14 +98,13 @@ func DeriveEdgeKind(from, to GraphNode) EdgeKind {
 // means; the dependency claim wins, because it is the stronger assertion and
 // losing it would drop the edge from a dependency-only export.
 func MergeEdgeKind(current, next EdgeKind) EdgeKind {
-	switch {
-	case next == EdgeKindUnknown:
-		return current
-	case current == EdgeKindUnknown:
-		return next
-	case current == next:
-		return current
-	default:
-		return EdgeKindDependsOn
-	}
+	// The Strongest class: a dependency claim outranks a structural one, so
+	// a disagreement resolves to it rather than to whichever side arrived
+	// first.
+	return MergeStrongest(current, next, func(kind EdgeKind) int {
+		if kind == EdgeKindDependsOn {
+			return 1
+		}
+		return 0
+	})
 }

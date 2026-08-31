@@ -653,6 +653,18 @@ const MetadataKeyNPM = "npm"
 // detectors that discover license facts at detection time (e.g. SBOM-backed
 // detectors) stash []PackageLicense for consolidation to lift into the
 // package registry.
+//
+// Deprecated: use SetDetectionLicenses and DetectionLicenses, which write and
+// read the typed field. The stash predates that field and is still read on
+// ingest so a payload written by an older producer is not dropped, but nothing
+// should write it.
+//
+// The stash is why this deprecation exists rather than a rename. A value here
+// is invisible to every gate -- not normalized, not validated, not merged by a
+// declared rule, not projected to either document format -- so a license that
+// lived only in this key was dropped by any consumer that had not learned to
+// look for it. That is the failure the typed field removes, and keeping both
+// spellings writable would leave one of them able to reintroduce it.
 const MetadataKeyDetectionLicenses = "bomly.detection.licenses"
 
 // NPMPackageMetadata holds npm-specific package data extracted from npm/pnpm/yarn

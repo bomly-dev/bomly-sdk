@@ -101,9 +101,13 @@ func (d DocumentAssertions) Normalized() (DocumentAssertions, bool) {
 	if identity, ok := normalizeLocator(strings.TrimSpace(d.Identity), LocatorKindIRI); ok {
 		normalized.Identity = identity
 	}
-	normalized.Name = NormalizeDescription(d.Name)
-	if len(normalized.Name) > maxDocumentFieldLength {
-		normalized.Name = ""
+	// A name is a single-line field: SPDX writes it as "DocumentName: <v>",
+	// so a line break in it corrupts the tag form outright. That rules out
+	// NormalizeDescription, which deliberately keeps line breaks because a
+	// description is genuinely multi-line -- the fuzzer caught the reuse.
+	if name := strings.TrimSpace(d.Name); name != "" &&
+		len(name) <= maxDocumentFieldLength && !containsControlChar(name) {
+		normalized.Name = name
 	}
 	// No extracted text: a document's data license is a spec-listed
 	// identifier ("CC0-1.0"), never a minted LicenseRef whose text lives
@@ -113,6 +117,8 @@ func (d DocumentAssertions) Normalized() (DocumentAssertions, bool) {
 		len(created) <= maxDocumentFieldLength && !containsControlChar(created) {
 		normalized.Created = created
 	}
+	// A comment is multi-line in both formats -- SPDX wraps it in <text> --
+	// so the description gate is the right one here, line breaks and all.
 	normalized.Comment = NormalizeDescription(d.Comment)
 	if len(normalized.Comment) > maxDocumentFieldLength {
 		normalized.Comment = ""
@@ -173,38 +179,17 @@ func MergeDocumentAssertions(dst, src DocumentAssertions) DocumentAssertions {
 	left, _ := dst.Normalized()
 	right, _ := src.Normalized()
 
+	// Through the named classes, so a fix to a class reaches every field in
+	// it rather than this one copy. Both sides were gated above, so the
+	// per-item publishability tests here are nil.
 	merged := left
-	if merged.Identity == "" {
-		merged.Identity = right.Identity
-	}
-	if merged.Name == "" {
-		merged.Name = right.Name
-	}
-	if merged.DataLicense == "" {
-		merged.DataLicense = right.DataLicense
-	}
-	if merged.Created == "" {
-		merged.Created = right.Created
-	}
-	if merged.Comment == "" {
-		merged.Comment = right.Comment
-	}
-	for _, creator := range right.Creators {
-		if !containsCreator(merged.Creators, creator) {
-			merged.Creators = append(merged.Creators, creator)
-		}
-	}
-	for _, tool := range right.Tools {
-		if !containsTool(merged.Tools, tool) {
-			merged.Tools = append(merged.Tools, tool)
-		}
-	}
-	sort.SliceStable(merged.Creators, func(i, j int) bool {
-		return creatorKey(merged.Creators[i]) < creatorKey(merged.Creators[j])
-	})
-	sort.SliceStable(merged.Tools, func(i, j int) bool {
-		return toolKey(merged.Tools[i]) < toolKey(merged.Tools[j])
-	})
+	merged.Identity = MergeFillGap(left.Identity, right.Identity, nil)
+	merged.Name = MergeFillGap(left.Name, right.Name, nil)
+	merged.DataLicense = MergeFillGap(left.DataLicense, right.DataLicense, nil)
+	merged.Created = MergeFillGap(left.Created, right.Created, nil)
+	merged.Comment = MergeFillGap(left.Comment, right.Comment, nil)
+	merged.Creators = MergeUnion(left.Creators, right.Creators, creatorKey, nil)
+	merged.Tools = MergeUnion(left.Tools, right.Tools, toolKey, nil)
 	return merged
 }
 
