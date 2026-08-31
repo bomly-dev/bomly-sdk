@@ -709,6 +709,26 @@ const cpe22ComponentCount = 7
 // wide. If it gains releases and broader adoption, this is the candidate to
 // reconsider first -- do not re-probe the other two.
 //
+// A follow-up search found OpenSCAP, the strongest candidate on authority and
+// adoption: it is a NIST-certified SCAP toolkit, supports CPE 2.3, and its
+// cpe_name_check implementation applies expressions taken from NIST's official
+// CPE naming XSD. Those expressions reject every malformed probe above,
+// including an unquoted "!", while accepting the legal quoted backslash.
+// See https://github.com/OpenSCAP/openscap/blob/main/src/CPE/cpename.c#L547-L604.
+// OpenSCAP is not a usable dependency here, however. It is a C library with no
+// maintained Go binding; adopting it would impose cgo and a system libopenscap
+// installation on the SDK, the CLI, and every managed plugin. That native
+// runtime boundary is disproportionate to a locator validation gate.
+//
+// SCAP is broader than Bomly's responsibility here. It combines standards for
+// identifying platforms and expressing configuration and applicability checks;
+// CPE is its product-naming layer. Bomly neither evaluates SCAP content nor
+// interprets, matches, or resolves CPE components against a dictionary. It
+// carries a CPE only as an SPDX or CycloneDX external-reference assertion.
+// Full CPE semantics become relevant if Bomly starts making matching or
+// vulnerability decisions from CPEs; until then this gate only prevents a
+// plainly malformed value from being published under a CPE-declared type.
+//
 // What is checked here is the part vocabulary and the component count --
 // fixed since CPE 2.3 was published, and small enough to state -- while the
 // component grammar itself is left alone, because nothing in Bomly
