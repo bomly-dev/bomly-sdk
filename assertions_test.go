@@ -61,55 +61,6 @@ func TestParseDigestAlgorithmAcceptsEveryFormatSpelling(t *testing.T) {
 	}
 }
 
-// TestDigestAlgorithmRegistryMatchesTheSpecifications pins every row's format
-// spellings against literals written out independently of the registry.
-//
-// This is the only guard that can catch a typo in a format column. A loop over
-// digestAlgorithmProfiles cannot: the alias index is built from that same
-// table, so a misspelled "ADLR32" would register itself and resolve happily to
-// its own row while every exported document carried a value the format
-// rejects. Checking against the table is checking the table against itself.
-func TestDigestAlgorithmRegistryMatchesTheSpecifications(t *testing.T) {
-	// SPDX 2.3 ChecksumAlgorithm and CycloneDX 1.5/1.6 hash-alg, transcribed
-	// here a second time. An empty string means that format does not define
-	// the algorithm.
-	expected := map[DigestAlgorithm]struct{ spdx, cycloneDX string }{
-		DigestAlgorithmMD2:        {"MD2", ""},
-		DigestAlgorithmMD4:        {"MD4", ""},
-		DigestAlgorithmMD5:        {"MD5", "MD5"},
-		DigestAlgorithmMD6:        {"MD6", ""},
-		DigestAlgorithmSHA1:       {"SHA1", "SHA-1"},
-		DigestAlgorithmSHA224:     {"SHA224", ""},
-		DigestAlgorithmSHA256:     {"SHA256", "SHA-256"},
-		DigestAlgorithmSHA384:     {"SHA384", "SHA-384"},
-		DigestAlgorithmSHA512:     {"SHA512", "SHA-512"},
-		DigestAlgorithmSHA3256:    {"SHA3-256", "SHA3-256"},
-		DigestAlgorithmSHA3384:    {"SHA3-384", "SHA3-384"},
-		DigestAlgorithmSHA3512:    {"SHA3-512", "SHA3-512"},
-		DigestAlgorithmBLAKE2b256: {"BLAKE2b-256", "BLAKE2b-256"},
-		DigestAlgorithmBLAKE2b384: {"BLAKE2b-384", "BLAKE2b-384"},
-		DigestAlgorithmBLAKE2b512: {"BLAKE2b-512", "BLAKE2b-512"},
-		DigestAlgorithmBLAKE3:     {"BLAKE3", "BLAKE3"},
-		DigestAlgorithmADLER32:    {"ADLER32", ""},
-	}
-	if len(expected) != len(digestAlgorithmProfiles) {
-		t.Fatalf("registry holds %d rows, this test pins %d; a row was added without its spellings",
-			len(digestAlgorithmProfiles), len(expected))
-	}
-	for algorithm, want := range expected {
-		if got := algorithm.SPDXName(); got != want.spdx {
-			t.Errorf("%q SPDX spelling = %q, want %q", algorithm, got, want.spdx)
-		}
-		if got := algorithm.CycloneDXName(); got != want.cycloneDX {
-			t.Errorf("%q CycloneDX spelling = %q, want %q", algorithm, got, want.cycloneDX)
-		}
-		// The canonical token is itself a spelling that must resolve back.
-		if got, err := ParseDigestAlgorithm(string(algorithm)); err != nil || got != algorithm {
-			t.Errorf("canonical token %q resolved to %q (err=%v)", algorithm, got, err)
-		}
-	}
-}
-
 // TestDigestAlgorithmFormatProjections pins that an algorithm one format does
 // not define reports no spelling there. A caller treats "" as "omit this
 // digest"; returning the canonical token instead would emit a value that

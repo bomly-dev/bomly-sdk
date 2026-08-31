@@ -267,6 +267,7 @@ func foldNodes(surviving, witness GraphNode) {
 		// survivor's value -- so the incoming witness's licenses would be
 		// dropped before seeding ever saw them.
 		survivor.Licenses = MergeLicenses(DetectionLicenses(survivor), DetectionLicenses(incoming))
+		survivor.ExternalReferences = MergeExternalReferences(survivor.ExternalReferences, incoming.ExternalReferences)
 		// The component-level document assertions are scalars — one supplier,
 		// one homepage — so a later witness contributes only what the first
 		// did not know.
@@ -420,6 +421,19 @@ func mergeDigestSet(existing, additions []Digest) []Digest {
 	if len(merged) == 0 {
 		return nil
 	}
+	// Sorted, so a set built from the same digests in different orders
+	// publishes the same document. Consolidation folds witnesses in whatever
+	// order they arrive, and these ride inside external references too, where
+	// sorting the references alone cannot fix a nested array's order.
+	sort.Slice(merged, func(i, j int) bool {
+		if merged[i].Algorithm != merged[j].Algorithm {
+			return merged[i].Algorithm < merged[j].Algorithm
+		}
+		if merged[i].Subject != merged[j].Subject {
+			return merged[i].Subject < merged[j].Subject
+		}
+		return merged[i].Value < merged[j].Value
+	})
 	return merged
 }
 

@@ -7,6 +7,9 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	cdx "github.com/CycloneDX/cyclonedx-go"
+	spdxcommon "github.com/spdx/tools-golang/spdx/v2/common"
 )
 
 // The digest algorithm registry. Both SBOM formats define a closed hash
@@ -18,23 +21,25 @@ import (
 // formats use ("sha3-256", not "sha3256"), so a token reads the way the
 // algorithm is named in its own literature.
 const (
-	DigestAlgorithmMD2        DigestAlgorithm = "md2"
-	DigestAlgorithmMD4        DigestAlgorithm = "md4"
-	DigestAlgorithmMD5        DigestAlgorithm = "md5"
-	DigestAlgorithmMD6        DigestAlgorithm = "md6"
-	DigestAlgorithmSHA1       DigestAlgorithm = "sha1"
-	DigestAlgorithmSHA224     DigestAlgorithm = "sha224"
-	DigestAlgorithmSHA256     DigestAlgorithm = "sha256"
-	DigestAlgorithmSHA384     DigestAlgorithm = "sha384"
-	DigestAlgorithmSHA512     DigestAlgorithm = "sha512"
-	DigestAlgorithmSHA3256    DigestAlgorithm = "sha3-256"
-	DigestAlgorithmSHA3384    DigestAlgorithm = "sha3-384"
-	DigestAlgorithmSHA3512    DigestAlgorithm = "sha3-512"
-	DigestAlgorithmBLAKE2b256 DigestAlgorithm = "blake2b-256"
-	DigestAlgorithmBLAKE2b384 DigestAlgorithm = "blake2b-384"
-	DigestAlgorithmBLAKE2b512 DigestAlgorithm = "blake2b-512"
-	DigestAlgorithmBLAKE3     DigestAlgorithm = "blake3"
-	DigestAlgorithmADLER32    DigestAlgorithm = "adler32"
+	DigestAlgorithmMD2         DigestAlgorithm = "md2"
+	DigestAlgorithmMD4         DigestAlgorithm = "md4"
+	DigestAlgorithmMD5         DigestAlgorithm = "md5"
+	DigestAlgorithmMD6         DigestAlgorithm = "md6"
+	DigestAlgorithmSHA1        DigestAlgorithm = "sha1"
+	DigestAlgorithmSHA224      DigestAlgorithm = "sha224"
+	DigestAlgorithmSHA256      DigestAlgorithm = "sha256"
+	DigestAlgorithmSHA384      DigestAlgorithm = "sha384"
+	DigestAlgorithmSHA512      DigestAlgorithm = "sha512"
+	DigestAlgorithmSHA3256     DigestAlgorithm = "sha3-256"
+	DigestAlgorithmSHA3384     DigestAlgorithm = "sha3-384"
+	DigestAlgorithmSHA3512     DigestAlgorithm = "sha3-512"
+	DigestAlgorithmBLAKE2b256  DigestAlgorithm = "blake2b-256"
+	DigestAlgorithmBLAKE2b384  DigestAlgorithm = "blake2b-384"
+	DigestAlgorithmBLAKE2b512  DigestAlgorithm = "blake2b-512"
+	DigestAlgorithmBLAKE3      DigestAlgorithm = "blake3"
+	DigestAlgorithmADLER32     DigestAlgorithm = "adler32"
+	DigestAlgorithmStreebog256 DigestAlgorithm = "streebog-256"
+	DigestAlgorithmStreebog512 DigestAlgorithm = "streebog-512"
 )
 
 // digestAlgorithmProfile records one algorithm's canonical SDK token next to
@@ -48,28 +53,43 @@ type digestAlgorithmProfile struct {
 	cycloneDX string
 }
 
-// digestAlgorithmProfiles is transcribed from the two specifications'
-// enumerations: SPDX 2.3's ChecksumAlgorithm and CycloneDX 1.5/1.6's hash-alg.
-// Rows are not invented -- an algorithm appears here only because a format
-// names it.
+// digestAlgorithmProfiles maps each canonical token to the format constants
+// that name it. The spellings are the libraries' own: spdx/tools-golang owns
+// SPDX's ChecksumAlgorithm and CycloneDX/cyclonedx-go owns CycloneDX's
+// HashAlgorithm, and both are already the codecs Bomly reads and writes these
+// documents with.
+//
+// Referencing their constants rather than copying their strings is the point.
+// A hand-copied table is correct only until a specification adds a member: an
+// earlier version of this file omitted CycloneDX's Streebog algorithms
+// entirely, so a document carrying one had its digest silently dropped at the
+// gate that exists to reject unpublishable values. An empty spelling here
+// means that format genuinely does not define the algorithm --
+// digest_registry_test.go checks that claim against the libraries' own
+// declarations, so a member added upstream fails the build rather than
+// disappearing at runtime.
 var digestAlgorithmProfiles = []digestAlgorithmProfile{
-	{DigestAlgorithmMD2, "MD2", ""},
-	{DigestAlgorithmMD4, "MD4", ""},
-	{DigestAlgorithmMD5, "MD5", "MD5"},
-	{DigestAlgorithmMD6, "MD6", ""},
-	{DigestAlgorithmSHA1, "SHA1", "SHA-1"},
-	{DigestAlgorithmSHA224, "SHA224", ""},
-	{DigestAlgorithmSHA256, "SHA256", "SHA-256"},
-	{DigestAlgorithmSHA384, "SHA384", "SHA-384"},
-	{DigestAlgorithmSHA512, "SHA512", "SHA-512"},
-	{DigestAlgorithmSHA3256, "SHA3-256", "SHA3-256"},
-	{DigestAlgorithmSHA3384, "SHA3-384", "SHA3-384"},
-	{DigestAlgorithmSHA3512, "SHA3-512", "SHA3-512"},
-	{DigestAlgorithmBLAKE2b256, "BLAKE2b-256", "BLAKE2b-256"},
-	{DigestAlgorithmBLAKE2b384, "BLAKE2b-384", "BLAKE2b-384"},
-	{DigestAlgorithmBLAKE2b512, "BLAKE2b-512", "BLAKE2b-512"},
-	{DigestAlgorithmBLAKE3, "BLAKE3", "BLAKE3"},
-	{DigestAlgorithmADLER32, "ADLER32", ""},
+	{DigestAlgorithmMD2, string(spdxcommon.MD2), ""},
+	{DigestAlgorithmMD4, string(spdxcommon.MD4), ""},
+	{DigestAlgorithmMD5, string(spdxcommon.MD5), string(cdx.HashAlgoMD5)},
+	{DigestAlgorithmMD6, string(spdxcommon.MD6), ""},
+	{DigestAlgorithmSHA1, string(spdxcommon.SHA1), string(cdx.HashAlgoSHA1)},
+	{DigestAlgorithmSHA224, string(spdxcommon.SHA224), ""},
+	{DigestAlgorithmSHA256, string(spdxcommon.SHA256), string(cdx.HashAlgoSHA256)},
+	{DigestAlgorithmSHA384, string(spdxcommon.SHA384), string(cdx.HashAlgoSHA384)},
+	{DigestAlgorithmSHA512, string(spdxcommon.SHA512), string(cdx.HashAlgoSHA512)},
+	{DigestAlgorithmSHA3256, string(spdxcommon.SHA3_256), string(cdx.HashAlgoSHA3_256)},
+	{DigestAlgorithmSHA3384, string(spdxcommon.SHA3_384), string(cdx.HashAlgoSHA3_384)},
+	{DigestAlgorithmSHA3512, string(spdxcommon.SHA3_512), string(cdx.HashAlgoSHA3_512)},
+	{DigestAlgorithmBLAKE2b256, string(spdxcommon.BLAKE2b_256), string(cdx.HashAlgoBlake2b_256)},
+	{DigestAlgorithmBLAKE2b384, string(spdxcommon.BLAKE2b_384), string(cdx.HashAlgoBlake2b_384)},
+	{DigestAlgorithmBLAKE2b512, string(spdxcommon.BLAKE2b_512), string(cdx.HashAlgoBlake2b_512)},
+	{DigestAlgorithmBLAKE3, string(spdxcommon.BLAKE3), string(cdx.HashAlgoBlake3)},
+	{DigestAlgorithmADLER32, string(spdxcommon.ADLER32), ""},
+	// CycloneDX-only. Their absence from a hand-written table is the defect
+	// that motivated sourcing this from the libraries.
+	{DigestAlgorithmStreebog256, "", string(cdx.HashAlgoStreebog256)},
+	{DigestAlgorithmStreebog512, "", string(cdx.HashAlgoStreebog512)},
 }
 
 // digestAlgorithmIndex resolves any known spelling to its canonical token.

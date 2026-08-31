@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	cdx "github.com/CycloneDX/cyclonedx-go"
+
 	"github.com/bomly-dev/bomly-sdk/purlkit"
 	"github.com/bomly-dev/bomly-sdk/spdxkit"
 )
@@ -562,6 +564,137 @@ func assertPublishableURL(t *testing.T, form URLForm, raw string) {
 		}
 		if parsed.Fragment != "" {
 			t.Fatalf("origin URL %q carries a fragment", raw)
+		}
+	}
+}
+
+// FuzzExternalReference drives the reference gate with arbitrary values.
+// References arrive verbatim from ingested SBOM documents and plugin
+// payloads, and their locator is written into a published document.
+func FuzzExternalReference(f *testing.F) {
+	for _, seed := range []struct{ category, refType, locator, comment string }{
+		{"security", "advisory", "https://advisories.test/GHSA-1", ""},
+		{"security", "cpe23Type", "cpe:2.3:a:v:p:1.0:*:*:*:*:*:*:*", ""},
+		{"security", "cpe22Type", "cpe:/a:v:p:1.0", ""},
+		{"package-manager", "purl", "pkg:npm/left-pad@1.3.0", ""},
+		{"package-manager", "maven-central", "org.apache.tomcat:tomcat:9.0.0.M4", ""},
+		{"persistent-id", "gitoid", "gitoid:blob:sha1:261eeb", ""},
+		{"other", "other", "anything", "a note"},
+		{"", "website", "https://example.test", ""},
+		{"", "", "", ""},
+		{"invented", "x", "y", "z"},
+		{"security", "advisory", "https://user:pw@x.test/a", ""},
+		{"package-manager", "purl", "https://npmjs.test/a", ""},
+	} {
+		f.Add(seed.category, seed.refType, seed.locator, seed.comment)
+	}
+
+	f.Fuzz(func(t *testing.T, category, refType, locator, comment string) {
+		reference := ExternalReference{
+			Category: ExternalReferenceCategory(category),
+			Type:     refType,
+			Locator:  locator,
+			Comment:  comment,
+		}
+		normalized, ok := reference.Normalized()
+		if !ok {
+			if normalized.Locator != "" || normalized.Type != "" || normalized.Category != "" ||
+				normalized.Comment != "" || len(normalized.Hashes) != 0 {
+				t.Fatalf("a rejected reference returned %+v, want the zero value", normalized)
+			}
+			return
+		}
+		assertPublishableReference(t, normalized)
+		// Normalizing twice is a fixed point: the gate runs on both marshal
+		// and unmarshal, so a value that changed each pass would change shape
+		// every time it crossed the wire.
+		twice, ok := normalized.Normalized()
+		if !ok || twice.referenceKey() != normalized.referenceKey() || twice.Comment != normalized.Comment {
+			t.Fatalf("normalizing twice changed the reference: %+v then %+v", normalized, twice)
+		}
+		// Merging a reference with itself is one reference, not two.
+		if merged := MergeExternalReferences([]ExternalReference{normalized}, []ExternalReference{normalized}); len(merged) != 1 {
+			t.Fatalf("a reference merged with itself gave %d records", len(merged))
+		}
+	})
+}
+
+// assertPublishableReference fails when a reference carries anything a
+// published document must never show.
+func assertPublishableReference(t *testing.T, reference ExternalReference) {
+	t.Helper()
+	if reference.Locator == "" {
+		t.Fatal("a published reference has no locator")
+	}
+	if len(reference.Locator) > maxLocatorLength {
+		t.Fatalf("locator is %d bytes, over the limit", len(reference.Locator))
+	}
+	if _, err := ParseExternalReferenceCategory(string(reference.Category)); err != nil {
+		t.Fatalf("published reference carries unrecognized category %q", reference.Category)
+	}
+	// The locator satisfies the grammar its own pair names -- never one it
+	// happens to pass.
+	switch reference.LocatorKind() {
+	case LocatorKindURL:
+		if _, ok := NormalizeURL(reference.Locator, URLFormReference); !ok {
+			t.Fatalf("url locator %q would be rejected on read", reference.Locator)
+		}
+	case LocatorKindIRI:
+		// A web URL, a BOM-Link, or another absolute IRI the policy allows.
+		// The grammar is wide here by design -- CycloneDX types the field as
+		// an IRI reference -- so what is asserted is the policy: absolute, no
+		// embedded credentials, no sensitive scheme.
+		_, isURL := NormalizeURL(reference.Locator, URLFormReference)
+		if isURL || cdx.IsBOMLink(reference.Locator) {
+			break
+		}
+		// The character and escape rules apply to every published IRI, so
+		// they are asserted here rather than only exercised through the
+		// hand-written fixtures.
+		if !hasValidPercentEscapes(reference.Locator) {
+			t.Fatalf("iri locator %q carries a malformed percent escape", reference.Locator)
+		}
+		if !hasLegalIRICharacters(reference.Locator) {
+			t.Fatalf("iri locator %q carries a character the grammar excludes", reference.Locator)
+		}
+		parsed, err := url.Parse(reference.Locator)
+		if err != nil {
+			t.Fatalf("iri locator %q does not parse", reference.Locator)
+		}
+		// A relative reference is permitted; a network-path one is not,
+		// because it names an authority other than the document's own.
+		if parsed.Scheme == "" && strings.HasPrefix(reference.Locator, "//") {
+			t.Fatalf("iri locator %q is a network-path reference", reference.Locator)
+		}
+		if parsed.User != nil {
+			t.Fatalf("iri locator %q carries credentials", reference.Locator)
+		}
+		if _, sensitive := sensitiveIRISchemes[strings.ToLower(parsed.Scheme)]; sensitive {
+			t.Fatalf("iri locator %q uses the sensitive scheme %q", reference.Locator, parsed.Scheme)
+		}
+		if strings.HasPrefix(strings.ToLower(reference.Locator), bomLinkNamespace) {
+			t.Fatalf("iri locator %q sits in the cdx namespace but is not a BOM-Link", reference.Locator)
+		}
+	case LocatorKindPURL:
+		if err := purlkit.ValidateString(reference.Locator); err != nil {
+			t.Fatalf("purl locator %q is not a valid package URL: %v", reference.Locator, err)
+		}
+	case LocatorKindCPE23:
+		if !isCPE23Locator(reference.Locator) {
+			t.Fatalf("cpe23 locator %q is not a CPE 2.3 formatted string", reference.Locator)
+		}
+	case LocatorKindCPE22:
+		if !isCPE22Locator(reference.Locator) {
+			t.Fatalf("cpe22 locator %q is not a CPE 2.2 URI", reference.Locator)
+		}
+	default:
+		if !isBoundedToken(reference.Locator) {
+			t.Fatalf("identifier locator %q is not a bounded token", reference.Locator)
+		}
+	}
+	for _, digest := range reference.Hashes {
+		if err := digest.Validate(); err != nil {
+			t.Fatalf("published reference carries an invalid hash: %v", err)
 		}
 	}
 }
