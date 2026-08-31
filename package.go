@@ -134,8 +134,25 @@ type PackageLicense struct {
 	// has one. For a license that is not on the SPDX list, this is a minted
 	// LicenseRef-* identifier whose text is carried in ExtractedText.
 	SPDXExpression string `json:"spdx_expression,omitempty"`
-	// Type is who made the claim; see LicenseType.
+	// Type is what kind of claim this is: declared by the package, or
+	// concluded by an analysis. See LicenseType.
 	Type LicenseType `json:"type,omitempty"`
+	// Source names the component that supplied the claim -- a matcher name
+	// such as "external-depsdev". It answers "who says so", which Type does
+	// not: Type is a closed two-member vocabulary about the kind of claim,
+	// and the two questions are independent. A deps.dev license is declared
+	// *and* sourced from deps.dev.
+	//
+	// They were briefly the same field, which is how this one came to exist.
+	// matcherkit.NormalizeLicenseSet wrote its matcher name into Type, so
+	// once Type became a closed vocabulary the gate dropped the value --
+	// silently emptying the "licenses[].source" field the CLI documents and
+	// publishes. Two independent facts sharing one field is what made that
+	// possible.
+	//
+	// Gate: PackageLicense.Normalized -- bounded, and dropped when it is not
+	// a single clean token, since it is written into published output.
+	Source string `json:"source,omitempty"`
 	// Name is the human-readable license name for a LicenseRef-* identifier.
 	// SPDX's hasExtractedLicensingInfos carries one, and a reader given only
 	// "LicenseRef-bomly-3f2a..." has nothing to go on.
@@ -201,6 +218,13 @@ func (l PackageLicense) Normalized() (PackageLicense, bool) {
 	}
 	if licenseType, err := ParseLicenseType(string(l.Type)); err == nil {
 		normalized.Type = licenseType
+	}
+	// A source is a component name written into published output, so it is
+	// held to the token rule: bounded, valid UTF-8, no whitespace and no
+	// control characters. Anything else is dropped rather than published.
+	if source := strings.TrimSpace(l.Source); source != "" &&
+		len(source) <= maxVocabularyTokenLength && isBoundedToken(source) {
+		normalized.Source = source
 	}
 	// Whitespace-only text is not text. It would otherwise mint the reference
 	// that empty text mints and publish a citation whose licensing entry says

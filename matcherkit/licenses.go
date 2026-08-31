@@ -60,7 +60,13 @@ func NormalizeLicenseSet(values []string, sourceType string) []sdk.PackageLicens
 	for _, normalized := range unique {
 		license := sdk.PackageLicense{
 			Value: normalized,
-			Type:  sdk.LicenseType(sourceType),
+			// The matcher name is provenance, not the kind of claim.
+			// It used to be written into Type; once Type became a closed
+			// vocabulary the gate dropped it, silently emptying the
+			// "licenses[].source" field the CLI documents.
+			Source: sourceType,
+			// A registry-reported license is what the package declares.
+			Type: sdk.LicenseTypeDeclared,
 		}
 		if !classify {
 			out = append(out, license)
