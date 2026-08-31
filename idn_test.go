@@ -183,6 +183,48 @@ func TestCaseMappingIsTheLibrarysToDo(t *testing.T) {
 	}
 }
 
+// TestUnicodeWhitespaceInAQueryIsRefused pins a defect the fuzzer found while
+// this change was in review, present since the reference form was added. The
+// query is the one part of a URL that url.URL writes back verbatim, and the
+// guard against a raw space in it scanned bytes for "b <= ' '" -- the ASCII
+// half of a rule the function's own TrimSpace applies over all of Unicode. A
+// query ending in U+2000 therefore published on the first pass and normalized
+// to something shorter on the second, so a stored value failed its own gate
+// when read back.
+func TestUnicodeWhitespaceInAQueryIsRefused(t *testing.T) {
+	for _, raw := range []string{
+		// The space has to sit where TrimSpace cannot reach it: between other
+		// query bytes, or ahead of a fragment. A space at the very end of the
+		// string is trimmed before parsing and never reaches the query, which
+		// is why the input the fuzzer produced carries a trailing "#".
+		"http://0?\u2000#",
+		"https://e.com/a?b\u2000c",
+		"https://e.com/a?b\u3000c", // an ideographic space
+		"https://e.com/a?b\u00a0c", // a no-break space
+		"https://e.com/a?b\u3000#f",
+		"https://e.com/a?b\tc", // the ASCII half the old byte scan caught
+	} {
+		if got, ok := NormalizeURL(raw, URLFormReference); ok {
+			t.Errorf("%q was published as %q", raw, got)
+		}
+	}
+	// An escaped space is how a query says "space", and it still publishes.
+	for _, raw := range []string{
+		"https://e.com/a?b%20c",
+		"https://e.com/a?b+c",
+		"https://e.com/a?q=%E4%BE%8B",
+	} {
+		got, ok := NormalizeURL(raw, URLFormReference)
+		if !ok {
+			t.Errorf("%q was rejected", raw)
+			continue
+		}
+		if twice, ok := NormalizeURL(got, URLFormReference); !ok || twice != got {
+			t.Errorf("re-normalizing %q gave %q (ok=%v)", got, twice, ok)
+		}
+	}
+}
+
 // TestOverlongLabelsAreRefused pins the rest of what the library's length
 // check buys: a label a resolver cannot carry is not a location to publish.
 func TestOverlongLabelsAreRefused(t *testing.T) {
@@ -199,49 +241,57 @@ func TestOverlongLabelsAreRefused(t *testing.T) {
 	}
 }
 
-// TestTrailingDotHostsSurvive pins that an absolute name keeps publishing. A
-// trailing dot is legal and resolvable, and an ASCII host carrying one takes
-// the fast path untouched -- so refusing the Unicode spelling of a name whose
-// ASCII spelling publishes would be an inconsistency introduced by the label
-// check, not by anything wrong with the host.
-func TestTrailingDotHostsSurvive(t *testing.T) {
-	got, ok := NormalizeURL("https://"+idnHost+"./docs", URLFormReference)
-	if !ok || got != "https://"+punyHost+"./docs" {
-		t.Fatalf("got %q ok=%v, want the punycode host keeping its trailing dot", got, ok)
+// TestTrailingSeparatorsOnUnicodeHostsAreRefused pins a deliberate asymmetry.
+// A trailing separator marks an absolute name and is legal, but the label
+// check reads it as an empty final label, so a Unicode name carrying one is
+// refused -- while the ASCII spelling publishes untouched on the fast path,
+// which applies no label validation at all.
+//
+// An earlier revision held the separator back so both spellings published.
+// That is what the three review findings on this function were about, and it
+// was removed rather than sharpened again; see hostToASCII. The asymmetry is
+// between untouched legacy behavior and validated new behavior, not between
+// two spellings of one rule.
+func TestTrailingSeparatorsOnUnicodeHostsAreRefused(t *testing.T) {
+	for _, raw := range []string{
+		"https://" + idnHost + "./docs",
+		"https://" + idnHost + ".:8443/docs",
+		"https://例え.テスト。/docs",
+		"https://例え.テスト．/docs",
+		"https://例え.テスト｡/docs",
+	} {
+		if got, ok := NormalizeURL(raw, URLFormReference); ok {
+			t.Errorf("%q was published as %q; the root-marker hold-back is back", raw, got)
+		}
 	}
-	// With a port, both are held back and both come back.
-	got, ok = NormalizeURL("https://"+idnHost+".:8443/docs", URLFormReference)
-	if !ok || got != "https://"+punyHost+".:8443/docs" {
-		t.Fatalf("got %q ok=%v, want the trailing dot and the port", got, ok)
-	}
-	// The ASCII spelling this parity exists for.
+	// The ASCII spelling is untouched: it never reaches the label check.
 	if got, ok := NormalizeURL("https://example.com./docs", URLFormReference); !ok || got != "https://example.com./docs" {
 		t.Fatalf("got %q ok=%v, want the ASCII trailing dot untouched", got, ok)
 	}
-	// Re-normalizing is stable: the dot survives the second pass too.
-	once, _ := NormalizeURL("https://"+idnHost+"./docs", URLFormReference)
-	if twice, ok := NormalizeURL(once, URLFormReference); !ok || twice != once {
-		t.Fatalf("re-normalizing %q gave %q (ok=%v)", once, twice, ok)
+	// A name without the trailing separator is unaffected, so this refuses the
+	// marker rather than the host.
+	if got, ok := NormalizeURL("https://"+idnHost+"/docs", URLFormReference); !ok || got != "https://"+punyHost+"/docs" {
+		t.Fatalf("got %q ok=%v, want the same host without a trailing separator to publish", got, ok)
 	}
 }
 
 // TestUnicodeLabelSeparatorsAreTheLibrarysToKnow pins that a name written with
-// a Unicode label separator publishes like the ASCII spelling it means. IDNA
-// treats U+3002, U+FF0E and U+FF61 as separators and maps each to ".", so a
-// trailing one is a root marker exactly as a trailing "." is -- which only
-// holds because the dot is held back after the mapping pass rather than
-// before. Recognizing those code points here instead would be this package
-// keeping its own copy of a Unicode table.
+// a Unicode label separator publishes as the ASCII spelling it means. IDNA
+// treats U+3002, U+FF0E and U+FF61 as separators and maps each to ".", so
+// "例え。テスト" is "例え.テスト" -- and that mapping is the library's to know.
+// A local table of those code points would be this package keeping its own
+// copy of a Unicode property.
 func TestUnicodeLabelSeparatorsAreTheLibrarysToKnow(t *testing.T) {
 	for _, sep := range []string{"。", "．", "｡"} {
 		raw := "https://例え" + sep + "テスト/docs"
 		if got, ok := NormalizeURL(raw, URLFormReference); !ok || got != "https://"+punyHost+"/docs" {
 			t.Errorf("separator %q: got %q ok=%v, want %q", sep, got, ok, "https://"+punyHost+"/docs")
 		}
-		// ... and as a trailing root marker.
-		rooted := "https://例え" + sep + "テスト" + sep + "/docs"
-		if got, ok := NormalizeURL(rooted, URLFormReference); !ok || got != "https://"+punyHost+"./docs" {
-			t.Errorf("trailing %q: got %q ok=%v, want %q", sep, got, ok, "https://"+punyHost+"./docs")
+		// An interior empty label is refused however the separators are
+		// written, so the mapping is not being read as "any dot is fine".
+		empty := "https://例え" + sep + sep + "テスト/docs"
+		if got, ok := NormalizeURL(empty, URLFormReference); ok {
+			t.Errorf("doubled %q: published %q, which no resolver accepts", sep, got)
 		}
 	}
 }
@@ -278,7 +328,7 @@ func TestScopedIPLiteralsSkipConversion(t *testing.T) {
 // the published host would be the un-revalidated one.
 func TestTheValidationPassOnlyJudges(t *testing.T) {
 	names := []string{
-		idnHost, punyHost, "例え。テスト", "例え.テスト.",
+		idnHost, punyHost, "例え。テスト",
 		"example.com", "a-b.example", "EXAMPLE.com",
 	}
 	checked := 0
@@ -287,7 +337,6 @@ func TestTheValidationPassOnlyJudges(t *testing.T) {
 		if err != nil {
 			continue
 		}
-		mapped = strings.TrimSuffix(mapped, ".")
 		got, err := hostLengths.ToASCII(mapped)
 		if err != nil {
 			continue

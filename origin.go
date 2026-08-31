@@ -5,7 +5,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"golang.org/x/net/idna"
 )
@@ -240,10 +239,18 @@ func NormalizeURL(raw string, form URLForm) (string, bool) {
 		// normalizations, two answers, on a rule that runs on both write and
 		// read. Such a query is malformed regardless: RFC 3986 requires those
 		// characters to be escaped.
-		for i := 0; i < len(parsed.RawQuery); i++ {
-			if b := parsed.RawQuery[i]; b <= ' ' || b == 0x7f {
-				return "", false
-			}
+		//
+		// The check is the package's own isBoundedToken, which is Unicode
+		// aware. It was written out here as a byte scan for "b <= ' '", which
+		// is only the ASCII half of the rule the comment above states: a
+		// U+2000 EN QUAD is whitespace to the TrimSpace at the top of this
+		// function but not to that scan, so "http://0?<U+2000>#" published on
+		// the first pass and normalized to something shorter on the second.
+		// The fuzzer found it. isBoundedToken also rejects invalid UTF-8,
+		// which encoding/json would rewrite to U+FFFD -- a value serializing
+		// differently than it validated.
+		if parsed.RawQuery != "" && !isBoundedToken(parsed.RawQuery) {
+			return "", false
 		}
 	default:
 		if parsed.RawQuery != "" || parsed.ForceQuery {
@@ -324,48 +331,27 @@ func hostToASCII(parsed *url.URL) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	// One trailing separator is held back before the second pass. It marks an
-	// absolute name, and label validation reads it as an empty final label
-	// and refuses the whole host. An ASCII host keeps its trailing dot on the
-	// fast path, so refusing it here would reject the Unicode spelling of a
-	// name whose ASCII spelling publishes.
-	//
-	// The test is on the source rune, not on the mapped form, because the
-	// mapping produces a trailing dot two ways that must not be confused:
-	// from a real separator, and from a final label that mapped away to
-	// nothing -- "example.<soft hyphen>" also becomes "example.", and that is
-	// the unresolvable name this check exists to refuse. A second trailing
-	// separator is not held back either: only one is legal, and what is left
-	// is then refused as the empty label it is.
-	//
-	// Standing decision, agreed 2026-08-30: this hold-back is a convenience,
-	// not a requirement of the defect it ships with -- that defect was the
-	// percent-encoded authority. It has already drawn two rounds of review
-	// findings of its own, each fixed by making it cleverer. If a third
-	// arrives, delete it: refuse a trailing separator on a Unicode host and
-	// accept the rare false rejection, which is the direction this gate errs
-	// in everywhere else. Do not sharpen it a third time.
-	root := ""
-	if r, size := utf8.DecodeLastRuneInString(name); size > 0 && isLabelSeparator(r) && strings.HasSuffix(mapped, ".") {
-		mapped, root = mapped[:len(mapped)-1], "."
-	}
 	// hostLengths then validates what the mapping produced. Its output is the
 	// input again -- the value is already mapped -- so only its verdict is
 	// used; TestTheValidationPassOnlyJudges pins that.
+	//
+	// A trailing separator does not survive this. It marks an absolute name
+	// and is legal, but label validation reads it as an empty final label and
+	// refuses the host, so a Unicode name written "例え.テスト." is refused
+	// while the ASCII "example.com." publishes on the fast path.
+	//
+	// That asymmetry is deliberate as of 2026-08-30. Earlier revisions held
+	// the separator back so both spellings published; it worked, but it drew
+	// three rounds of review findings of its own -- more than the defect this
+	// function exists to fix -- and each round answered them by making it
+	// cleverer. It was a convenience, not part of the fix, so it was removed
+	// rather than sharpened again. The cost is refusing a rare legal name,
+	// which is the direction this gate errs in everywhere else. Restoring it
+	// needs a reason better than symmetry.
 	if _, err := hostLengths.ToASCII(mapped); err != nil {
 		return "", false
 	}
-	return mapped + root + port, true
-}
-
-// isLabelSeparator reports whether a rune ends a domain label. IDNA counts
-// U+3002, U+FF0E and U+FF61 as separators alongside ASCII ".", so a name can
-// be written "例え。テスト" and mean what "例え.テスト" means. The library is
-// asked which runes those are rather than a copy of the set being kept here:
-// a separator is exactly a rune the mapping turns into ".".
-func isLabelSeparator(r rune) bool {
-	mapped, err := idna.Lookup.ToASCII(string(r))
-	return err == nil && mapped == "."
+	return mapped + port, true
 }
 
 // hostLengths is the IDNA lookup profile plus DNS length verification.
