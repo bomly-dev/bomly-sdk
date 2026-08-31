@@ -99,6 +99,14 @@ type PackageLocation struct {
 	// the package is declared. nil when unknown.
 	Position *SourcePosition `json:"position,omitempty"`
 
+	// Adding these cost PackageLocation its comparability: a struct holding a
+	// slice cannot be compared with == or used as a map key. That is a real
+	// break, taken deliberately -- gorelease names it and this PR carries the
+	// api:break-approved label. Neither this module nor the CLI compared
+	// locations or keyed a map by one, and encoding the set as a string to
+	// keep comparability would reintroduce the untyped stash that phase 1.4
+	// exists to remove. Compare RealPath and AccessPath, or key by them.
+
 	// ModuleRoot is the module whose resolution produced this site: a
 	// workspace member's directory, a Go main module, a Maven reactor
 	// project. Empty when the producer did not attribute it.
