@@ -698,3 +698,174 @@ func assertPublishableReference(t *testing.T, reference ExternalReference) {
 		}
 	}
 }
+
+// FuzzDecodeScopeSet exercises the scope carrier, which is parsed from a
+// CycloneDX property and so arrives from an untrusted document.
+//
+// The invariants are the ones the round trip depends on: a value that decodes
+// must re-encode to something that decodes to the same set, and decoding is
+// deterministic. A carrier that read differently on the second pass would let
+// a scope set drift each time it crossed a document.
+func FuzzDecodeScopeSet(f *testing.F) {
+	for _, seed := range []string{
+		"", "runtime", "development", "development,runtime", "runtime,development",
+		"runtime,runtime", "runtime,", ",", "  runtime  ", "required", "runtime,production",
+		"RUNTIME", "runtime,,development", strings.Repeat("runtime,", 64),
+	} {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, raw string) {
+		if len(raw) > maxFuzzInputSize {
+			t.Skip()
+		}
+		scopes, err := DecodeScopeSet(raw)
+		again, err2 := DecodeScopeSet(raw)
+		if (err == nil) != (err2 == nil) || len(scopes) != len(again) {
+			t.Fatalf("decoding %q twice disagreed: %v/%v and %v/%v", raw, scopes, err, again, err2)
+		}
+		if err != nil {
+			if scopes != nil {
+				t.Fatalf("DecodeScopeSet(%q) failed but returned %v", raw, scopes)
+			}
+			return
+		}
+		for _, scope := range scopes {
+			if scope == ScopeUnknown {
+				t.Fatalf("DecodeScopeSet(%q) yielded an unknown scope", raw)
+			}
+		}
+		// Sorted and deduplicated, so a document built from it is stable.
+		for i := 1; i < len(scopes); i++ {
+			if scopes[i-1] >= scopes[i] {
+				t.Fatalf("DecodeScopeSet(%q) = %v, which is not sorted and deduplicated", raw, scopes)
+			}
+		}
+		// Re-encoding reaches a fixed point.
+		encoded := EncodeScopeSet(scopes)
+		reparsed, err := DecodeScopeSet(encoded)
+		if err != nil {
+			t.Fatalf("re-decoding %q (from %q) failed: %v", encoded, raw, err)
+		}
+		if EncodeScopeSet(reparsed) != encoded {
+			t.Fatalf("encoding is not a fixed point: %q then %q", encoded, EncodeScopeSet(reparsed))
+		}
+		// The projection never invents a scope the library does not declare.
+		if projected := CycloneDXScope(scopes); projected != "" {
+			switch cdx.Scope(projected) {
+			case cdx.ScopeRequired, cdx.ScopeOptional, cdx.ScopeExcluded:
+			default:
+				t.Fatalf("CycloneDXScope(%v) = %q, which cyclonedx-go does not declare", scopes, projected)
+			}
+		}
+	})
+}
+
+// FuzzParseEdgeKind exercises the edge-kind vocabulary, which is parsed from
+// a graph payload and so arrives from an untrusted plugin.
+func FuzzParseEdgeKind(f *testing.F) {
+	for _, seed := range []string{
+		"", "depends-on", "describes", "DEPENDS-ON", "  describes  ",
+		"contains", "depends on", "DEPENDS_ON", strings.Repeat("a", 300),
+	} {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, raw string) {
+		if len(raw) > maxFuzzInputSize {
+			t.Skip()
+		}
+		kind, err := ParseEdgeKind(raw)
+		again, err2 := ParseEdgeKind(raw)
+		if (err == nil) != (err2 == nil) || kind != again {
+			t.Fatalf("parsing %q twice disagreed", raw)
+		}
+		if err != nil {
+			if kind != EdgeKindUnknown {
+				t.Fatalf("ParseEdgeKind(%q) failed but returned %q", raw, kind)
+			}
+			return
+		}
+		// A parsed kind is one of the declared members, and re-parsing its own
+		// canonical form is a fixed point.
+		switch kind {
+		case EdgeKindUnknown, EdgeKindDependsOn, EdgeKindDescribes:
+		default:
+			t.Fatalf("ParseEdgeKind(%q) produced the undeclared kind %q", raw, kind)
+		}
+		round, err := ParseEdgeKind(kind.String())
+		if err != nil || round != kind {
+			t.Fatalf("re-parsing %q gave %q (err=%v)", kind, round, err)
+		}
+		// A kind that projects to SPDX projects to a non-empty spelling, and
+		// one that does not projects to nothing -- never to a partial value.
+		if kind == EdgeKindUnknown && kind.SPDXName() != "" {
+			t.Fatalf("the unknown kind projected to %q", kind.SPDXName())
+		}
+	})
+}
+
+// FuzzDocumentAssertions exercises the document-assertion gate, whose fields
+// come straight from an untrusted SBOM and are written back into a document.
+func FuzzDocumentAssertions(f *testing.F) {
+	for _, seed := range []string{
+		"", "urn:cdx:3e671687-395b-41f5-a30f-a58921a69b79/1",
+		"https://example.test/spdxdocs/app", "CC0-1.0", "2024-01-01T00:00:00Z",
+		"not an iri", "urn:cdx:broken", "file:///etc/passwd", "//host/path",
+		"LicenseRef-thing", "a\nb", "\x00", strings.Repeat("x", 5000),
+	} {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, raw string) {
+		if len(raw) > maxFuzzInputSize {
+			t.Skip()
+		}
+		// Every field takes the same untrusted value, so one input exercises
+		// each gate.
+		assertions := DocumentAssertions{
+			Identity:    raw,
+			Name:        raw,
+			DataLicense: raw,
+			Created:     raw,
+			Comment:     raw,
+			Creators:    []Contact{{Kind: ContactKindOrganization, Name: raw}},
+			Tools:       []DocumentTool{{Vendor: raw, Name: raw, Version: raw}},
+		}
+		normalized, ok := assertions.Normalized()
+		if !ok && !normalized.IsEmpty() {
+			t.Fatalf("rejected but returned %+v", normalized)
+		}
+		// Normalizing is a fixed point: the rule runs on write and again on
+		// read, so a value that changed on the second pass would drift each
+		// time it crossed a document.
+		again, ok2 := normalized.Normalized()
+		if ok != ok2 {
+			t.Fatalf("re-normalizing changed the verdict: %v then %v", ok, ok2)
+		}
+		if again.Identity != normalized.Identity || again.Name != normalized.Name ||
+			again.DataLicense != normalized.DataLicense || again.Created != normalized.Created ||
+			again.Comment != normalized.Comment || len(again.Creators) != len(normalized.Creators) ||
+			len(again.Tools) != len(normalized.Tools) {
+			t.Fatalf("normalizing is not a fixed point:\n%+v\n%+v", normalized, again)
+		}
+		// Nothing published carries a control character, which would corrupt
+		// SPDX's line-oriented tag form.
+		// The comment is exempt: both formats carry a multi-line comment in a
+		// text block, so line breaks there are a legitimate value rather than
+		// a corrupted tag.
+		for _, field := range []string{normalized.Identity, normalized.Name, normalized.DataLicense, normalized.Created} {
+			if containsControlChar(field) {
+				t.Fatalf("a published single-line field carries a control character: %q", field)
+			}
+		}
+		// Merging with itself is idempotent, and merging with nothing does not
+		// admit anything the gate refused.
+		if merged := MergeDocumentAssertions(normalized, normalized); merged.Identity != normalized.Identity {
+			t.Fatalf("merging with itself changed the identity: %q then %q", normalized.Identity, merged.Identity)
+		}
+		if merged := MergeDocumentAssertions(DocumentAssertions{}, assertions); containsControlChar(merged.Name) {
+			t.Fatalf("a merge admitted a control character: %q", merged.Name)
+		}
+	})
+}

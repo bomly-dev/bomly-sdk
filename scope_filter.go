@@ -41,22 +41,17 @@ func FilterGraphByScope(src *Graph, scope Scope) (*Graph, error) {
 	}
 
 	var mergeErr error
-	src.WalkEdges(func(from, to GraphNode) bool {
-		if from == nil || to == nil {
-			return true
+	// Through the shared primitive, so a kept edge keeps its kind. Renaming
+	// to "" is how an edge touching a dropped node is omitted.
+	keep := func(id string) string {
+		if _, ok := allowed[id]; !ok {
+			return ""
 		}
-		if _, ok := allowed[from.NodeID()]; !ok {
-			return true
-		}
-		if _, ok := allowed[to.NodeID()]; !ok {
-			return true
-		}
-		if err := filtered.AddEdge(from.NodeID(), to.NodeID()); err != nil {
-			mergeErr = fmt.Errorf("add filtered edge %q -> %q: %w", from.NodeID(), to.NodeID(), err)
-			return false
-		}
-		return true
-	})
+		return id
+	}
+	if err := CopyEdgesInto(filtered, src, keep); err != nil {
+		mergeErr = fmt.Errorf("add filtered edge: %w", err)
+	}
 	if mergeErr != nil {
 		return nil, mergeErr
 	}

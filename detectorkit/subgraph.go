@@ -47,7 +47,10 @@ func SubgraphFrom(g *sdk.Graph, rootID string) (*sdk.Graph, error) {
 			if err := walk(dep); err != nil {
 				return err
 			}
-			if err := out.AddEdge(pkg.NodeID(), dep.NodeID()); err != nil && !errors.Is(err, sdk.ErrSelfDependency) {
+			// Typed rather than bare: this rebuilds a graph, and the kind the
+			// source graph recorded is the one the subgraph must carry.
+			kind := g.EdgeKindOf(pkg.NodeID(), dep.NodeID())
+			if err := out.AddTypedEdge(pkg.NodeID(), dep.NodeID(), kind); err != nil && !errors.Is(err, sdk.ErrSelfDependency) {
 				return fmt.Errorf("add subgraph edge %q -> %q: %w", pkg.NodeID(), dep.NodeID(), err)
 			}
 		}

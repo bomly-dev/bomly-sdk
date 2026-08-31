@@ -98,6 +98,32 @@ type PackageLocation struct {
 	// Position optionally points at the exact line / column in RealPath where
 	// the package is declared. nil when unknown.
 	Position *SourcePosition `json:"position,omitempty"`
+
+	// Adding these cost PackageLocation its comparability: a struct holding a
+	// slice cannot be compared with == or used as a map key. That is a real
+	// break, taken deliberately -- gorelease names it and this PR carries the
+	// api:break-approved label. Neither this module nor the CLI compared
+	// locations or keyed a map by one, and encoding the set as a string to
+	// keep comparability would reintroduce the untyped stash that phase 1.4
+	// exists to remove. Compare RealPath and AccessPath, or key by them.
+
+	// ModuleRoot is the module whose resolution produced this site: a
+	// workspace member's directory, a Go main module, a Maven reactor
+	// project. Empty when the producer did not attribute it.
+	//
+	// It is what makes the fields below answerable. "Is this package a direct
+	// runtime dependency?" has no single answer for a workspace -- it can be
+	// direct-in-development in one module and transitive-at-runtime in
+	// another -- and a question with two answers can only be asked per module
+	// root.
+	ModuleRoot string `json:"module_root,omitempty"`
+	// Scopes are the scopes this particular site was reached under, as
+	// opposed to the union across every site, which is what the node carries.
+	Scopes []Scope `json:"scopes,omitempty"`
+	// Relationship is whether this site was declared directly by its module
+	// root or reached through another dependency. Same reasoning as Scopes:
+	// the node-level value is a union and cannot distinguish the sites.
+	Relationship DependencyRelationship `json:"relationship,omitempty"`
 }
 
 // PackageLicense captures normalized license details for a package.
@@ -635,6 +661,18 @@ const MetadataKeyNPM = "npm"
 // detectors that discover license facts at detection time (e.g. SBOM-backed
 // detectors) stash []PackageLicense for consolidation to lift into the
 // package registry.
+//
+// Deprecated: use SetDetectionLicenses and DetectionLicenses, which write and
+// read the typed field. The stash predates that field and is still read on
+// ingest so a payload written by an older producer is not dropped, but nothing
+// should write it.
+//
+// The stash is why this deprecation exists rather than a rename. A value here
+// is invisible to every gate -- not normalized, not validated, not merged by a
+// declared rule, not projected to either document format -- so a license that
+// lived only in this key was dropped by any consumer that had not learned to
+// look for it. That is the failure the typed field removes, and keeping both
+// spellings writable would leave one of them able to reintroduce it.
 const MetadataKeyDetectionLicenses = "bomly.detection.licenses"
 
 // NPMPackageMetadata holds npm-specific package data extracted from npm/pnpm/yarn

@@ -60,6 +60,31 @@
 // and runtime descriptor identity match when a packaged plugin is installed, and
 // records installed trust state separately.
 //
+// Attribution is per site, not per package (phase 1.4). A package's scope and
+// directness belong to the location it was found at: in a workspace the same
+// version is a direct development dependency of one module and a transitive
+// runtime dependency of another, so a node's unions answer neither question.
+// PackageLocation carries the module root, scopes, and relationship;
+// reachability is per-module-root evidence with the vulnerability annotation
+// as the derived summary; and SelectUsages joins the two within one module
+// root so a conjunctive question is a statement about a usage that exists.
+// Read scopes through AttributedScopes rather than the node field, and expect
+// both to be empty until the producers migrate.
+//
+// Merges are classed rather than hand-written. MergeFillGap, MergeUnion, and
+// MergeStrongest name the three rules every field in this model follows, and
+// each field declares which class it is in. A merge written by hand is where
+// this model has repeatedly lost data — a first-wins rule dropping a better
+// value, an early return leaving an ungated claim visible, an unsorted result
+// making a document's bytes depend on read order — so fixing a class is
+// preferred to fixing a field.
+//
+// Metadata maps carry what the typed fields do not, and the "bomly." prefix is
+// reserved for this project (IsReservedMetadataKey). A value that lives only
+// in a metadata map is invisible to every gate — not normalized, not
+// validated, not merged by a declared rule, not projected to either document
+// format — so anything a typed field can hold belongs in the typed field.
+//
 // Plugins that need configuration should read only their per-plugin config with
 // DecodePluginConfigFromEnv. Plugins that make HTTP calls should create a
 // process-local provider with NewHTTPClientProviderFromEnv so Bomly's proxy,
