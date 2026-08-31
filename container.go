@@ -83,6 +83,12 @@ type GraphEntry struct {
 	Graph    *Graph           `json:"graph,omitempty"`
 	Manifest ManifestMetadata `json:"manifest"`
 	Packages []*Package       `json:"packages,omitempty"`
+	// Document carries the claims the source SBOM made about itself, when
+	// this entry came from one. It lives here rather than on the scan because
+	// an entry is what a document maps to: a scan that read three SBOMs read
+	// three sets of these, and collapsing them loses which claim came from
+	// where -- which is what a merged export links back to.
+	Document *DocumentAssertions `json:"document,omitempty"`
 }
 
 // GraphContainer groups one or more manifest-scoped dependency graphs.
