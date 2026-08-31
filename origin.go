@@ -267,9 +267,9 @@ func NormalizeURL(raw string, form URLForm) (string, bool) {
 // should publish.
 //
 // golang.org/x/net/idna owns the conversion: it is the Go project's IDNA
-// implementation, already an indirect dependency here, and the Lookup profile
-// is the one meant for names that will be resolved. Reimplementing punycode
-// would be the mirroring the delegation rule warns against.
+// implementation, already an indirect dependency here, and hostProfile is the
+// profile meant for names that will be resolved. Reimplementing punycode would
+// be the mirroring the delegation rule warns against.
 //
 // An ASCII host takes a fast path and is returned untouched, so nothing about
 // the existing behavior of ordinary hosts changes -- including hosts already
@@ -288,19 +288,46 @@ func hostToASCII(host string) (string, bool) {
 	if colon := strings.LastIndex(host, ":"); colon >= 0 {
 		name, port = host[:colon], host[colon:]
 	}
-	ascii, err := idna.Lookup.ToASCII(name)
+	// One trailing dot is held back for the same reason as the port: it marks
+	// an absolute name, and label validation reads it as an empty final label
+	// and refuses the whole host. An ASCII host keeps its trailing dot on the
+	// fast path, so converting one would otherwise reject the Unicode
+	// spelling of a name the ASCII spelling publishes. A second dot is not
+	// held back -- only one is legal, and the leftover trailing dot is then
+	// refused as the empty label it is.
+	root := ""
+	if strings.HasSuffix(name, ".") {
+		name, root = name[:len(name)-1], "."
+	}
+	ascii, err := hostProfile.ToASCII(name)
 	if err != nil {
 		return "", false
 	}
-	// IDNA maps some code points away entirely -- a soft hyphen is ignorable
-	// -- so a host made only of those converts to nothing without an error.
-	// The emptiness check above ran before this conversion, so without this
-	// the result is a URL with no host at all, which the fuzzer found.
-	if ascii == "" {
-		return "", false
-	}
-	return ascii + port, true
+	return ascii + root + port, true
 }
+
+// hostProfile is the IDNA lookup profile plus DNS length verification.
+//
+// The library's Lookup profile maps and validates code points but does not
+// check label lengths, and an ignorable code point such as a soft hyphen maps
+// away to nothing: "­.example" converts to ".example", and a host made
+// only of ignorables converts to the empty string, both without an error.
+// Publishing either is publishing a name no resolver accepts. VerifyDNSLength
+// is the library's own switch for that check -- an empty label, a label over
+// 63 bytes, and a name over 253 bytes -- so the rule stays where it is
+// maintained rather than being written out here as a scan for empty labels.
+//
+// The options reproduce Lookup (MapForLookup, BidiRule, non-transitional) and
+// add VerifyDNSLength, which is how the library composes such a profile in its
+// own ValidateForRegistration. Naming them freezes today's Lookup
+// configuration, which the library documents as free to change; that is the
+// price of the length check, and a narrower one than the alternative.
+var hostProfile = idna.New(
+	idna.MapForLookup(),
+	idna.BidiRule(),
+	idna.Transitional(false),
+	idna.VerifyDNSLength(true),
+)
 
 // isASCIIHost reports whether every byte of a host is ASCII.
 func isASCIIHost(host string) bool {

@@ -83,24 +83,72 @@ func TestOriginsCarryPunycodeHosts(t *testing.T) {
 	}
 }
 
-// TestHostsThatConvertToNothingAreRefused pins a case the fuzzer found. IDNA
-// maps some code points away entirely -- a soft hyphen is ignorable -- so a
-// host made only of those converts to an empty string with no error, and the
-// emptiness check runs before the conversion. Without a second check the
-// result was a URL with no host at all.
-func TestHostsThatConvertToNothingAreRefused(t *testing.T) {
+// TestHostsThatMapToEmptyLabelsAreRefused pins a case the fuzzer found and a
+// case review found. IDNA maps some code points away entirely -- a soft hyphen
+// is ignorable -- so a label made only of those maps to nothing without an
+// error. A host that is one such label converted to the empty string and
+// published a URL with no host at all; a host with one such label among others
+// converted to ".example" or "a..b" and published a name no resolver accepts.
+func TestHostsThatMapToEmptyLabelsAreRefused(t *testing.T) {
 	for _, raw := range []string{
-		"https://\u00ad/x",
-		"https://\u00ad\u00ad/x",
-		"https://\u00ad:8443/x",
+		"https://\u00ad/x",       // the whole host maps away
+		"https://\u00ad\u00ad/x", // ... in more than one code point
+		"https://\u00ad:8443/x",  // ... with a port held back
+		"https://\u00ad.example/x",
+		"https://a.\u00ad.b/x",
+		"https://example.\u00ad/x",
+		"https://\u4f8b\u3048..\u30c6\u30b9\u30c8/x", // an empty label written literally
+		"https://\u4f8b\u3048.\u30c6\u30b9\u30c8../x",
 	} {
 		if got, ok := NormalizeURL(raw, URLFormReference); ok {
-			t.Errorf("%q was published as %q, which has no host", raw, got)
+			t.Errorf("%q was published as %q, which no resolver accepts", raw, got)
 		}
 	}
 	// A bracketed host that is not an IP literal never reaches the
 	// conversion: url.Parse refuses it first.
 	if got, ok := NormalizeURL("https://[\u4f8b\u3048]/x", URLFormReference); ok {
 		t.Errorf("a bracketed non-literal host was published as %q", got)
+	}
+}
+
+// TestOverlongLabelsAreRefused pins the rest of what the library's length
+// check buys: a label a resolver cannot carry is not a location to publish.
+func TestOverlongLabelsAreRefused(t *testing.T) {
+	// 63 bytes is the limit, and each of these characters costs more than one
+	// byte in its punycode form, so 60 of them exceed it.
+	long := strings.Repeat("\u4f8b", 60)
+	if got, ok := NormalizeURL("https://"+long+".example/x", URLFormReference); ok {
+		t.Errorf("an over-long label was published as %q", got)
+	}
+	// A label just inside the limit still publishes, so the check is a limit
+	// and not a blanket refusal of long names.
+	if _, ok := NormalizeURL("https://"+strings.Repeat("\u4f8b", 10)+".example/x", URLFormReference); !ok {
+		t.Error("a label inside the length limit was refused")
+	}
+}
+
+// TestTrailingDotHostsSurvive pins that an absolute name keeps publishing. A
+// trailing dot is legal and resolvable, and an ASCII host carrying one takes
+// the fast path untouched -- so refusing the Unicode spelling of a name whose
+// ASCII spelling publishes would be an inconsistency introduced by the label
+// check, not by anything wrong with the host.
+func TestTrailingDotHostsSurvive(t *testing.T) {
+	got, ok := NormalizeURL("https://"+idnHost+"./docs", URLFormReference)
+	if !ok || got != "https://"+punyHost+"./docs" {
+		t.Fatalf("got %q ok=%v, want the punycode host keeping its trailing dot", got, ok)
+	}
+	// With a port, both are held back and both come back.
+	got, ok = NormalizeURL("https://"+idnHost+".:8443/docs", URLFormReference)
+	if !ok || got != "https://"+punyHost+".:8443/docs" {
+		t.Fatalf("got %q ok=%v, want the trailing dot and the port", got, ok)
+	}
+	// The ASCII spelling this parity exists for.
+	if got, ok := NormalizeURL("https://example.com./docs", URLFormReference); !ok || got != "https://example.com./docs" {
+		t.Fatalf("got %q ok=%v, want the ASCII trailing dot untouched", got, ok)
+	}
+	// Re-normalizing is stable: the dot survives the second pass too.
+	once, _ := NormalizeURL("https://"+idnHost+"./docs", URLFormReference)
+	if twice, ok := NormalizeURL(once, URLFormReference); !ok || twice != once {
+		t.Fatalf("re-normalizing %q gave %q (ok=%v)", once, twice, ok)
 	}
 }
