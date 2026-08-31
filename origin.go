@@ -5,6 +5,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"golang.org/x/net/idna"
 )
 
 // maxPublishedURLLength bounds any URL Bomly will publish. Browsers and
@@ -179,6 +181,15 @@ func NormalizeURL(raw string, form URLForm) (string, bool) {
 			parsed.Host = host + ":" + strconv.Itoa(number)
 		}
 	}
+	// A Unicode host is rewritten to its ASCII form. url.URL renders a URI,
+	// so it percent-encodes the authority -- "https://例え.テスト/docs" would
+	// publish as "https://%E4%BE%8B%E3%81%88.../docs", which no client
+	// resolves, because a host is carried as punycode and not as escapes.
+	asciiHost, ok := hostToASCII(parsed.Host)
+	if !ok {
+		return "", false
+	}
+	parsed.Host = asciiHost
 	// A citation is followed by a reader, so its fragment is part of what was
 	// cited -- an advisory that names one anchor on a page of many loses its
 	// subject without it. For the other two forms the fragment is a checksum
@@ -248,6 +259,57 @@ func NormalizeURL(raw string, form URLForm) (string, bool) {
 		return "", false
 	}
 	return normalized, true
+}
+
+// hostToASCII rewrites a host into the form a resolver accepts, converting a
+// Unicode domain name to punycode. It reports false when the name cannot be
+// converted, since a host Bomly cannot render publishably is not a location it
+// should publish.
+//
+// golang.org/x/net/idna owns the conversion: it is the Go project's IDNA
+// implementation, already an indirect dependency here, and the Lookup profile
+// is the one meant for names that will be resolved. Reimplementing punycode
+// would be the mirroring the delegation rule warns against.
+//
+// An ASCII host takes a fast path and is returned untouched, so nothing about
+// the existing behavior of ordinary hosts changes -- including hosts already
+// written in punycode, which are ASCII and so pass through as given.
+func hostToASCII(host string) (string, bool) {
+	if host == "" || isASCIIHost(host) {
+		return host, true
+	}
+	// An IP literal needs no special case here: literals are ASCII, so they
+	// have already returned above, and url.Parse rejects a bracketed host
+	// that is not one before this is ever reached.
+	//
+	// The port must be held back: IDNA rejects the colon as a disallowed
+	// rune, so converting "例え.テスト:8443" whole would fail a valid host.
+	name, port := host, ""
+	if colon := strings.LastIndex(host, ":"); colon >= 0 {
+		name, port = host[:colon], host[colon:]
+	}
+	ascii, err := idna.Lookup.ToASCII(name)
+	if err != nil {
+		return "", false
+	}
+	// IDNA maps some code points away entirely -- a soft hyphen is ignorable
+	// -- so a host made only of those converts to nothing without an error.
+	// The emptiness check above ran before this conversion, so without this
+	// the result is a URL with no host at all, which the fuzzer found.
+	if ascii == "" {
+		return "", false
+	}
+	return ascii + port, true
+}
+
+// isASCIIHost reports whether every byte of a host is ASCII.
+func isASCIIHost(host string) bool {
+	for i := 0; i < len(host); i++ {
+		if host[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
 }
 
 // canonicalEscapes rewrites a path so two spellings of one location compare
