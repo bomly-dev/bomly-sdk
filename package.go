@@ -98,6 +98,24 @@ type PackageLocation struct {
 	// Position optionally points at the exact line / column in RealPath where
 	// the package is declared. nil when unknown.
 	Position *SourcePosition `json:"position,omitempty"`
+
+	// ModuleRoot is the module whose resolution produced this site: a
+	// workspace member's directory, a Go main module, a Maven reactor
+	// project. Empty when the producer did not attribute it.
+	//
+	// It is what makes the fields below answerable. "Is this package a direct
+	// runtime dependency?" has no single answer for a workspace -- it can be
+	// direct-in-development in one module and transitive-at-runtime in
+	// another -- and a question with two answers can only be asked per module
+	// root.
+	ModuleRoot string `json:"module_root,omitempty"`
+	// Scopes are the scopes this particular site was reached under, as
+	// opposed to the union across every site, which is what the node carries.
+	Scopes []Scope `json:"scopes,omitempty"`
+	// Relationship is whether this site was declared directly by its module
+	// root or reached through another dependency. Same reasoning as Scopes:
+	// the node-level value is a union and cannot distinguish the sites.
+	Relationship DependencyRelationship `json:"relationship,omitempty"`
 }
 
 // PackageLicense captures normalized license details for a package.
