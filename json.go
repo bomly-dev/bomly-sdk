@@ -310,9 +310,15 @@ type graphJSON struct {
 }
 
 // DependencyEdge captures one directed relationship between node IDs.
+//
+// Kind is additive and omitted when unknown, so a payload written before the
+// field keeps its exact bytes. On decode an absent kind is derived from the
+// nodes the edge joins, which is why adding the field did not need a wire
+// break: the structure already carried the answer.
 type DependencyEdge struct {
-	FromID string `json:"fromId"`
-	ToID   string `json:"toId"`
+	FromID string   `json:"fromId"`
+	ToID   string   `json:"toId"`
+	Kind   EdgeKind `json:"kind,omitempty"`
 }
 
 // MarshalJSON encodes a graph as a stable transport-friendly adjacency list.
@@ -327,8 +333,18 @@ func (g *Graph) MarshalJSON() ([]byte, error) {
 		payload.Nodes = append(payload.Nodes, encodeNodeWire(node))
 		return true
 	})
-	g.WalkEdges(func(from, to GraphNode) bool {
-		payload.Edges = append(payload.Edges, DependencyEdge{FromID: from.NodeID(), ToID: to.NodeID()})
+	g.WalkTypedEdges(func(from, to GraphNode, kind EdgeKind) bool {
+		edge := DependencyEdge{FromID: from.NodeID(), ToID: to.NodeID()}
+		// The kind is written only when the structure does not already imply
+		// it. A decoder derives an absent kind from the nodes, so writing a
+		// derived value would add bytes that say nothing -- and would change
+		// every existing payload, which is exactly what an additive field must
+		// not do. What survives here is a kind that contradicts derivation,
+		// which is the only kind a reader could not reconstruct.
+		if kind != DeriveEdgeKind(from, to) {
+			edge.Kind = kind
+		}
+		payload.Edges = append(payload.Edges, edge)
 		return true
 	})
 	return json.Marshal(payload)
@@ -394,7 +410,7 @@ func (g *Graph) UnmarshalJSON(data []byte) error {
 		if fromID == toID {
 			continue
 		}
-		if err := out.AddEdge(fromID, toID); err != nil {
+		if err := out.AddTypedEdge(fromID, toID, edge.Kind); err != nil {
 			return err
 		}
 	}

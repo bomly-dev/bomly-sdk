@@ -143,8 +143,8 @@ type Graph struct {
 	indexByID map[string]int
 	nodes     []GraphNode
 	alive     []bool
-	outgoing  []map[int]struct{}
-	incoming  []map[int]struct{}
+	outgoing  []map[int]EdgeKind
+	incoming  []map[int]EdgeKind
 	free      []int
 	size      int
 }
@@ -160,8 +160,8 @@ func NewWithCapacity(nodeCount int) *Graph {
 		indexByID: make(map[string]int, nodeCount),
 		nodes:     make([]GraphNode, 0, nodeCount),
 		alive:     make([]bool, 0, nodeCount),
-		outgoing:  make([]map[int]struct{}, 0, nodeCount),
-		incoming:  make([]map[int]struct{}, 0, nodeCount),
+		outgoing:  make([]map[int]EdgeKind, 0, nodeCount),
+		incoming:  make([]map[int]EdgeKind, 0, nodeCount),
 	}
 }
 
@@ -181,8 +181,8 @@ func (g *Graph) AddNode(node GraphNode) error {
 	idx := g.nextSlot()
 	g.nodes[idx] = node
 	g.alive[idx] = true
-	g.outgoing[idx] = make(map[int]struct{})
-	g.incoming[idx] = make(map[int]struct{})
+	g.outgoing[idx] = make(map[int]EdgeKind)
+	g.incoming[idx] = make(map[int]EdgeKind)
 	g.indexByID[node.NodeID()] = idx
 	g.size++
 	return nil
@@ -543,7 +543,20 @@ func (g *Graph) ManifestNodes() []*ManifestNode {
 
 // AddEdge adds a dependency relationship fromID -> toID, meaning fromID
 // depends on toID.
+//
+// The edge's kind is derived from the two nodes, so a caller that knows
+// nothing about EdgeKind still produces correctly typed edges. Use
+// AddTypedEdge to state a kind the structure does not imply.
 func (g *Graph) AddEdge(fromID, toID string) error {
+	return g.AddTypedEdge(fromID, toID, EdgeKindUnknown)
+}
+
+// AddTypedEdge adds a relationship and states what it asserts. An unknown kind
+// is derived from the nodes, which is what AddEdge passes.
+//
+// Adding an edge that already exists merges the kinds rather than ignoring the
+// second call, so a stated kind is never lost to an earlier unstated one.
+func (g *Graph) AddTypedEdge(fromID, toID string, kind EdgeKind) error {
 	if fromID == toID {
 		return ErrSelfDependency
 	}
@@ -555,12 +568,92 @@ func (g *Graph) AddEdge(fromID, toID string) error {
 	if err != nil {
 		return err
 	}
-	if _, ok := g.outgoing[fromIdx][toIdx]; ok {
+	if kind == EdgeKindUnknown {
+		kind = DeriveEdgeKind(g.nodes[fromIdx], g.nodes[toIdx])
+	}
+	if existing, ok := g.outgoing[fromIdx][toIdx]; ok {
+		merged := MergeEdgeKind(existing, kind)
+		g.outgoing[fromIdx][toIdx] = merged
+		g.incoming[toIdx][fromIdx] = merged
 		return nil
 	}
-	g.outgoing[fromIdx][toIdx] = struct{}{}
-	g.incoming[toIdx][fromIdx] = struct{}{}
+	g.outgoing[fromIdx][toIdx] = kind
+	g.incoming[toIdx][fromIdx] = kind
 	return nil
+}
+
+// EdgeKindOf returns the kind recorded for an edge, or EdgeKindUnknown when
+// there is no such edge.
+func (g *Graph) EdgeKindOf(fromID, toID string) EdgeKind {
+	fromIdx, ok := g.indexByID[fromID]
+	if !ok {
+		return EdgeKindUnknown
+	}
+	toIdx, ok := g.indexByID[toID]
+	if !ok {
+		return EdgeKindUnknown
+	}
+	return g.outgoing[fromIdx][toIdx]
+}
+
+// WalkTypedEdges iterates every relationship with the kind it asserts.
+// Returning false stops iteration.
+//
+// Reconstruction sites must use this, or CopyEdgesInto which is built on it,
+// rather than WalkEdges: rebuilding a graph from (from, to) pairs alone drops
+// every kind, and TestGraphReconstructionPreservesEdgeKind fails when it does.
+func (g *Graph) WalkTypedEdges(fn func(from, to GraphNode, kind EdgeKind) bool) {
+	if fn == nil {
+		return
+	}
+	for fromIdx, relationships := range g.outgoing {
+		if !g.alive[fromIdx] || relationships == nil {
+			continue
+		}
+		for toIdx, kind := range relationships {
+			if !g.alive[toIdx] {
+				continue
+			}
+			if !fn(g.nodes[fromIdx], g.nodes[toIdx], kind) {
+				return
+			}
+		}
+	}
+}
+
+// CopyEdgesInto copies every edge of src into dst, keeping each edge's kind
+// and mapping node IDs through rename. A nil rename copies IDs unchanged; a
+// rename that returns "" drops the edge, which is how a filtered graph omits
+// edges to nodes it did not keep.
+//
+// This is the one primitive for rebuilding a graph's edges. Every site that
+// used to walk edges and call AddEdge -- the container merge, the JSON
+// decoder, the scope filter -- is a place a new edge field would be dropped
+// silently, and there were four of them. Routing them all through here means
+// the next field added to an edge is carried by all four at once.
+//
+// An edge that becomes a self-edge after renaming is skipped, not an error:
+// folding two nodes into one legitimately collapses the edge between them.
+func CopyEdgesInto(dst, src *Graph, rename func(string) string) error {
+	if dst == nil || src == nil {
+		return nil
+	}
+	var err error
+	src.WalkTypedEdges(func(from, to GraphNode, kind EdgeKind) bool {
+		fromID, toID := from.NodeID(), to.NodeID()
+		if rename != nil {
+			fromID, toID = rename(fromID), rename(toID)
+		}
+		if fromID == "" || toID == "" || fromID == toID {
+			return true
+		}
+		if addErr := dst.AddTypedEdge(fromID, toID, kind); addErr != nil && !errors.Is(addErr, ErrSelfDependency) {
+			err = addErr
+			return false
+		}
+		return true
+	})
+	return err
 }
 
 // RemoveEdge removes a dependency relationship and reports whether it existed.
@@ -1087,7 +1180,7 @@ func sortNodesForDiff(nodes []*DependencyNode) {
 	})
 }
 
-func (g *Graph) lookupSorted(ids map[int]struct{}) []GraphNode {
+func (g *Graph) lookupSorted(ids map[int]EdgeKind) []GraphNode {
 	indices := make([]int, 0, len(ids))
 	for idx := range ids {
 		indices = append(indices, idx)
@@ -1250,7 +1343,7 @@ func pathNodesKey(nodes []GraphNode) string {
 	return strings.Join(ids, "/")
 }
 
-func (g *Graph) sortedAdjacent(adj map[int]struct{}) []int {
+func (g *Graph) sortedAdjacent(adj map[int]EdgeKind) []int {
 	indices := make([]int, 0, len(adj))
 	for idx := range adj {
 		indices = append(indices, idx)

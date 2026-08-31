@@ -148,14 +148,8 @@ func MergeGraph(dst, src *Graph) error {
 	if mergeErr != nil {
 		return mergeErr
 	}
-	src.WalkEdges(func(from, to GraphNode) bool {
-		if err := dst.AddEdge(from.NodeID(), to.NodeID()); err != nil {
-			mergeErr = err
-			return false
-		}
-		return true
-	})
-	return mergeErr
+	// Through the shared primitive, so an edge's kind survives the merge.
+	return CopyEdgesInto(dst, src, nil)
 }
 
 func hasDependencyLocation(existing []PackageLocation, loc PackageLocation) bool {

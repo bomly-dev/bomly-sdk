@@ -463,6 +463,11 @@ func TestWireV1NestedAssertionFieldsAreOmitEmpty(t *testing.T) {
 			forbidden: []string{"spdx_expression", "type", "name", "extracted_text"},
 		},
 		{
+			name:      "DependencyEdge",
+			value:     DependencyEdge{FromID: "a", ToID: "b"},
+			forbidden: []string{"kind"},
+		},
+		{
 			name:      "Digest",
 			value:     Digest{Algorithm: DigestAlgorithmSHA256, Value: "abc123"},
 			forbidden: []string{"subject"},
