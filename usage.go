@@ -1,6 +1,9 @@
 package sdk
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
 
 // A package's scope and directness are properties of a *site*, not of the
 // package. In a workspace the same version can be a direct development
@@ -194,11 +197,24 @@ func DeriveReachability(evidence []ReachabilityEvidence) Reachability {
 	// unknown result -- "missing-toolchain" is actionable where a bare
 	// unknown is not -- so it has to come from an item that actually is
 	// unknown.
+	// An unknown item that explains itself is preferred over one that does
+	// not. Taking simply the first unknown was still order-dependent: two
+	// module roots both unknown, the first with no reason and the second with
+	// "missing-toolchain", produced a bare unknown that changed if the
+	// evidence was reordered. The order of preference is: an unknown item
+	// with a reason, then any unknown item, then the first item -- each step
+	// only reached when the one before it found nothing.
 	chosen := evidence[0]
 	for i := range evidence {
-		if evidence[i].Status == ReachabilityUnknown {
+		if evidence[i].Status != ReachabilityUnknown {
+			continue
+		}
+		if strings.TrimSpace(evidence[i].Reason) != "" {
 			chosen = evidence[i]
 			break
+		}
+		if chosen.Status != ReachabilityUnknown {
+			chosen = evidence[i]
 		}
 	}
 	summary := chosen.Clone()

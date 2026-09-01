@@ -46,3 +46,42 @@ func TestUnknownSummariesKeepTheirReason(t *testing.T) {
 		t.Errorf("empty evidence gave %+v", got)
 	}
 }
+
+// TestUnknownSummaryPrefersAnExplainedItem pins the second half of the reason
+// rule. Selecting simply the first unknown item was still order-dependent:
+// two roots both unknown, the first silent and the second carrying
+// "missing-toolchain", gave a bare unknown that changed when the evidence was
+// reordered. The explanation is the whole content of an unknown result, so an
+// item that has one wins.
+func TestUnknownSummaryPrefersAnExplainedItem(t *testing.T) {
+	silentFirst := DeriveReachability([]ReachabilityEvidence{
+		{ModuleRoot: "a", Status: ReachabilityUnknown},
+		{ModuleRoot: "b", Status: ReachabilityUnknown, Reason: "missing-toolchain"},
+	})
+	explainedFirst := DeriveReachability([]ReachabilityEvidence{
+		{ModuleRoot: "b", Status: ReachabilityUnknown, Reason: "missing-toolchain"},
+		{ModuleRoot: "a", Status: ReachabilityUnknown},
+	})
+	if silentFirst.Reason != "missing-toolchain" {
+		t.Errorf("reason = %q, want the explained item to win", silentFirst.Reason)
+	}
+	if silentFirst.Reason != explainedFirst.Reason {
+		t.Errorf("the reason depends on evidence order: %q vs %q", silentFirst.Reason, explainedFirst.Reason)
+	}
+	// A whitespace-only reason explains nothing and does not win either.
+	blank := DeriveReachability([]ReachabilityEvidence{
+		{ModuleRoot: "a", Status: ReachabilityUnknown, Reason: "   "},
+		{ModuleRoot: "b", Status: ReachabilityUnknown, Reason: "missing-toolchain"},
+	})
+	if blank.Reason != "missing-toolchain" {
+		t.Errorf("reason = %q, want a blank reason to lose to a real one", blank.Reason)
+	}
+	// With nothing explained anywhere, it is still unknown and still stable.
+	none := DeriveReachability([]ReachabilityEvidence{
+		{ModuleRoot: "a", Status: ReachabilityUnknown},
+		{ModuleRoot: "b", Status: ReachabilityUnknown},
+	})
+	if none.Status != ReachabilityUnknown || none.Reason != "" {
+		t.Errorf("got %+v, want a bare unknown when nothing explains itself", none)
+	}
+}

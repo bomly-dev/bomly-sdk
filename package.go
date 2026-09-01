@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/bomly-dev/bomly-sdk/spdxkit"
 )
@@ -41,6 +42,13 @@ func (t PackageType) String() string { return string(t) }
 // allowance leaves room for whitespace padding and a spelling variant without
 // admitting a value that is really a payload.
 const maxVocabularyTokenLength = 64
+
+// maxLicenseSourceLength bounds a license source. It is a component name, not
+// a vocabulary token, so it takes the same allowance a contact name does
+// rather than the tighter token limit -- a component descriptor puts no length
+// on its name, and a bound that rejected a valid one would erase provenance
+// rather than protect anything.
+const maxLicenseSourceLength = maxContactNameLength
 
 // LicenseType identifies license provenance: who is making the claim. Both
 // SBOM formats draw the same distinction -- SPDX as licenseDeclared versus
@@ -150,8 +158,13 @@ type PackageLicense struct {
 	// publishes. Two independent facts sharing one field is what made that
 	// possible.
 	//
-	// Gate: PackageLicense.Normalized -- bounded, and dropped when it is not
-	// a single clean token, since it is written into published output.
+	// Gate: PackageLicense.Normalized -- held to the component-name rule,
+	// not a token rule. A component descriptor requires only a non-blank
+	// name, so "My Matcher" and a name over 64 bytes are both valid
+	// components; gating this as a single short token would silently erase
+	// the source of a legitimately named matcher. What is enforced is what
+	// publication actually needs: valid UTF-8, no control characters, and a
+	// bound.
 	// Merge class: scalar, fill-gaps *within* a claim. Source is deliberately
 	// not part of the merge identity -- two matchers reporting one license
 	// stay one claim -- so the witness that carries a source supplies it to
@@ -223,11 +236,15 @@ func (l PackageLicense) Normalized() (PackageLicense, bool) {
 	if licenseType, err := ParseLicenseType(string(l.Type)); err == nil {
 		normalized.Type = licenseType
 	}
-	// A source is a component name written into published output, so it is
-	// held to the token rule: bounded, valid UTF-8, no whitespace and no
-	// control characters. Anything else is dropped rather than published.
+	// A source is a component name written into published output. Its domain
+	// is therefore the component-name domain -- descriptor validation asks
+	// only that a name be non-blank -- narrowed by what publication requires:
+	// valid UTF-8, no control characters (they would corrupt SPDX's
+	// line-oriented tag form), and a bound. Whitespace is legal in a name and
+	// is kept.
 	if source := strings.TrimSpace(l.Source); source != "" &&
-		len(source) <= maxVocabularyTokenLength && isBoundedToken(source) {
+		len(source) <= maxLicenseSourceLength &&
+		utf8.ValidString(source) && !containsControlChar(source) {
 		normalized.Source = source
 	}
 	// Whitespace-only text is not text. It would otherwise mint the reference
