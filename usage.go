@@ -1,6 +1,9 @@
 package sdk
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
 
 // A package's scope and directness are properties of a *site*, not of the
 // package. In a workspace the same version can be a direct development
@@ -186,7 +189,62 @@ func DeriveReachability(evidence []ReachabilityEvidence) Reachability {
 			AnalyzedAt: summary.AnalyzedAt,
 		}
 	}
-	return Reachability{Status: ReachabilityUnknown}
+	// Nothing was decided. The summary carries an *unknown* item's
+	// explanation, not simply the first item's: in a mixed set the first
+	// entry can be an unreachable one, and reporting "package-not-imported"
+	// as the reason the aggregate is unknown both misstates it and makes the
+	// diagnostic depend on slice order. The reason is the whole content of an
+	// unknown result -- "missing-toolchain" is actionable where a bare
+	// unknown is not -- so it has to come from an item that actually is
+	// unknown.
+	// An unknown item that explains itself is preferred over one that does
+	// not. Taking simply the first unknown was still order-dependent: two
+	// module roots both unknown, the first with no reason and the second with
+	// "missing-toolchain", produced a bare unknown that changed if the
+	// evidence was reordered. The order of preference is: an unknown item
+	// with a reason, then any unknown item, then the first item -- each step
+	// only reached when the one before it found nothing.
+	chosen := evidence[0]
+	for i := range evidence {
+		if !isUndecided(evidence[i].Status) {
+			continue
+		}
+		if strings.TrimSpace(evidence[i].Reason) != "" {
+			chosen = evidence[i]
+			break
+		}
+		if !isUndecided(chosen.Status) {
+			chosen = evidence[i]
+		}
+	}
+	summary := chosen.Clone()
+	// Trimmed on the way out, not only when choosing. The preference above
+	// used TrimSpace to decide which item explained itself, but returned the
+	// reason verbatim -- so a set whose only reasons were whitespace
+	// published "   " as an explanation, and reversing the evidence published
+	// "" instead. What is not an explanation must not read as one.
+	summary.Reason = strings.TrimSpace(summary.Reason)
+	return Reachability{
+		Status:     ReachabilityUnknown,
+		Tier:       summary.Tier,
+		Analyzer:   summary.Analyzer,
+		Reason:     summary.Reason,
+		Confidence: summary.Confidence,
+		AnalyzedAt: summary.AnalyzedAt,
+	}
+}
+
+// isUndecided reports whether a status is neither reachable nor unreachable.
+//
+// It is deliberately "not one of the two decided values" rather than "equals
+// unknown". ReachabilityEvidence has no decode gate, so an item can arrive
+// with its status omitted or misspelled -- and such an item is still enough
+// to stop the aggregate being unreachable, which the count above already
+// treats it as. Selecting a diagnostic had a narrower idea of undecided than
+// the rule it was explaining, so an item with an omitted status and a real
+// reason lost to a decided item's misleading one.
+func isUndecided(status ReachabilityStatus) bool {
+	return status != ReachabilityReachable && status != ReachabilityUnreachable
 }
 
 // tierPrecision orders the tiers so the most precise evidence wins a summary.

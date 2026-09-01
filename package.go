@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/bomly-dev/bomly-sdk/spdxkit"
 )
@@ -41,6 +42,25 @@ func (t PackageType) String() string { return string(t) }
 // allowance leaves room for whitespace padding and a spelling variant without
 // admitting a value that is really a payload.
 const maxVocabularyTokenLength = 64
+
+// maxLicenseSourceLength bounds a license source. It is a component name, not
+// a vocabulary token, so it takes the same allowance a contact name does
+// rather than the tighter token limit -- a component descriptor puts no length
+// on its name, and a bound that rejected a valid one would erase provenance
+// rather than protect anything.
+//
+// The domains are still not identical, and that is deliberate.
+// ValidateMatcherDescriptor asks only that a name be non-blank, so a
+// 257-byte name is a valid component whose source this erases. Closing that
+// properly means bounding the name where the contract lives -- descriptor
+// validation -- which would reject plugins that validate today and is not a
+// patch release's change to make. Filed as bomly-dev/bomly-sdk#32.
+//
+// Removing the bound instead is the wrong direction: this value arrives on an
+// untrusted wire and is written into published documents, and an unbounded
+// field there is worth more than the theoretical matcher whose name runs past
+// 256 bytes. The bound is a resource limit and stays a dumb one.
+const maxLicenseSourceLength = maxContactNameLength
 
 // LicenseType identifies license provenance: who is making the claim. Both
 // SBOM formats draw the same distinction -- SPDX as licenseDeclared versus
@@ -134,8 +154,34 @@ type PackageLicense struct {
 	// has one. For a license that is not on the SPDX list, this is a minted
 	// LicenseRef-* identifier whose text is carried in ExtractedText.
 	SPDXExpression string `json:"spdx_expression,omitempty"`
-	// Type is who made the claim; see LicenseType.
+	// Type is what kind of claim this is: declared by the package, or
+	// concluded by an analysis. See LicenseType.
 	Type LicenseType `json:"type,omitempty"`
+	// Source names the component that supplied the claim -- a matcher name
+	// such as "external-depsdev". It answers "who says so", which Type does
+	// not: Type is a closed two-member vocabulary about the kind of claim,
+	// and the two questions are independent. A deps.dev license is declared
+	// *and* sourced from deps.dev.
+	//
+	// They were briefly the same field, which is how this one came to exist.
+	// matcherkit.NormalizeLicenseSet wrote its matcher name into Type, so
+	// once Type became a closed vocabulary the gate dropped the value --
+	// silently emptying the "licenses[].source" field the CLI documents and
+	// publishes. Two independent facts sharing one field is what made that
+	// possible.
+	//
+	// Gate: PackageLicense.Normalized -- held to the component-name rule,
+	// not a token rule. A component descriptor requires only a non-blank
+	// name, so "My Matcher" and a name over 64 bytes are both valid
+	// components; gating this as a single short token would silently erase
+	// the source of a legitimately named matcher. What is enforced is what
+	// publication actually needs: valid UTF-8, no control characters, and a
+	// bound.
+	// Merge class: scalar, fill-gaps *within* a claim. Source is deliberately
+	// not part of the merge identity -- two matchers reporting one license
+	// stay one claim -- so the witness that carries a source supplies it to
+	// the one that does not, whichever arrived first.
+	Source string `json:"source,omitempty"`
 	// Name is the human-readable license name for a LicenseRef-* identifier.
 	// SPDX's hasExtractedLicensingInfos carries one, and a reader given only
 	// "LicenseRef-bomly-3f2a..." has nothing to go on.
@@ -201,6 +247,17 @@ func (l PackageLicense) Normalized() (PackageLicense, bool) {
 	}
 	if licenseType, err := ParseLicenseType(string(l.Type)); err == nil {
 		normalized.Type = licenseType
+	}
+	// A source is a component name written into published output. Its domain
+	// is therefore the component-name domain -- descriptor validation asks
+	// only that a name be non-blank -- narrowed by what publication requires:
+	// valid UTF-8, no control characters (they would corrupt SPDX's
+	// line-oriented tag form), and a bound. Whitespace is legal in a name and
+	// is kept.
+	if source := strings.TrimSpace(l.Source); source != "" &&
+		len(source) <= maxLicenseSourceLength &&
+		utf8.ValidString(source) && !containsControlChar(source) {
+		normalized.Source = source
 	}
 	// Whitespace-only text is not text. It would otherwise mint the reference
 	// that empty text mints and publish a citation whose licensing entry says
@@ -378,6 +435,16 @@ func MergeLicenses(existing, additions []PackageLicense) []PackageLicense {
 				// one claim -- so it fills the gap instead.
 				if merged[at].Name == "" {
 					merged[at].Name = normalized.Name
+				}
+				// Source is a fill-gaps scalar within a claim, the same class
+				// as Name and for the same reason: it is not part of the
+				// merge identity, so an unsourced copy of a claim and a
+				// matcher-sourced copy are one claim, and whichever arrived
+				// first would otherwise decide whether the provenance
+				// survives. Making it part of the identity instead would
+				// split one license into two entries per matcher that saw it.
+				if merged[at].Source == "" {
+					merged[at].Source = normalized.Source
 				}
 				continue
 			}
