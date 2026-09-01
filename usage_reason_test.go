@@ -96,3 +96,27 @@ func TestUnknownSummaryPrefersAnExplainedItem(t *testing.T) {
 		}
 	}
 }
+
+// TestUndecidedIsWiderThanUnknown pins that a status which is neither
+// reachable nor unreachable counts as undecided when a diagnostic is chosen,
+// not only the exact "unknown" spelling.
+//
+// ReachabilityEvidence has no decode gate, so an item can arrive with its
+// status omitted or misspelled. The count that decides "unreachable" already
+// treats such an item as undecided -- one of them is enough to stop the
+// aggregate being unreachable -- so the reason selection has to agree, or an
+// item with a real reason loses to a decided item's misleading one.
+func TestUndecidedIsWiderThanUnknown(t *testing.T) {
+	for _, status := range []ReachabilityStatus{"", "not-a-status", ReachabilityUnknown} {
+		summary := DeriveReachability([]ReachabilityEvidence{
+			{ModuleRoot: "a", Status: ReachabilityUnreachable, Reason: "package-not-imported"},
+			{ModuleRoot: "b", Status: status, Reason: "missing-toolchain"},
+		})
+		if summary.Status != ReachabilityUnknown {
+			t.Errorf("status %q: aggregate = %q, want unknown", status, summary.Status)
+		}
+		if summary.Reason != "missing-toolchain" {
+			t.Errorf("status %q: reason = %q, want the undecided item's explanation", status, summary.Reason)
+		}
+	}
+}

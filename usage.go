@@ -206,14 +206,14 @@ func DeriveReachability(evidence []ReachabilityEvidence) Reachability {
 	// only reached when the one before it found nothing.
 	chosen := evidence[0]
 	for i := range evidence {
-		if evidence[i].Status != ReachabilityUnknown {
+		if !isUndecided(evidence[i].Status) {
 			continue
 		}
 		if strings.TrimSpace(evidence[i].Reason) != "" {
 			chosen = evidence[i]
 			break
 		}
-		if chosen.Status != ReachabilityUnknown {
+		if !isUndecided(chosen.Status) {
 			chosen = evidence[i]
 		}
 	}
@@ -232,6 +232,19 @@ func DeriveReachability(evidence []ReachabilityEvidence) Reachability {
 		Confidence: summary.Confidence,
 		AnalyzedAt: summary.AnalyzedAt,
 	}
+}
+
+// isUndecided reports whether a status is neither reachable nor unreachable.
+//
+// It is deliberately "not one of the two decided values" rather than "equals
+// unknown". ReachabilityEvidence has no decode gate, so an item can arrive
+// with its status omitted or misspelled -- and such an item is still enough
+// to stop the aggregate being unreachable, which the count above already
+// treats it as. Selecting a diagnostic had a narrower idea of undecided than
+// the rule it was explaining, so an item with an omitted status and a real
+// reason lost to a decided item's misleading one.
+func isUndecided(status ReachabilityStatus) bool {
+	return status != ReachabilityReachable && status != ReachabilityUnreachable
 }
 
 // tierPrecision orders the tiers so the most precise evidence wins a summary.
