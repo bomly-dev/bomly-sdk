@@ -33,7 +33,24 @@ func MissingLicensePackages(packages []*sdk.Package) []*sdk.Package {
 // license-list identifier (deprecated entries fold to their replacements),
 // the validated expression otherwise. Free text such as "non-standard"
 // leaves SPDXExpression empty instead of masquerading as an expression.
+// The sourceType argument is a license *type* -- "declared" or "concluded" --
+// and always was: it is written to PackageLicense.Type, and this module's own
+// callers pass "declared". A matcher that wants to record which component
+// supplied the claim wants NormalizeLicenseSetFrom instead. The two are
+// independent facts, and one argument carrying both is what let a matcher name
+// reach a field that turned out to be a closed vocabulary.
 func NormalizeLicenseSet(values []string, sourceType string) []sdk.PackageLicense {
+	return NormalizeLicenseSetFrom(values, sourceType, "")
+}
+
+// NormalizeLicenseSetFrom is NormalizeLicenseSet with provenance: source names
+// the component that supplied the claim, such as a matcher name, and reaches
+// PackageLicense.Source.
+//
+// It exists as a second entry point rather than a wider signature because
+// NormalizeLicenseSet is exported and its meaning is not this release's to
+// change. Passing "" for source is exactly NormalizeLicenseSet.
+func NormalizeLicenseSetFrom(values []string, licenseType, source string) []sdk.PackageLicense {
 	// Blanks and duplicates are dropped before anything is parsed, so the
 	// aggregate parsing gate below measures the values classification will
 	// actually see — a raw slice padded with blanks or repeats must not
@@ -60,13 +77,13 @@ func NormalizeLicenseSet(values []string, sourceType string) []sdk.PackageLicens
 	for _, normalized := range unique {
 		license := sdk.PackageLicense{
 			Value: normalized,
-			// The matcher name is provenance, not the kind of claim.
-			// It used to be written into Type; once Type became a closed
-			// vocabulary the gate dropped it, silently emptying the
+			// Two independent facts, two fields. The matcher name is
+			// provenance; the license type is the kind of claim. They shared
+			// Type until Type became a closed vocabulary, at which point the
+			// model gate silently dropped the matcher name and emptied the
 			// "licenses[].source" field the CLI documents.
-			Source: sourceType,
-			// A registry-reported license is what the package declares.
-			Type: sdk.LicenseTypeDeclared,
+			Source: source,
+			Type:   sdk.LicenseType(licenseType),
 		}
 		if !classify {
 			out = append(out, license)

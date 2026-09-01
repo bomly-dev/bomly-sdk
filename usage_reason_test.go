@@ -27,8 +27,19 @@ func TestUnknownSummariesKeepTheirReason(t *testing.T) {
 		{ModuleRoot: "a", Status: ReachabilityUnreachable, Reason: "package-not-imported"},
 		{ModuleRoot: "b", Status: ReachabilityUnknown, Reason: "missing-toolchain"},
 	})
-	if mixed.Status != ReachabilityUnknown || mixed.Reason == "" {
-		t.Errorf("mixed summary = %+v, want unknown with a reason", mixed)
+	// It must be the *unknown* item's reason, not the first item's. Taking
+	// evidence[0] here reported "package-not-imported" as the reason the
+	// aggregate was unknown, which is both wrong and order-dependent.
+	if mixed.Status != ReachabilityUnknown || mixed.Reason != "missing-toolchain" {
+		t.Errorf("mixed summary = %+v, want unknown explained by the unknown item", mixed)
+	}
+	// ... whichever order the two arrive in.
+	flipped := DeriveReachability([]ReachabilityEvidence{
+		{ModuleRoot: "b", Status: ReachabilityUnknown, Reason: "missing-toolchain"},
+		{ModuleRoot: "a", Status: ReachabilityUnreachable, Reason: "package-not-imported"},
+	})
+	if flipped.Reason != mixed.Reason {
+		t.Errorf("the reason depends on evidence order: %q vs %q", mixed.Reason, flipped.Reason)
 	}
 	// No evidence at all has nothing to explain.
 	if got := DeriveReachability(nil); got.Status != ReachabilityUnknown || got.Reason != "" {

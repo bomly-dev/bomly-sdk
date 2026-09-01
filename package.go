@@ -152,6 +152,10 @@ type PackageLicense struct {
 	//
 	// Gate: PackageLicense.Normalized -- bounded, and dropped when it is not
 	// a single clean token, since it is written into published output.
+	// Merge class: scalar, fill-gaps *within* a claim. Source is deliberately
+	// not part of the merge identity -- two matchers reporting one license
+	// stay one claim -- so the witness that carries a source supplies it to
+	// the one that does not, whichever arrived first.
 	Source string `json:"source,omitempty"`
 	// Name is the human-readable license name for a LicenseRef-* identifier.
 	// SPDX's hasExtractedLicensingInfos carries one, and a reader given only
@@ -402,6 +406,16 @@ func MergeLicenses(existing, additions []PackageLicense) []PackageLicense {
 				// one claim -- so it fills the gap instead.
 				if merged[at].Name == "" {
 					merged[at].Name = normalized.Name
+				}
+				// Source is a fill-gaps scalar within a claim, the same class
+				// as Name and for the same reason: it is not part of the
+				// merge identity, so an unsourced copy of a claim and a
+				// matcher-sourced copy are one claim, and whichever arrived
+				// first would otherwise decide whether the provenance
+				// survives. Making it part of the identity instead would
+				// split one license into two entries per matcher that saw it.
+				if merged[at].Source == "" {
+					merged[at].Source = normalized.Source
 				}
 				continue
 			}

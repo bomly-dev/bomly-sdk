@@ -16,7 +16,7 @@ import (
 // The two are independent facts: a deps.dev license is declared *and* sourced
 // from deps.dev. Sharing one field is what made the loss possible.
 func TestLicenseSourceSurvivesTheGate(t *testing.T) {
-	licenses := matcherkit.NormalizeLicenseSet([]string{"MIT"}, "external-depsdev")
+	licenses := matcherkit.NormalizeLicenseSetFrom([]string{"MIT"}, "declared", "external-depsdev")
 	if len(licenses) != 1 {
 		t.Fatalf("got %d licenses, want 1", len(licenses))
 	}
@@ -28,7 +28,10 @@ func TestLicenseSourceSurvivesTheGate(t *testing.T) {
 	}
 	// And it survives the model's own gate, which is where it was lost.
 	normalized, ok := licenses[0].Normalized()
-	if !ok || normalized.Source != "external-depsdev" {
-		t.Errorf("after Normalized: Source = %q ok=%v", normalized.Source, ok)
+	// Checked after the gate, not only before it: the gate is where the
+	// regression happened, and a gate that cleared Type while keeping Source
+	// would leave the pre-gate assertion above green.
+	if !ok || normalized.Source != "external-depsdev" || normalized.Type != sdk.LicenseTypeDeclared {
+		t.Errorf("after Normalized: Source = %q Type = %q ok=%v", normalized.Source, normalized.Type, ok)
 	}
 }

@@ -186,11 +186,22 @@ func DeriveReachability(evidence []ReachabilityEvidence) Reachability {
 			AnalyzedAt: summary.AnalyzedAt,
 		}
 	}
-	// Nothing was decided. The summary still carries the first evidence's
-	// explanation: "unknown" without a reason tells a reader nothing, and the
-	// reason is the whole content of an unknown result -- "missing-toolchain"
-	// is actionable where a bare unknown is not.
-	summary := evidence[0].Clone()
+	// Nothing was decided. The summary carries an *unknown* item's
+	// explanation, not simply the first item's: in a mixed set the first
+	// entry can be an unreachable one, and reporting "package-not-imported"
+	// as the reason the aggregate is unknown both misstates it and makes the
+	// diagnostic depend on slice order. The reason is the whole content of an
+	// unknown result -- "missing-toolchain" is actionable where a bare
+	// unknown is not -- so it has to come from an item that actually is
+	// unknown.
+	chosen := evidence[0]
+	for i := range evidence {
+		if evidence[i].Status == ReachabilityUnknown {
+			chosen = evidence[i]
+			break
+		}
+	}
+	summary := chosen.Clone()
 	return Reachability{
 		Status:     ReachabilityUnknown,
 		Tier:       summary.Tier,

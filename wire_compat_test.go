@@ -460,7 +460,7 @@ func TestWireV1NestedAssertionFieldsAreOmitEmpty(t *testing.T) {
 		{
 			name:      "PackageLicense",
 			value:     PackageLicense{Value: "MIT"},
-			forbidden: []string{"spdx_expression", "type", "name", "extracted_text"},
+			forbidden: []string{"spdx_expression", "type", "name", "extracted_text", "source"},
 		},
 		{
 			name:      "DependencyEdge",
