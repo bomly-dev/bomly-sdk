@@ -48,6 +48,18 @@ const maxVocabularyTokenLength = 64
 // rather than the tighter token limit -- a component descriptor puts no length
 // on its name, and a bound that rejected a valid one would erase provenance
 // rather than protect anything.
+//
+// The domains are still not identical, and that is deliberate.
+// ValidateMatcherDescriptor asks only that a name be non-blank, so a
+// 257-byte name is a valid component whose source this erases. Closing that
+// properly means bounding the name where the contract lives -- descriptor
+// validation -- which would reject plugins that validate today and is not a
+// patch release's change to make. Filed as bomly-dev/bomly-sdk#32.
+//
+// Removing the bound instead is the wrong direction: this value arrives on an
+// untrusted wire and is written into published documents, and an unbounded
+// field there is worth more than the theoretical matcher whose name runs past
+// 256 bytes. The bound is a resource limit and stays a dumb one.
 const maxLicenseSourceLength = maxContactNameLength
 
 // LicenseType identifies license provenance: who is making the claim. Both

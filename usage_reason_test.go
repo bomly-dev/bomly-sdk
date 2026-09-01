@@ -84,4 +84,15 @@ func TestUnknownSummaryPrefersAnExplainedItem(t *testing.T) {
 	if none.Status != ReachabilityUnknown || none.Reason != "" {
 		t.Errorf("got %+v, want a bare unknown when nothing explains itself", none)
 	}
+	// Whitespace is not an explanation on the way out either. Trimming only
+	// while choosing left the raw value to be published, so a set whose only
+	// reasons were blank returned "   " -- and returned "" when reversed.
+	for _, order := range [][]ReachabilityEvidence{
+		{{ModuleRoot: "a", Status: ReachabilityUnknown, Reason: "   "}, {ModuleRoot: "b", Status: ReachabilityUnknown}},
+		{{ModuleRoot: "b", Status: ReachabilityUnknown}, {ModuleRoot: "a", Status: ReachabilityUnknown, Reason: "   "}},
+	} {
+		if got := DeriveReachability(order); got.Reason != "" {
+			t.Errorf("a whitespace-only reason published as %q", got.Reason)
+		}
+	}
 }

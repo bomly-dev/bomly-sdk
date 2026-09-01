@@ -218,6 +218,12 @@ func DeriveReachability(evidence []ReachabilityEvidence) Reachability {
 		}
 	}
 	summary := chosen.Clone()
+	// Trimmed on the way out, not only when choosing. The preference above
+	// used TrimSpace to decide which item explained itself, but returned the
+	// reason verbatim -- so a set whose only reasons were whitespace
+	// published "   " as an explanation, and reversing the evidence published
+	// "" instead. What is not an explanation must not read as one.
+	summary.Reason = strings.TrimSpace(summary.Reason)
 	return Reachability{
 		Status:     ReachabilityUnknown,
 		Tier:       summary.Tier,

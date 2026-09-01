@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
 
@@ -430,26 +431,27 @@ func assertPublishableContact(t *testing.T, contact Contact) {
 // values and extracted text arrive from lockfiles, registry APIs, and ingested
 // SBOM documents, all untrusted.
 func FuzzPackageLicense(f *testing.F) {
-	for _, seed := range []struct{ value, expression, text, licenseType string }{
-		{"MIT", "MIT", "", "declared"},
-		{"MIT", "MIT", "", "concluded"},
-		{"Custom", "LicenseRef-Acme-Commercial", "Custom terms.", ""},
-		{"Custom", "LicenseRef-bomly-00000000000000000000000000000000", "Custom terms.", ""},
-		{"Custom", `LicenseRef-Acme Commercial "v2"`, "Custom terms.", ""},
-		{"Custom", "LicenseRef-Acme", "", "declared"},
-		{"", "", "Only text.", ""},
-		{"", "", "", ""},
-		{"MIT", "MIT", "", "invented"},
+	for _, seed := range []struct{ value, expression, text, licenseType, source string }{
+		{"MIT", "MIT", "", "declared", "external-depsdev"},
+		{"MIT", "MIT", "", "concluded", ""},
+		{"Custom", "LicenseRef-Acme-Commercial", "Custom terms.", "", "My Matcher"},
+		{"Custom", "LicenseRef-bomly-00000000000000000000000000000000", "Custom terms.", "", ""},
+		{"Custom", `LicenseRef-Acme Commercial "v2"`, "Custom terms.", "", "  spaced  "},
+		{"Custom", "LicenseRef-Acme", "", "declared", "with\ttab"},
+		{"", "", "Only text.", "", "with\nnewline"},
+		{"", "", "", "", "\x00"},
+		{"MIT", "MIT", "", "invented", strings.Repeat("s", 300)},
 	} {
-		f.Add(seed.value, seed.expression, seed.text, seed.licenseType)
+		f.Add(seed.value, seed.expression, seed.text, seed.licenseType, seed.source)
 	}
 
-	f.Fuzz(func(t *testing.T, value, expression, text, licenseType string) {
+	f.Fuzz(func(t *testing.T, value, expression, text, licenseType, source string) {
 		license := PackageLicense{
 			Value:          value,
 			SPDXExpression: expression,
 			ExtractedText:  text,
 			Type:           LicenseType(licenseType),
+			Source:         source,
 		}
 		normalized, ok := license.Normalized()
 		if !ok {
@@ -462,6 +464,42 @@ func FuzzPackageLicense(f *testing.F) {
 		// survive as a published claim.
 		if _, err := ParseLicenseType(string(normalized.Type)); err != nil {
 			t.Fatalf("normalized license carries unrecognized provenance %q", normalized.Type)
+		}
+		// The source is a component name written into published output. It is
+		// bounded, valid UTF-8, free of control characters, and trimmed --
+		// whitespace inside a name is legal and kept.
+		if src := normalized.Source; src != "" {
+			if len(src) > maxLicenseSourceLength {
+				t.Fatalf("source of %d bytes survived the bound", len(src))
+			}
+			if !utf8.ValidString(src) {
+				t.Fatalf("invalid UTF-8 survived as a source: %q", src)
+			}
+			if containsControlChar(src) {
+				t.Fatalf("a control character survived as a source: %q", src)
+			}
+			if src != strings.TrimSpace(src) {
+				t.Fatalf("an untrimmed source survived: %q", src)
+			}
+		}
+		// Normalizing is a fixed point: the gate runs on write and again on
+		// read, so a source that changed on the second pass would drift each
+		// time it crossed a document.
+		again, ok2 := normalized.Normalized()
+		if !ok2 || again.Source != normalized.Source {
+			t.Fatalf("source is not a fixed point: %q then %q (ok=%v)", normalized.Source, again.Source, ok2)
+		}
+		// And it survives the wire, which is where it was lost before.
+		encoded, err := json.Marshal(normalized)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		var decoded PackageLicense
+		if err := json.Unmarshal(encoded, &decoded); err != nil {
+			t.Fatalf("unmarshal %s: %v", encoded, err)
+		}
+		if decoded.Source != normalized.Source {
+			t.Fatalf("source did not survive the wire: %q became %q", normalized.Source, decoded.Source)
 		}
 		// A license reference must be well formed and must have its text, or
 		// the document citing it would not validate.
