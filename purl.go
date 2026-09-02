@@ -153,6 +153,25 @@ func CanonicalPackageURLFromParts(existingPURL string, ecosystem Ecosystem, pack
 	}).CanonicalPURL()
 }
 
+// GenericPURL returns a pkg:generic package URL for the identity, for the
+// case where the ecosystem's own type profile rejects the coordinates.
+//
+// It is deliberately separate from CanonicalPURL: that answers "what is this
+// package's canonical identity in its own ecosystem", and answering it with a
+// generic URL would make every caller unable to tell the two apart. Node
+// construction is the only place that reaches for this, and it records a
+// warning when it does.
+func (i Coordinates) GenericPURL() string {
+	if i.Type == PackageTypeManifest {
+		return ""
+	}
+	name := strings.TrimSpace(i.Name)
+	if name == "" {
+		return ""
+	}
+	return BuildPackageURL("generic", strings.TrimSpace(i.Org), name, i.Version)
+}
+
 // CanonicalPURL returns the canonical package URL for the identity.
 func (i Coordinates) CanonicalPURL() string {
 	if canonical := CanonicalizePackageURL(i.PURL); canonical != "" {

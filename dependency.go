@@ -220,6 +220,47 @@ func NewDependencyNodeFromPURL(rawPURL string) (*DependencyNode, error) {
 	return newDependencyNode(Coordinates{PURL: rawPURL}, rawPURL)
 }
 
+// NewDependencyNodeFrom constructs a dependency node from a prototype: the
+// identity is minted from the prototype's coordinates, and every other field
+// it states is copied onto the result.
+//
+// A node's identity is fixed at construction, so a producer that used to
+// describe a package as one struct literal now has to construct first and
+// assign after. Doing that by hand at each site is how a detector silently
+// stops recording what it detected -- four npm-family lockfile parsers lost
+// ResolvedURL and their integrity digests exactly that way, in one release,
+// each for the same reason, and only a fixture assertion noticed.
+//
+// The field list lives here because this type owns it: a field added to the
+// model is copied by every producer at once, rather than in as many places as
+// remembered.
+func NewDependencyNodeFrom(proto DependencyNode) (*DependencyNode, error) {
+	node, err := NewDependencyNode(proto.Coordinates)
+	if err != nil {
+		return nil, err
+	}
+	node.Relationship = proto.Relationship
+	node.Source = proto.Source
+	node.Scopes = append([]Scope(nil), proto.Scopes...)
+	node.Locations = append([]PackageLocation(nil), proto.Locations...)
+	node.CPEs = append([]string(nil), proto.CPEs...)
+	node.Digests = append([]Digest(nil), proto.Digests...)
+	node.Copyright = proto.Copyright
+	node.FoundBy = proto.FoundBy
+	node.ResolvedURL = proto.ResolvedURL
+	node.Origins = MergeOrigins(nil, proto.Origins)
+	node.Licenses = MergeLicenses(nil, proto.Licenses)
+	node.Description = proto.Description
+	node.Homepage = proto.Homepage
+	node.Supplier = proto.Supplier
+	node.Originator = proto.Originator
+	node.ExternalReferences = MergeExternalReferences(nil, proto.ExternalReferences)
+	node.Metadata = proto.Metadata
+	node.Matched = proto.Matched
+	node.PackageRef = proto.PackageRef
+	return node, nil
+}
+
 func newDependencyNode(coords Coordinates, rawPURL string) (*DependencyNode, error) {
 	scratch := coords
 	normalizeCoordinateVocabulary(&scratch)
@@ -236,6 +277,19 @@ func newDependencyNode(coords Coordinates, rawPURL string) (*DependencyNode, err
 	if minted == "" {
 		minted = scratch.CanonicalPURL()
 	}
+	genericIdentity := false
+	if minted == "" {
+		// The ecosystem's own package URL type could not express these
+		// coordinates. Some type profiles require more than a resolver gives:
+		// a SwiftPM registry pin names a package by identity alone, and the
+		// swift type requires a namespace; a bare Go module name has none
+		// either. Fall back to a generic identity rather than refusing a
+		// package that is genuinely installed -- and record that it happened,
+		// so the looseness is observable rather than silent.
+		if minted = scratch.GenericPURL(); minted != "" {
+			genericIdentity = true
+		}
+	}
 	if minted == "" {
 		return nil, fmt.Errorf("dependency node: no package URL is derivable from %q", coords.QualifiedName())
 	}
@@ -251,6 +305,13 @@ func newDependencyNode(coords Coordinates, rawPURL string) (*DependencyNode, err
 		node.warnings = append(node.warnings, NodeWarning{
 			Code:    NodeWarningMissingVersion,
 			Message: "package URL carries no version",
+		})
+	}
+	if genericIdentity {
+		node.warnings = append(node.warnings, NodeWarning{
+			Code: NodeWarningGenericIdentity,
+			Message: fmt.Sprintf("package URL type %q cannot express these coordinates; identity minted as pkg:generic",
+				PackageURLTypeForValues(scratch.Ecosystem, scratch.PackageManager, scratch.Type)),
 		})
 	}
 	node.adoptEvidenceQualifiers(evidence)

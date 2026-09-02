@@ -11,7 +11,7 @@ func TestNormalizePackageIdentityPython(t *testing.T) {
 	// NormalizeDependencyIdentity is gone: NormalizeCoordinates returns the
 	// applied rules, and the constructors record the provenance breadcrumbs.
 	applied := NormalizeCoordinates(&coords)
-	if !reflect.DeepEqual(applied, []string{"name", "version"}) {
+	if !reflect.DeepEqual(applied, []string{"name"}) {
 		t.Fatalf("NormalizeCoordinates() applied = %#v", applied)
 	}
 
@@ -19,10 +19,13 @@ func TestNormalizePackageIdentityPython(t *testing.T) {
 	if pkg.Name != "requests-toolbelt" {
 		normReturnNameMismatch(t, pkg.Name, "requests-toolbelt")
 	}
-	if pkg.Version != "1.0.0rc1" {
-		normReturnNameMismatch(t, pkg.Version, "1.0.0rc1")
+	// The version keeps the spelling the manifest used. Case folding a
+	// version is packageurl-go's call, per type, and it makes it for
+	// huggingface only -- see TestVersionCasingMatchesPackageURLLibrary.
+	if pkg.Version != "1.0.0RC1" {
+		normReturnNameMismatch(t, pkg.Version, "1.0.0RC1")
 	}
-	normAssertAppliedMetadata(t, pkg.Metadata, []string{"name", "version"})
+	normAssertAppliedMetadata(t, pkg.Metadata, []string{"name"})
 }
 
 func TestNormalizePackageIdentityRust(t *testing.T) {
@@ -31,10 +34,10 @@ func TestNormalizePackageIdentityRust(t *testing.T) {
 	if pkg.Name != "serde-json" {
 		normReturnNameMismatch(t, pkg.Name, "serde-json")
 	}
-	if pkg.Version != "1.0.0-rc1" {
-		normReturnNameMismatch(t, pkg.Version, "1.0.0-rc1")
+	if pkg.Version != "1.0.0-RC1" {
+		normReturnNameMismatch(t, pkg.Version, "1.0.0-RC1")
 	}
-	normAssertAppliedMetadata(t, pkg.Metadata, []string{"name", "version"})
+	normAssertAppliedMetadata(t, pkg.Metadata, []string{"name"})
 }
 
 func TestNormalizePackageIdentityNPMScopedName(t *testing.T) {
@@ -54,17 +57,19 @@ func TestNormalizePackageIdentityGoPath(t *testing.T) {
 
 	// The identity splits a Go module path at its trailing segment, so the
 	// module path is read back through the ecosystem-native accessor rather
-	// than the bare Name field (ADR-0021). It is lowercased because the
+	// than the bare Name field (ADR-0021). The path is lowercased because the
 	// purl specification's golang type says so and the library applies that
-	// rule — identity delegates type semantics rather than keeping a second
+	// rule -- identity delegates type semantics rather than keeping a second
 	// opinion (ADR-0041).
 	if got := pkg.EcosystemName(); got != "github.com/example/lib/v2" {
 		normReturnNameMismatch(t, got, "github.com/example/lib/v2")
 	}
-	if pkg.Version != "v2.1.0-rc1" {
-		normReturnNameMismatch(t, pkg.Version, "v2.1.0-rc1")
+	// The version is not: the same library leaves a golang version verbatim,
+	// and so does this.
+	if pkg.Version != "V2.1.0-RC1" {
+		normReturnNameMismatch(t, pkg.Version, "V2.1.0-RC1")
 	}
-	normAssertAppliedMetadata(t, pkg.Metadata, []string{"name", "version"})
+	normAssertAppliedMetadata(t, pkg.Metadata, []string{"name"})
 }
 
 func TestNormalizePackageIdentityUsesCanonicalEcosystemAliases(t *testing.T) {

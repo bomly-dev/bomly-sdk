@@ -50,11 +50,6 @@ func NormalizeCoordinates(pkg *Coordinates) []string {
 		applied = append(applied, normComposer(pkg)...)
 	}
 
-	if normalizedVersion, changed := normVersion(pkg.Version); changed {
-		pkg.Version = normalizedVersion
-		applied = append(applied, "version")
-	}
-
 	return applied
 }
 
@@ -179,26 +174,24 @@ func normNormalizeSlashPath(value string) string {
 	return trimmed
 }
 
-func normVersion(version string) (string, bool) {
-	trimmed := strings.TrimSpace(version)
-	if trimmed == "" {
-		return "", trimmed != version
-	}
-	if !normContainsAlpha(trimmed) {
-		return trimmed, trimmed != version
-	}
-	normalized := strings.ToLower(trimmed)
-	return normalized, normalized != version
-}
-
-func normContainsAlpha(value string) bool {
-	for _, r := range value {
-		if unicode.IsLetter(r) {
-			return true
-		}
-	}
-	return false
-}
+// Version casing is not normalized here, deliberately.
+//
+// This used to lowercase any version containing a letter, which is wrong for
+// nearly every ecosystem and lossy in the direction that matters: a Maven
+// "1.0-SNAPSHOT" became "1.0-snapshot" in the coordinates, and that is the
+// value an SBOM publishes and a user reads.
+//
+// packageurl-go owns the rule and applies it per type inside Normalize, which
+// every minted identity already runs through (purlkit.Build ->
+// normalizeAndRender -> PackageURL.Normalize). Its typeAdjustVersion
+// lowercases exactly one type -- huggingface -- and keeps every other version
+// verbatim, which is what the purl specification says. Duplicating a broader
+// rule here contradicted the library on the way in and then lost the original
+// spelling for good.
+//
+// TestVersionCasingMatchesPackageURLLibrary reads the library's own source and
+// fails if that set grows, so an addition upstream is a test failure rather
+// than a silent divergence.
 
 func normCollapseRepeated(value string, separator rune) string {
 	if value == "" {

@@ -571,8 +571,56 @@ func MergeOrigins(existing, additions []DependencyOrigin) []DependencyOrigin {
 	for _, origin := range additions {
 		appendNormalized(origin)
 	}
+	merged = dropSupersededOrigins(merged)
 	if len(merged) == 0 {
 		return nil
 	}
 	return merged
+}
+
+// dropSupersededOrigins removes origins that a more precise member of the same
+// set already describes.
+//
+// A plain union is wrong when two entries describe the same place at
+// different precision. Detectors that read a manifest and then a lockfile hit
+// this every time: SwiftPM and pub both assert a repository while parsing the
+// manifest, then learn from the lockfile the revision that repository was
+// pinned at. Keeping both leaves the component publishing two VCS references
+// for one repository -- one pinned, one floating -- and a consumer reading
+// the first gets a floating reference to a pinned dependency.
+//
+// Supersession is deliberately narrow: same repository, same artifact URL,
+// and the superseded entry states no revision while the survivor does. Two
+// genuinely different places both survive, because that disagreement is an
+// observable fact -- the shape of a dependency-confusion signal -- and not
+// something to resolve by picking one.
+func dropSupersededOrigins(origins []DependencyOrigin) []DependencyOrigin {
+	if len(origins) < 2 {
+		return origins
+	}
+	kept := make([]DependencyOrigin, 0, len(origins))
+	for _, candidate := range origins {
+		superseded := false
+		for _, other := range origins {
+			if originSupersedes(other, candidate) {
+				superseded = true
+				break
+			}
+		}
+		if !superseded {
+			kept = append(kept, candidate)
+		}
+	}
+	return kept
+}
+
+// originSupersedes reports whether refined is the same location as candidate,
+// pinned to a revision candidate does not state.
+func originSupersedes(refined, candidate DependencyOrigin) bool {
+	if candidate.Revision != "" || candidate.Repository == "" {
+		return false
+	}
+	return refined.Revision != "" &&
+		refined.Repository == candidate.Repository &&
+		refined.ArtifactURL == candidate.ArtifactURL
 }
