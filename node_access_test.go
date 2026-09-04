@@ -188,8 +188,18 @@ func TestIdentityFallsBackToGenericWithAWarning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDependencyNode() error = %v, want a generic identity instead", err)
 	}
-	if node.NodeID() != "pkg:generic/swift/internal-tools@2.0.0" {
-		t.Fatalf("identity = %q, want a generic package URL namespaced by the failed type", node.NodeID())
+	if node.NodeID() != "pkg:generic/internal-tools@2.0.0?bomly_source_type=swift" {
+		t.Fatalf("identity = %q, want a generic package URL discriminated by the failed type", node.NodeID())
+	}
+	// The discriminator is identity-only. Coordinates are projected from the
+	// identity verbatim, so putting it in the namespace made a bare Swift
+	// package read as organization "swift" -- an organization no manifest
+	// declared, reaching display and ecosystem lookups.
+	if node.Org != "" {
+		t.Fatalf("Org = %q, want the discriminator kept out of the coordinates", node.Org)
+	}
+	if node.EcosystemName() != "internal-tools" || node.DisplayName() != "internal-tools" {
+		t.Fatalf("names = %q / %q, want the package's own name", node.EcosystemName(), node.DisplayName())
 	}
 	if node.Ecosystem != EcosystemSwift {
 		t.Fatalf("ecosystem = %q, want it kept on the coordinates", node.Ecosystem)
@@ -214,8 +224,8 @@ func TestIdentityFallsBackToGenericWithAWarning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDependencyNode(go) error = %v, want a generic identity instead", err)
 	}
-	if goPackage.NodeID() != "pkg:generic/golang/internal-tools@2.0.0" {
-		t.Fatalf("go identity = %q, want the failed type in the namespace", goPackage.NodeID())
+	if goPackage.NodeID() != "pkg:generic/internal-tools@2.0.0?bomly_source_type=golang" {
+		t.Fatalf("go identity = %q, want the failed type as the discriminator", goPackage.NodeID())
 	}
 	if goPackage.NodeID() == node.NodeID() {
 		t.Fatalf("two ecosystems folded onto one generic identity: %q", node.NodeID())
@@ -228,6 +238,26 @@ func TestIdentityFallsBackToGenericWithAWarning(t *testing.T) {
 		PURL: "pkg:golang/internal-tools@2.0.0",
 	}); err == nil {
 		t.Fatal("a stated but invalid package URL was silently replaced with a generic one")
+	}
+
+	// The warning survives the wire. It is derived from the identity rather
+	// than tracked through construction, because warnings are deliberately
+	// not serialized: a decoded fallback arrives as a stated pkg:generic URL,
+	// and without the discriminator nothing would mark it -- leaving a
+	// consumer unable to tell a degraded identity from a genuinely generic
+	// package, which is the whole signal.
+	decoded, err := NewDependencyNodeFromPURL(node.NodeID())
+	if err != nil {
+		t.Fatalf("NewDependencyNodeFromPURL(%q) error = %v", node.NodeID(), err)
+	}
+	var decodedWarned bool
+	for _, warning := range decoded.NodeWarnings() {
+		if warning.Code == NodeWarningGenericIdentity {
+			decodedWarned = true
+		}
+	}
+	if !decodedWarned {
+		t.Fatalf("the generic-identity warning did not survive a round trip; warnings = %+v", decoded.NodeWarnings())
 	}
 
 	// An ecosystem whose type profile is satisfied is untouched.
@@ -244,5 +274,35 @@ func TestIdentityFallsBackToGenericWithAWarning(t *testing.T) {
 		if warning.Code == NodeWarningGenericIdentity {
 			t.Fatal("a satisfiable identity was reported as generic")
 		}
+	}
+}
+
+// A location holds a Position pointer and a Scopes slice. Copying only the
+// outer slice left both aliasing the prototype, so mutating a position after
+// construction reached into a node already built.
+func TestNewDependencyNodeFromDeepCopiesLocations(t *testing.T) {
+	proto := DependencyNode{
+		Coordinates: Coordinates{Ecosystem: EcosystemNPM, Name: "left-pad", Version: "1.3.0"},
+		Locations: []PackageLocation{{
+			RealPath:   "package-lock.json",
+			AccessPath: "package-lock.json",
+			Position:   &SourcePosition{Line: 12},
+			Scopes:     ScopesOf(ScopeRuntime),
+		}},
+	}
+
+	node, err := NewDependencyNodeFrom(proto)
+	if err != nil {
+		t.Fatalf("NewDependencyNodeFrom() error = %v", err)
+	}
+
+	proto.Locations[0].Position.Line = 99
+	proto.Locations[0].Scopes[0] = ScopeDevelopment
+
+	if node.Locations[0].Position.Line != 12 {
+		t.Errorf("position line = %d, want the prototype's position deep-copied", node.Locations[0].Position.Line)
+	}
+	if node.Locations[0].Scopes[0] != ScopeRuntime {
+		t.Errorf("location scope = %q, want the prototype's scopes deep-copied", node.Locations[0].Scopes[0])
 	}
 }

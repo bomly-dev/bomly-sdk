@@ -207,6 +207,12 @@ func PropagateScopes(g *sdk.Graph, rootID string, seed func(*sdk.DependencyNode)
 		if scope == sdk.ScopeUnknown {
 			scope = sdk.ScopeRuntime
 		}
+		// The node's stored scope counts here as well as on the child side.
+		// A direct dependency the caller seeds as development that already
+		// carries runtime is reachable at runtime, and seeding development
+		// alone sent development down every edge out of it -- the same defect
+		// as the child-side merge, one step earlier.
+		scope = sdk.MergeScope(scope, dep.PrimaryScope())
 		propagated[dep.NodeID()] = sdk.MergeScope(propagated[dep.NodeID()], scope)
 		dep.AddScope(propagated[dep.NodeID()])
 		queue = append(queue, dep)

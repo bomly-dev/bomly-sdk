@@ -242,7 +242,10 @@ func NewDependencyNodeFrom(proto DependencyNode) (*DependencyNode, error) {
 	node.Relationship = proto.Relationship
 	node.Source = proto.Source
 	node.Scopes = append([]Scope(nil), proto.Scopes...)
-	node.Locations = append([]PackageLocation(nil), proto.Locations...)
+	// Through the shared helper, not a slice append: a location holds a
+	// Position pointer and a Scopes slice, and copying only the outer slice
+	// left both aliasing the prototype.
+	node.Locations = clonePackageLocations(proto.Locations)
 	node.CPEs = append([]string(nil), proto.CPEs...)
 	node.Digests = append([]Digest(nil), proto.Digests...)
 	node.Copyright = proto.Copyright
@@ -290,10 +293,9 @@ func newDependencyNode(coords Coordinates, rawPURL string) (*DependencyNode, err
 	stated := strings.TrimSpace(coords.PURL) != "" || strings.TrimSpace(rawPURL) != ""
 
 	var (
-		identity        dependencyIdentity
-		evidence        []purlkit.Qualifier
-		err             error
-		genericIdentity bool
+		identity dependencyIdentity
+		evidence []purlkit.Qualifier
+		err      error
 	)
 	if minted != "" {
 		identity, evidence, err = dependencyIdentityFromPURL(minted)
@@ -316,7 +318,6 @@ func newDependencyNode(coords Coordinates, rawPURL string) (*DependencyNode, err
 		if fallback := scratch.GenericPURL(); fallback != "" {
 			if fallbackIdentity, fallbackEvidence, fallbackErr := dependencyIdentityFromPURL(fallback); fallbackErr == nil {
 				identity, evidence, err = fallbackIdentity, fallbackEvidence, nil
-				genericIdentity = true
 			}
 		}
 	}
@@ -333,11 +334,17 @@ func newDependencyNode(coords Coordinates, rawPURL string) (*DependencyNode, err
 			Message: "package URL carries no version",
 		})
 	}
-	if genericIdentity {
+	if failedType, ok := genericFallbackType(identity.parsed); ok {
+		// Derived from the identity, not tracked through construction, so a
+		// node that crossed the wire carries it too. Warnings are
+		// deliberately not serialized, and a decoded fallback arrives as a
+		// stated pkg:generic URL that nothing would otherwise mark -- leaving
+		// the consumer unable to tell a degraded identity from a package that
+		// is genuinely generic, which is the whole signal.
 		node.warnings = append(node.warnings, NodeWarning{
 			Code: NodeWarningGenericIdentity,
 			Message: fmt.Sprintf("package URL type %q cannot express these coordinates; identity minted as pkg:generic",
-				PackageURLTypeForValues(scratch.Ecosystem, scratch.PackageManager, scratch.Type)),
+				failedType),
 		})
 	}
 	node.adoptEvidenceQualifiers(evidence)

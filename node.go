@@ -346,6 +346,13 @@ func clonePackageLocations(locations []PackageLocation) []PackageLocation {
 		if location.Position != nil {
 			out[i].Position = new(*location.Position)
 		}
+		// Scopes joined PackageLocation after this helper was written and
+		// were left aliasing the source, so a clone shared its per-site
+		// scopes with the node it was cloned from -- and a mutation through
+		// either reached the other.
+		if len(location.Scopes) > 0 {
+			out[i].Scopes = append([]Scope(nil), location.Scopes...)
+		}
 	}
 	return out
 }

@@ -337,3 +337,41 @@ func TestPromoteToModuleKeepsExplicitEdgeKinds(t *testing.T) {
 		t.Fatalf("edge kind = %q, want the depends-on the edge was recorded with", got)
 	}
 }
+
+// The seed is not the whole story for a direct dependency either. When the
+// caller seeds development for a package that already carries runtime, the
+// package is still reachable at runtime -- and so is everything below it.
+// Seeding development alone sent development down every edge out of it, one
+// step earlier than the child-side merge that was fixed first.
+func TestPropagateScopesMergesADirectDependencysStoredScope(t *testing.T) {
+	g := sdk.New()
+	root := testkit.MustModuleNode(t, "pyproject.toml", sdk.Coordinates{
+		Ecosystem: sdk.EcosystemPython, Name: "app", Version: "1.0.0",
+	})
+	// Declared in the development group, but the resolver already marked it
+	// runtime -- it is reachable both ways.
+	direct := testkit.MustDependencyCoords(t, sdk.Coordinates{Ecosystem: sdk.EcosystemPython, Name: "requests", Version: "2.31.0"})
+	direct.AddScope(sdk.ScopeRuntime)
+	child := testkit.MustDependencyCoords(t, sdk.Coordinates{Ecosystem: sdk.EcosystemPython, Name: "urllib3", Version: "2.2.0"})
+	for _, node := range []sdk.GraphNode{root, direct, child} {
+		if err := g.AddNode(node); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, edge := range [][2]string{
+		{root.NodeID(), direct.NodeID()},
+		{direct.NodeID(), child.NodeID()},
+	} {
+		if err := g.AddEdge(edge[0], edge[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	detectorkit.PropagateScopes(g, root.NodeID(), func(*sdk.DependencyNode) sdk.Scope {
+		return sdk.ScopeDevelopment
+	})
+
+	if child.PrimaryScope() != sdk.ScopeRuntime {
+		t.Fatalf("urllib3 scope = %q, want the runtime its parent already carried", child.PrimaryScope())
+	}
+}
