@@ -50,6 +50,26 @@ func NormalizeCoordinates(pkg *Coordinates) []string {
 		applied = append(applied, normComposer(pkg)...)
 	}
 
+	// Version casing is the library's call, per purl type, and this is where
+	// the coordinates adopt it. Deriving it from the canonical package URL
+	// delegates the whole rule rather than transcribing which types fold
+	// case: whatever packageurl-go does inside Normalize, the coordinates
+	// follow, today for huggingface alone and automatically for any type it
+	// adds.
+	//
+	// Without this the two normalization paths disagreed for exactly that
+	// type: NewDependencyNode projects its coordinates from the minted
+	// identity and so lowercased, while a direct NormalizeCoordinates call
+	// left the version as written.
+	if canonical := pkg.CanonicalPURL(); canonical != "" {
+		if parsed, err := purlkit.Parse(canonical); err == nil {
+			if parsed.Version != "" && parsed.Version != pkg.Version {
+				pkg.Version = parsed.Version
+				applied = append(applied, "version")
+			}
+		}
+	}
+
 	return applied
 }
 
@@ -174,7 +194,7 @@ func normNormalizeSlashPath(value string) string {
 	return trimmed
 }
 
-// Version casing is not normalized here, deliberately.
+// Version casing is delegated, not decided here.
 //
 // This used to lowercase any version containing a letter, which is wrong for
 // nearly every ecosystem and lossy in the direction that matters: a Maven
@@ -185,13 +205,14 @@ func normNormalizeSlashPath(value string) string {
 // every minted identity already runs through (purlkit.Build ->
 // normalizeAndRender -> PackageURL.Normalize). Its typeAdjustVersion
 // lowercases exactly one type -- huggingface -- and keeps every other version
-// verbatim, which is what the purl specification says. Duplicating a broader
-// rule here contradicted the library on the way in and then lost the original
-// spelling for good.
+// verbatim, which is what the purl specification says. NormalizeCoordinates
+// reads the answer back off the canonical package URL rather than
+// transcribing that set, so the two paths agree and an upstream addition is
+// picked up rather than missed.
 //
 // TestVersionCasingMatchesPackageURLLibrary reads the library's own source and
-// fails if that set grows, so an addition upstream is a test failure rather
-// than a silent divergence.
+// fails if that set grows, so a change upstream is a test failure rather than
+// a silent divergence.
 
 func normCollapseRepeated(value string, separator rune) string {
 	if value == "" {

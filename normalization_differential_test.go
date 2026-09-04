@@ -158,3 +158,50 @@ func packageURLModuleDir(t *testing.T) string {
 	}
 	return dir
 }
+
+// The two normalization paths must agree. NewDependencyNode projects its
+// coordinates from the minted identity, so it follows whatever casing the
+// library applies; a direct NormalizeCoordinates call has to reach the same
+// answer, or the same package normalizes differently depending on which entry
+// point a caller used.
+//
+// Hugging Face is the one type where that is observable today, because it is
+// the only one packageurl-go folds -- which is exactly why the rule is read
+// off the canonical package URL rather than transcribed here.
+func TestNormalizeCoordinatesAgreesWithTheConstructor(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		coords Coordinates
+		want   string
+	}{
+		{
+			name:   "hugging face folds, because the library folds it",
+			coords: Coordinates{PURL: "pkg:huggingface/microsoft/bert@V1-Beta"},
+			want:   "v1-beta",
+		},
+		{
+			name:   "maven does not",
+			coords: Coordinates{Ecosystem: EcosystemMaven, Org: "com.acme", Name: "app", Version: "1.0-SNAPSHOT"},
+			want:   "1.0-SNAPSHOT",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			normalized := tc.coords
+			NormalizeCoordinates(&normalized)
+			if normalized.Version != tc.want {
+				t.Errorf("NormalizeCoordinates version = %q, want %q", normalized.Version, tc.want)
+			}
+
+			node, err := NewDependencyNode(tc.coords)
+			if err != nil {
+				t.Fatalf("NewDependencyNode() error = %v", err)
+			}
+			if node.Version != tc.want {
+				t.Errorf("constructed version = %q, want %q", node.Version, tc.want)
+			}
+			if node.Version != normalized.Version {
+				t.Errorf("the two normalization paths disagree: %q vs %q", normalized.Version, node.Version)
+			}
+		})
+	}
+}
