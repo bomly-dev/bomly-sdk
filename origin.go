@@ -571,8 +571,64 @@ func MergeOrigins(existing, additions []DependencyOrigin) []DependencyOrigin {
 	for _, origin := range additions {
 		appendNormalized(origin)
 	}
+	merged = dropSupersededOrigins(merged)
 	if len(merged) == 0 {
 		return nil
 	}
 	return merged
+}
+
+// dropSupersededOrigins removes origins that a more precise member of the same
+// set already describes.
+//
+// A plain union is wrong when two entries describe the same place at
+// different precision. Detectors that read a manifest and then a lockfile hit
+// this every time: SwiftPM and pub both assert a repository while parsing the
+// manifest, then learn from the lockfile the revision that repository was
+// pinned at. Keeping both leaves the component publishing two VCS references
+// for one repository -- one pinned, one floating -- and a consumer reading
+// the first gets a floating reference to a pinned dependency.
+//
+// Supersession is deliberately narrow: same repository, same artifact URL,
+// and the superseded entry states no revision while the survivor does. Two
+// genuinely different places both survive, because that disagreement is an
+// observable fact -- the shape of a dependency-confusion signal -- and not
+// something to resolve by picking one.
+//
+// Linear, in one indexing pass and one filtering pass. MergeOrigins runs while
+// decoding a dependency node from the plugin wire, where the origins array has
+// no item bound, so an all-pairs comparison turns a payload of tens of
+// thousands of distinct valid origins into hundreds of millions of
+// comparisons -- a hang the CLI would take on plugin- or repository-controlled
+// data.
+func dropSupersededOrigins(origins []DependencyOrigin) []DependencyOrigin {
+	if len(origins) < 2 {
+		return origins
+	}
+	// The places some entry has already pinned to a revision.
+	pinned := make(map[string]struct{}, len(origins))
+	for _, origin := range origins {
+		if origin.Revision != "" && origin.Repository != "" {
+			pinned[originPlaceKey(origin)] = struct{}{}
+		}
+	}
+	if len(pinned) == 0 {
+		return origins
+	}
+	kept := origins[:0]
+	for _, origin := range origins {
+		if origin.Revision == "" && origin.Repository != "" {
+			if _, superseded := pinned[originPlaceKey(origin)]; superseded {
+				continue
+			}
+		}
+		kept = append(kept, origin)
+	}
+	return kept
+}
+
+// originPlaceKey identifies the location an origin describes, without its
+// precision: two origins share a key when one can refine the other.
+func originPlaceKey(origin DependencyOrigin) string {
+	return origin.Repository + "\x00" + origin.ArtifactURL
 }

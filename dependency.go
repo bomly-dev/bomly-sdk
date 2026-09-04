@@ -220,6 +220,66 @@ func NewDependencyNodeFromPURL(rawPURL string) (*DependencyNode, error) {
 	return newDependencyNode(Coordinates{PURL: rawPURL}, rawPURL)
 }
 
+// NewDependencyNodeFrom constructs a dependency node from a prototype: the
+// identity is minted from the prototype's coordinates, and every other field
+// it states is copied onto the result.
+//
+// A node's identity is fixed at construction, so a producer that used to
+// describe a package as one struct literal now has to construct first and
+// assign after. Doing that by hand at each site is how a detector silently
+// stops recording what it detected -- four npm-family lockfile parsers lost
+// ResolvedURL and their integrity digests exactly that way, in one release,
+// each for the same reason, and only a fixture assertion noticed.
+//
+// The field list lives here because this type owns it: a field added to the
+// model is copied by every producer at once, rather than in as many places as
+// remembered.
+func NewDependencyNodeFrom(proto DependencyNode) (*DependencyNode, error) {
+	node, err := NewDependencyNode(proto.Coordinates)
+	if err != nil {
+		return nil, err
+	}
+	node.Relationship = proto.Relationship
+	node.Source = proto.Source
+	node.Scopes = append([]Scope(nil), proto.Scopes...)
+	// Through the shared helper, not a slice append: a location holds a
+	// Position pointer and a Scopes slice, and copying only the outer slice
+	// left both aliasing the prototype.
+	node.Locations = clonePackageLocations(proto.Locations)
+	node.CPEs = append([]string(nil), proto.CPEs...)
+	node.Digests = append([]Digest(nil), proto.Digests...)
+	node.Copyright = proto.Copyright
+	node.FoundBy = proto.FoundBy
+	node.ResolvedURL = proto.ResolvedURL
+	// Merged onto what the constructor produced, not over it. Constructing
+	// from coordinates relocates the URL-valued evidence qualifiers into
+	// Origins (ADR-0033), and replacing the result with the prototype's list
+	// discarded a repository the identity itself carried.
+	node.Origins = MergeOrigins(node.Origins, proto.Origins)
+	node.Licenses = MergeLicenses(nil, proto.Licenses)
+	node.Description = proto.Description
+	node.Homepage = proto.Homepage
+	// Cloned, not aliased, like Clone does: a producer that reuses a
+	// prototype across packages -- which is the whole reason this takes one
+	// -- would otherwise mutate nodes it already built.
+	node.Supplier = proto.Supplier.Clone()
+	node.Originator = proto.Originator.Clone()
+	node.ExternalReferences = MergeExternalReferences(nil, proto.ExternalReferences)
+	// Same for metadata: normalization records its provenance breadcrumbs
+	// under the reserved prefix, and overwriting the map lost them. A
+	// prototype key wins for anything else, so a producer's own metadata
+	// still lands; a reserved key does not, because that namespace is this
+	// project's and the constructor is the one writing it.
+	node.Metadata = mergeMetadataPreservingReserved(node.Metadata, proto.Metadata)
+	node.Matched = proto.Matched
+	// PackageRef is derived, not carried: it names the package this node
+	// matched, which is the package its identity encodes. Copying a
+	// prototype's value lets the two disagree, and a node whose PackageRef
+	// points at a different package is enriched from the wrong entry.
+	node.PackageRef = node.NodeID()
+	return node, nil
+}
+
 func newDependencyNode(coords Coordinates, rawPURL string) (*DependencyNode, error) {
 	scratch := coords
 	normalizeCoordinateVocabulary(&scratch)
@@ -236,10 +296,40 @@ func newDependencyNode(coords Coordinates, rawPURL string) (*DependencyNode, err
 	if minted == "" {
 		minted = scratch.CanonicalPURL()
 	}
-	if minted == "" {
-		return nil, fmt.Errorf("dependency node: no package URL is derivable from %q", coords.QualifiedName())
+	// A stated package URL is an assertion: honored or refused, never quietly
+	// replaced by a looser one the caller did not write. Only coordinates
+	// that assert none may fall back.
+	stated := strings.TrimSpace(coords.PURL) != "" || strings.TrimSpace(rawPURL) != ""
+
+	var (
+		identity dependencyIdentity
+		evidence []purlkit.Qualifier
+		err      error
+	)
+	if minted != "" {
+		identity, evidence, err = dependencyIdentityFromPURL(minted)
+	} else {
+		err = fmt.Errorf("no package URL is derivable from %q", coords.QualifiedName())
 	}
-	identity, evidence, err := dependencyIdentityFromPURL(minted)
+	if err != nil && !stated {
+		// The ecosystem's own package URL type could not express these
+		// coordinates. Some type profiles require more than a resolver gives:
+		// a SwiftPM registry pin names a package by identity alone and the
+		// swift type requires a namespace; a bare Go module name has none
+		// either. Fall back to a generic identity rather than refusing a
+		// package that is genuinely installed -- and record that it happened,
+		// so the looseness is observable rather than silent.
+		//
+		// Both failure shapes reach here. A type whose profile rejects the
+		// parts outright mints nothing; one that mints a string the profile
+		// then refuses fails the parse above. Handling only the first left a
+		// bare Go module erroring where a bare Swift package fell back.
+		if fallback := scratch.GenericPURL(); fallback != "" {
+			if fallbackIdentity, fallbackEvidence, fallbackErr := dependencyIdentityFromPURL(fallback); fallbackErr == nil {
+				identity, evidence, err = fallbackIdentity, fallbackEvidence, nil
+			}
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("dependency node: %w", err)
 	}
@@ -251,6 +341,19 @@ func newDependencyNode(coords Coordinates, rawPURL string) (*DependencyNode, err
 		node.warnings = append(node.warnings, NodeWarning{
 			Code:    NodeWarningMissingVersion,
 			Message: "package URL carries no version",
+		})
+	}
+	if failedType, ok := genericFallbackType(identity.parsed); ok {
+		// Derived from the identity, not tracked through construction, so a
+		// node that crossed the wire carries it too. Warnings are
+		// deliberately not serialized, and a decoded fallback arrives as a
+		// stated pkg:generic URL that nothing would otherwise mark -- leaving
+		// the consumer unable to tell a degraded identity from a package that
+		// is genuinely generic, which is the whole signal.
+		node.warnings = append(node.warnings, NodeWarning{
+			Code: NodeWarningGenericIdentity,
+			Message: fmt.Sprintf("package URL type %q cannot express these coordinates; identity minted as pkg:generic",
+				failedType),
 		})
 	}
 	node.adoptEvidenceQualifiers(evidence)

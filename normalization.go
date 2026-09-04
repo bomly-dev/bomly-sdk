@@ -50,9 +50,27 @@ func NormalizeCoordinates(pkg *Coordinates) []string {
 		applied = append(applied, normComposer(pkg)...)
 	}
 
-	if normalizedVersion, changed := normVersion(pkg.Version); changed {
-		pkg.Version = normalizedVersion
-		applied = append(applied, "version")
+	// Version casing is the library's call, per purl type, and this is where
+	// the coordinates adopt it. Deriving it from the canonical package URL
+	// delegates the whole rule rather than transcribing which types fold
+	// case: whatever packageurl-go does inside Normalize, the coordinates
+	// follow, today for huggingface alone and automatically for any type it
+	// adds.
+	//
+	// Without this the two normalization paths disagreed for exactly that
+	// type: NewDependencyNode projects its coordinates from the minted
+	// identity and so lowercased, while a direct NormalizeCoordinates call
+	// left the version as written.
+	if canonical := pkg.CanonicalPURL(); canonical != "" {
+		if parsed, err := purlkit.Parse(canonical); err == nil && parsed.Version != pkg.Version {
+			// Including when the identity carries no version. A stated
+			// versionless package URL is an assertion like any other, and the
+			// constructor projects the empty version from it -- so keeping a
+			// stale Version here left the two paths disagreeing and let a
+			// caller publish a version the identity never claimed.
+			pkg.Version = parsed.Version
+			applied = append(applied, "version")
+		}
 	}
 
 	return applied
@@ -179,26 +197,25 @@ func normNormalizeSlashPath(value string) string {
 	return trimmed
 }
 
-func normVersion(version string) (string, bool) {
-	trimmed := strings.TrimSpace(version)
-	if trimmed == "" {
-		return "", trimmed != version
-	}
-	if !normContainsAlpha(trimmed) {
-		return trimmed, trimmed != version
-	}
-	normalized := strings.ToLower(trimmed)
-	return normalized, normalized != version
-}
-
-func normContainsAlpha(value string) bool {
-	for _, r := range value {
-		if unicode.IsLetter(r) {
-			return true
-		}
-	}
-	return false
-}
+// Version casing is delegated, not decided here.
+//
+// This used to lowercase any version containing a letter, which is wrong for
+// nearly every ecosystem and lossy in the direction that matters: a Maven
+// "1.0-SNAPSHOT" became "1.0-snapshot" in the coordinates, and that is the
+// value an SBOM publishes and a user reads.
+//
+// packageurl-go owns the rule and applies it per type inside Normalize, which
+// every minted identity already runs through (purlkit.Build ->
+// normalizeAndRender -> PackageURL.Normalize). Its typeAdjustVersion
+// lowercases exactly one type -- huggingface -- and keeps every other version
+// verbatim, which is what the purl specification says. NormalizeCoordinates
+// reads the answer back off the canonical package URL rather than
+// transcribing that set, so the two paths agree and an upstream addition is
+// picked up rather than missed.
+//
+// TestVersionCasingMatchesPackageURLLibrary reads the library's own source and
+// fails if that set grows, so a change upstream is a test failure rather than
+// a silent divergence.
 
 func normCollapseRepeated(value string, separator rune) string {
 	if value == "" {

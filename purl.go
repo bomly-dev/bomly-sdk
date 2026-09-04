@@ -153,6 +153,81 @@ func CanonicalPackageURLFromParts(existingPURL string, ecosystem Ecosystem, pack
 	}).CanonicalPURL()
 }
 
+// GenericPURL returns a pkg:generic package URL for the identity, for the
+// case where the ecosystem's own type profile rejects the coordinates.
+//
+// It is deliberately separate from CanonicalPURL: that answers "what is this
+// package's canonical identity in its own ecosystem", and answering it with a
+// generic URL would make every caller unable to tell the two apart. Node
+// construction is the only place that reaches for this, and it records a
+// warning when it does.
+//
+// A qualifier names the type that could not express the package. Two
+// ecosystems whose profiles both reject otherwise identical coordinates would
+// otherwise mint the same identity -- a bare Swift "internal-tools@2.0.0" and
+// a bare Go one both becoming pkg:generic/internal-tools@2.0.0 -- and folding
+// two distinct packages into one node is a worse outcome than the loose type
+// this fallback already accepts. A degraded identity still has to be an
+// identity.
+//
+// A qualifier rather than the namespace, because coordinates are projected
+// from the identity verbatim once it is minted: a discriminator in the
+// namespace comes back as Coordinates.Org, so a bare Swift package would read
+// as organization "swift" and display as "swift:internal-tools" -- an
+// organization no manifest declared. A qualifier is part of the identity, so
+// it keeps the two records distinct, and it is not projected, so the
+// coordinates still say what the detector found. It also rides the wire,
+// which is what lets the warning below be derived after a decode.
+func (i Coordinates) GenericPURL() string {
+	if i.Type == PackageTypeManifest {
+		return ""
+	}
+	name := strings.TrimSpace(i.Name)
+	if name == "" {
+		return ""
+	}
+	failedType := strings.TrimSpace(PackageURLTypeForValues(i.Ecosystem, i.PackageManager, i.Type))
+	if failedType == "" || failedType == genericPURLType {
+		return ""
+	}
+	built, err := purlkit.Build(purlkit.PURL{
+		Type:       genericPURLType,
+		Namespace:  strings.TrimSpace(i.Org),
+		Name:       name,
+		Version:    strings.TrimSpace(i.Version),
+		Qualifiers: []purlkit.Qualifier{{Key: GenericFallbackTypeQualifier, Value: failedType}},
+	})
+	if err != nil {
+		return ""
+	}
+	return built
+}
+
+// genericPURLType is the package URL type a degraded identity falls back to.
+const genericPURLType = "generic"
+
+// GenericFallbackTypeQualifier names the package URL type that could not
+// express a package whose identity fell back to pkg:generic.
+//
+// It is prefixed because it is this project's, not the specification's: a
+// consumer reading an exported document should be able to tell a Bomly
+// annotation from a purl-spec qualifier at a glance.
+const GenericFallbackTypeQualifier = "bomly_source_type"
+
+// genericFallbackType reports the type a generic identity fell back from, and
+// whether it fell back at all.
+func genericFallbackType(purl purlkit.PURL) (string, bool) {
+	if !strings.EqualFold(purl.Type, genericPURLType) {
+		return "", false
+	}
+	for _, qualifier := range purl.Qualifiers {
+		if strings.EqualFold(qualifier.Key, GenericFallbackTypeQualifier) && qualifier.Value != "" {
+			return qualifier.Value, true
+		}
+	}
+	return "", false
+}
+
 // CanonicalPURL returns the canonical package URL for the identity.
 func (i Coordinates) CanonicalPURL() string {
 	if canonical := CanonicalizePackageURL(i.PURL); canonical != "" {

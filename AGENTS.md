@@ -36,6 +36,21 @@ Bomly's architecture decisions live in
 decisions that shape this module's surface are recorded there even when the
 code lands here.
 
+### Reading a node of any kind
+
+`GraphNode` exposes only what every kind has: an ID, a kind, locations,
+warnings, a clone. Coordinates, a display name, a scope belong to some kinds
+and not others, so a consumer that renders or narrows a node reaches for
+`NodeCoordinates`, `NodeDisplayName`, `NodeVersion`, `AsDependencyNode`,
+`AsModuleNode`, `DependencyNodesOf`, `IsProjectOwned`, or `IsNilNode` rather
+than writing its own type switch. Written per consumer, that switch
+disagrees with itself about what a manifest looks like -- the CLI grew four
+such copies in one release before these existed.
+
+`IsNilNode` is the one that is easy to skip and expensive to skip: a typed
+nil is not an untyped one, so `node != nil` is true for a
+`(*DependencyNode)(nil)` and the next field read panics.
+
 ## Compatibility contract
 
 Two axes, with different rules (see `README.md` for the full policy):

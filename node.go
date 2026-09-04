@@ -53,6 +53,16 @@ const (
 	// discarded entirely — a signed or tokenized link is never sanitized
 	// into something publishable.
 	NodeWarningDroppedEvidenceQualifier NodeWarningCode = "dropped-evidence-qualifier"
+	// NodeWarningGenericIdentity marks a node whose ecosystem's own package
+	// URL type could not express its coordinates, so its identity was minted
+	// as pkg:generic instead.
+	//
+	// The alternative was refusing the node, which is worse: the package was
+	// installed, it is in the artifact, and an inventory that omits it is
+	// wrong in a way a loosely typed identity is not. The warning is how a
+	// consumer can tell the difference -- the ecosystem stays on the
+	// coordinates either way, so nothing but the identity's type degrades.
+	NodeWarningGenericIdentity NodeWarningCode = "generic-identity"
 )
 
 // NodeWarning is a recoverable, constructor-recorded observation about a
@@ -335,6 +345,13 @@ func clonePackageLocations(locations []PackageLocation) []PackageLocation {
 		out[i] = location
 		if location.Position != nil {
 			out[i].Position = new(*location.Position)
+		}
+		// Scopes joined PackageLocation after this helper was written and
+		// were left aliasing the source, so a clone shared its per-site
+		// scopes with the node it was cloned from -- and a mutation through
+		// either reached the other.
+		if len(location.Scopes) > 0 {
+			out[i].Scopes = append([]Scope(nil), location.Scopes...)
 		}
 	}
 	return out
