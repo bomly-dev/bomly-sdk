@@ -180,6 +180,15 @@ func TestNormalizeCoordinatesAgreesWithTheConstructor(t *testing.T) {
 			want:   "v1-beta",
 		},
 		{
+			// A stated versionless package URL is an assertion too: the
+			// constructor projects the empty version from it, so normalizing
+			// has to clear the stale one rather than leave a version the
+			// identity never claimed.
+			name:   "a versionless identity clears a stale version",
+			coords: Coordinates{PURL: "pkg:npm/foo", Version: "1.0.0"},
+			want:   "",
+		},
+		{
 			name:   "maven does not",
 			coords: Coordinates{Ecosystem: EcosystemMaven, Org: "com.acme", Name: "app", Version: "1.0-SNAPSHOT"},
 			want:   "1.0-SNAPSHOT",

@@ -62,11 +62,14 @@ func NormalizeCoordinates(pkg *Coordinates) []string {
 	// identity and so lowercased, while a direct NormalizeCoordinates call
 	// left the version as written.
 	if canonical := pkg.CanonicalPURL(); canonical != "" {
-		if parsed, err := purlkit.Parse(canonical); err == nil {
-			if parsed.Version != "" && parsed.Version != pkg.Version {
-				pkg.Version = parsed.Version
-				applied = append(applied, "version")
-			}
+		if parsed, err := purlkit.Parse(canonical); err == nil && parsed.Version != pkg.Version {
+			// Including when the identity carries no version. A stated
+			// versionless package URL is an assertion like any other, and the
+			// constructor projects the empty version from it -- so keeping a
+			// stale Version here left the two paths disagreeing and let a
+			// caller publish a version the identity never claimed.
+			pkg.Version = parsed.Version
+			applied = append(applied, "version")
 		}
 	}
 
