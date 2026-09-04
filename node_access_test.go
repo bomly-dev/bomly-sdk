@@ -1,6 +1,9 @@
 package sdk
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 // A typed nil is the trap these accessors exist to close: comparing a
 // GraphNode against nil is false for a (*DependencyNode)(nil), so a caller
@@ -274,6 +277,77 @@ func TestIdentityFallsBackToGenericWithAWarning(t *testing.T) {
 		if warning.Code == NodeWarningGenericIdentity {
 			t.Fatal("a satisfiable identity was reported as generic")
 		}
+	}
+}
+
+// A generic fallback identity carries the type it fell back from, and that
+// type names the ecosystem. Construction kept the caller's ecosystem while
+// reconstruction from the identity alone came back with none, so the same
+// package presented and matched differently before and after a round trip
+// through NewDependencyNodeFromPURL -- Swift on one side, unknown on the
+// other -- and the codec idempotence the constructors promise did not hold
+// for a payload stating only its purl.
+func TestGenericFallbackIdentityKeepsItsEcosystemWhenReconstructed(t *testing.T) {
+	built, err := NewDependencyNode(Coordinates{
+		Ecosystem: EcosystemSwift, Name: "internal-tools", Version: "2.0.0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if built.Ecosystem != EcosystemSwift {
+		t.Fatalf("built ecosystem = %q, want swift kept at construction", built.Ecosystem)
+	}
+
+	round, err := NewDependencyNodeFromPURL(built.NodeID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if round.Ecosystem != built.Ecosystem {
+		t.Fatalf("reconstructed ecosystem = %q, want %q: one identity projects one set of coordinates",
+			round.Ecosystem, built.Ecosystem)
+	}
+
+	// A wire payload that states only its purl -- no ecosystem field --
+	// decodes to the same projection. The full codec already carried the
+	// field explicitly; the identity alone has to be enough.
+	var decoded DependencyNode
+	payload := `{"kind":"dependency","id":"` + built.NodeID() + `","purl":"` + built.NodeID() + `"}`
+	if err := json.Unmarshal([]byte(payload), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Ecosystem != EcosystemSwift {
+		t.Fatalf("decoded ecosystem = %q, want swift restored from the identity", decoded.Ecosystem)
+	}
+
+	// The failed type resolves through the same tables as any purl type, so
+	// a Go module comes back as Go, not as a Swift look-alike.
+	goRound, err := NewDependencyNodeFromPURL("pkg:generic/internal-tools@2.0.0?bomly_source_type=golang")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if goRound.Ecosystem != EcosystemGo {
+		t.Fatalf("go ecosystem = %q, want go", goRound.Ecosystem)
+	}
+
+	// A failed type the tables do not know resolves to nothing, and the
+	// caller's own token survives -- the same rule a custom purl type gets.
+	custom, err := NewDependencyNode(Coordinates{
+		Ecosystem: "bespoke", PURL: "pkg:generic/internal-tools@2.0.0?bomly_source_type=bespoke",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if custom.Ecosystem != "bespoke" {
+		t.Fatalf("custom ecosystem = %q, want the caller's token kept where the table has none", custom.Ecosystem)
+	}
+
+	// A genuinely generic package, with no fallback marker, is untouched.
+	generic, err := NewDependencyNodeFromPURL("pkg:generic/openssl@3.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if generic.Ecosystem != "" {
+		t.Fatalf("generic ecosystem = %q, want none claimed", generic.Ecosystem)
 	}
 }
 
