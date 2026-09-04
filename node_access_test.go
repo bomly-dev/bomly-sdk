@@ -341,6 +341,33 @@ func TestGenericFallbackIdentityKeepsItsEcosystemWhenReconstructed(t *testing.T)
 		t.Fatalf("custom ecosystem = %q, want the caller's token kept where the table has none", custom.Ecosystem)
 	}
 
+	// A failed type two ecosystems share resolves the way the typed identity
+	// already does. pkg:maven covers Scala too, and purlkit grandfathers it to
+	// maven (see purlTypeEcosystems in purlkit/table.go): a typed Scala
+	// package projects as maven, so its fallback projects as maven as well.
+	// The fallback identity cannot say more -- both ecosystems fail the same
+	// type, so both carry bomly_source_type=maven -- and reading it any
+	// other way would leave the two paths disagreeing about one package.
+	typedScala, err := NewDependencyNode(Coordinates{
+		Ecosystem: EcosystemScala, Org: "org.scala-lang", Name: "scala-library", Version: "2.13.0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fallbackScala, err := NewDependencyNode(Coordinates{
+		Ecosystem: EcosystemScala, Name: "internal-tools", Version: "2.0.0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fallbackScala.Ecosystem != typedScala.Ecosystem {
+		t.Fatalf("fallback scala ecosystem = %q, typed = %q; want the fallback to follow the typed identity",
+			fallbackScala.Ecosystem, typedScala.Ecosystem)
+	}
+	if scalaRound, err := NewDependencyNodeFromPURL(fallbackScala.NodeID()); err != nil || scalaRound.Ecosystem != fallbackScala.Ecosystem {
+		t.Fatalf("reconstructed scala ecosystem = %q, %v; want %q", scalaRound.Ecosystem, err, fallbackScala.Ecosystem)
+	}
+
 	// A genuinely generic package, with no fallback marker, is untouched.
 	generic, err := NewDependencyNodeFromPURL("pkg:generic/openssl@3.0.0")
 	if err != nil {
