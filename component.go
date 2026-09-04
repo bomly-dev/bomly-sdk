@@ -23,8 +23,10 @@ const maxComponentNameLength = 256
 // Name is required and bounded by maxComponentNameLength; it must be valid
 // UTF-8 with no control characters, because it reaches published documents
 // where a newline would corrupt SPDX's line-oriented tag form. Whitespace
-// inside a name is legal. The gate is validateComponentDescriptor, through
-// each kind's Validate*Descriptor.
+// inside a name is legal. The checks apply to the value as stored --
+// validation does not rewrite it -- so padding counts against the bound.
+// The gate is validateComponentDescriptor, through each kind's
+// Validate*Descriptor.
 type ComponentDescriptor struct {
 	Name                string           `json:"name"`
 	DisplayName         string           `json:"displayName,omitempty"`

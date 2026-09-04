@@ -22,13 +22,18 @@ func TestComponentNameIsBounded(t *testing.T) {
 	accepted := []string{
 		"external-depsdev",
 		"My Matcher",
+		" padded ",
 		longest,
-		// Surrounding space is trimmed before measuring, the way the source
-		// gate measures it, so padding does not cost a name at the bound.
-		"  " + longest + "  ",
 	}
+	// Checked as stored, not trimmed: validation does not rewrite the name,
+	// so what passes is what gets marshaled. Trimming first let a control
+	// character at an edge through and let unbounded padding ride past a
+	// bound that exists to be a resource limit.
 	rejected := []string{
 		longest + "n",
+		" " + longest + " ",
+		"\nmatcher",
+		"matcher\t",
 		"with\ttab",
 		"with\nnewline",
 		"with\x7fdelete",
