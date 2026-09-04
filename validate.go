@@ -3,6 +3,7 @@ package sdk
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // ValidateDetectorDescriptor validates typed detector registration data.
@@ -78,8 +79,19 @@ func ValidateAnalyzerDescriptor(descriptor *AnalyzerDescriptor) error {
 }
 
 func validateComponentDescriptor(kind string, descriptor ComponentDescriptor) error {
-	if strings.TrimSpace(descriptor.Name) == "" {
+	name := strings.TrimSpace(descriptor.Name)
+	if name == "" {
 		return fmt.Errorf("%s descriptor name is required", kind)
+	}
+	// The name reaches published documents as a license source, so it is
+	// held to the same domain there and here: bounded, valid UTF-8, no
+	// control characters. Measured trimmed, the way the source gate measures
+	// it, so the two agree on every value.
+	if len(name) > maxComponentNameLength {
+		return fmt.Errorf("%s descriptor name exceeds %d bytes", kind, maxComponentNameLength)
+	}
+	if !utf8.ValidString(name) || containsControlChar(name) {
+		return fmt.Errorf("%s descriptor name must be valid UTF-8 without control characters", kind)
 	}
 	for _, alias := range descriptor.Aliases {
 		if strings.TrimSpace(alias) == "" {
