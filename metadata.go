@@ -52,3 +52,28 @@ func ReservedMetadataKeys(metadata map[string]any) []string {
 	sort.Strings(found)
 	return found
 }
+
+// mergeMetadataPreservingReserved merges caller metadata onto metadata a
+// constructor produced, keeping the constructor's value for any reserved key.
+//
+// The caller's entries are the ones a producer meant to attach, so they win in
+// general. Reserved keys are the exception: that namespace belongs to this
+// project, a constructor is what writes into it, and letting a caller's map
+// replace a provenance breadcrumb would leave a node claiming a normalization
+// history it does not have.
+func mergeMetadataPreservingReserved(constructed, caller map[string]any) map[string]any {
+	if len(constructed) == 0 && len(caller) == 0 {
+		return nil
+	}
+	merged := make(map[string]any, len(constructed)+len(caller))
+	for key, value := range caller {
+		if IsReservedMetadataKey(key) {
+			continue
+		}
+		merged[key] = value
+	}
+	for key, value := range constructed {
+		merged[key] = value
+	}
+	return merged
+}

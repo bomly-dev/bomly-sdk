@@ -306,3 +306,67 @@ func TestNewDependencyNodeFromDeepCopiesLocations(t *testing.T) {
 		t.Errorf("location scope = %q, want the prototype's scopes deep-copied", node.Locations[0].Scopes[0])
 	}
 }
+
+// Constructing from coordinates does work of its own -- it relocates the
+// URL-valued evidence qualifiers into Origins (ADR-0033) and records
+// normalization provenance under the reserved prefix. Applying the prototype
+// on top of that must merge, not replace: overwriting lost a repository the
+// identity itself carried, and lost the breadcrumbs that say what
+// normalization changed.
+func TestNewDependencyNodeFromPreservesConstructorDerivedState(t *testing.T) {
+	fromPrototype, err := NewDependencyNodeFrom(DependencyNode{
+		Coordinates: Coordinates{
+			Ecosystem: EcosystemNPM,
+			PURL:      "pkg:npm/left-pad@1.3.0?repository_url=https://github.com/left-pad/left-pad",
+		},
+		Metadata: map[string]any{"npm": "producer value"},
+	})
+	if err != nil {
+		t.Fatalf("NewDependencyNodeFrom() error = %v", err)
+	}
+	if len(fromPrototype.Origins) != 1 ||
+		fromPrototype.Origins[0].Repository != "https://github.com/left-pad/left-pad" {
+		t.Fatalf("origins = %+v, want the evidence the identity carried", fromPrototype.Origins)
+	}
+	if fromPrototype.Metadata["npm"] != "producer value" {
+		t.Errorf("metadata = %+v, want the prototype's own entries kept", fromPrototype.Metadata)
+	}
+
+	// The provenance breadcrumbs match what the plain constructor records.
+	normalized, err := NewDependencyNodeFrom(DependencyNode{
+		Coordinates: Coordinates{Ecosystem: EcosystemNPM, Name: "Left-Pad", Version: "1.3.0"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	direct, err := NewDependencyNode(Coordinates{Ecosystem: EcosystemNPM, Name: "Left-Pad", Version: "1.3.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if normalized.Metadata[normMetadataOriginalNameKey] != direct.Metadata[normMetadataOriginalNameKey] {
+		t.Fatalf("normalization breadcrumbs = %+v, want what the constructor records: %+v",
+			normalized.Metadata, direct.Metadata)
+	}
+
+	// A prototype cannot overwrite a reserved key: that namespace is this
+	// project's, and a node claiming a normalization history it does not have
+	// is worse than one carrying none.
+	// A key the constructor does not itself write, so the guard is what keeps
+	// it out rather than the constructor's own value landing on top.
+	hijacked, err := NewDependencyNodeFrom(DependencyNode{
+		Coordinates: Coordinates{Ecosystem: EcosystemNPM, Name: "Left-Pad", Version: "1.3.0"},
+		Metadata: map[string]any{
+			normMetadataOriginalVersionKey: "fabricated",
+			"producer.note":                "kept",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, present := hijacked.Metadata[normMetadataOriginalVersionKey]; present {
+		t.Fatalf("a prototype wrote into the reserved namespace: %+v", hijacked.Metadata)
+	}
+	if hijacked.Metadata["producer.note"] != "kept" {
+		t.Fatalf("metadata = %+v, want a producer's unreserved entry kept", hijacked.Metadata)
+	}
+}

@@ -594,33 +594,41 @@ func MergeOrigins(existing, additions []DependencyOrigin) []DependencyOrigin {
 // genuinely different places both survive, because that disagreement is an
 // observable fact -- the shape of a dependency-confusion signal -- and not
 // something to resolve by picking one.
+//
+// Linear, in one indexing pass and one filtering pass. MergeOrigins runs while
+// decoding a dependency node from the plugin wire, where the origins array has
+// no item bound, so an all-pairs comparison turns a payload of tens of
+// thousands of distinct valid origins into hundreds of millions of
+// comparisons -- a hang the CLI would take on plugin- or repository-controlled
+// data.
 func dropSupersededOrigins(origins []DependencyOrigin) []DependencyOrigin {
 	if len(origins) < 2 {
 		return origins
 	}
-	kept := make([]DependencyOrigin, 0, len(origins))
-	for _, candidate := range origins {
-		superseded := false
-		for _, other := range origins {
-			if originSupersedes(other, candidate) {
-				superseded = true
-				break
+	// The places some entry has already pinned to a revision.
+	pinned := make(map[string]struct{}, len(origins))
+	for _, origin := range origins {
+		if origin.Revision != "" && origin.Repository != "" {
+			pinned[originPlaceKey(origin)] = struct{}{}
+		}
+	}
+	if len(pinned) == 0 {
+		return origins
+	}
+	kept := origins[:0]
+	for _, origin := range origins {
+		if origin.Revision == "" && origin.Repository != "" {
+			if _, superseded := pinned[originPlaceKey(origin)]; superseded {
+				continue
 			}
 		}
-		if !superseded {
-			kept = append(kept, candidate)
-		}
+		kept = append(kept, origin)
 	}
 	return kept
 }
 
-// originSupersedes reports whether refined is the same location as candidate,
-// pinned to a revision candidate does not state.
-func originSupersedes(refined, candidate DependencyOrigin) bool {
-	if candidate.Revision != "" || candidate.Repository == "" {
-		return false
-	}
-	return refined.Revision != "" &&
-		refined.Repository == candidate.Repository &&
-		refined.ArtifactURL == candidate.ArtifactURL
+// originPlaceKey identifies the location an origin describes, without its
+// precision: two origins share a key when one can refine the other.
+func originPlaceKey(origin DependencyOrigin) string {
+	return origin.Repository + "\x00" + origin.ArtifactURL
 }

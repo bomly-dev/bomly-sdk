@@ -1,6 +1,10 @@
 package sdk
 
-import "testing"
+import (
+	"strconv"
+	"testing"
+	"time"
+)
 
 // A detector that reads a manifest and then a lockfile asserts the same
 // repository twice: once bare, once pinned. Publishing both leaves a
@@ -50,5 +54,32 @@ func TestMergeOriginsKeepsGenuinelyDifferentPlaces(t *testing.T) {
 	bare := DependencyOrigin{Repository: "https://github.com/a/helper"}
 	if merged := MergeOrigins([]DependencyOrigin{bare}, nil); len(merged) != 1 {
 		t.Fatalf("origins = %+v, want the unrefined repository kept", merged)
+	}
+}
+
+// MergeOrigins runs while decoding a dependency node from the plugin wire,
+// where the origins array has no item bound. An all-pairs supersession scan
+// turned a payload of tens of thousands of distinct valid origins into
+// hundreds of millions of comparisons -- a hang the CLI would take on
+// plugin- or repository-controlled data.
+func TestMergeOriginsStaysLinearOnALargePayload(t *testing.T) {
+	const count = 40000
+	origins := make([]DependencyOrigin, 0, count)
+	for i := range count {
+		origins = append(origins, DependencyOrigin{
+			Repository: "https://github.com/owner/repo" + strconv.Itoa(i),
+			Revision:   "aaaabbbbccccddddeeeeffff0000111122223333",
+		})
+	}
+
+	done := make(chan int, 1)
+	go func() { done <- len(MergeOrigins(origins, nil)) }()
+	select {
+	case kept := <-done:
+		if kept != count {
+			t.Fatalf("kept %d of %d origins; distinct places must all survive", kept, count)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("MergeOrigins did not finish: supersession is scanning all pairs")
 	}
 }

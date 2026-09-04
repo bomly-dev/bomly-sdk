@@ -251,7 +251,11 @@ func NewDependencyNodeFrom(proto DependencyNode) (*DependencyNode, error) {
 	node.Copyright = proto.Copyright
 	node.FoundBy = proto.FoundBy
 	node.ResolvedURL = proto.ResolvedURL
-	node.Origins = MergeOrigins(nil, proto.Origins)
+	// Merged onto what the constructor produced, not over it. Constructing
+	// from coordinates relocates the URL-valued evidence qualifiers into
+	// Origins (ADR-0033), and replacing the result with the prototype's list
+	// discarded a repository the identity itself carried.
+	node.Origins = MergeOrigins(node.Origins, proto.Origins)
 	node.Licenses = MergeLicenses(nil, proto.Licenses)
 	node.Description = proto.Description
 	node.Homepage = proto.Homepage
@@ -261,7 +265,12 @@ func NewDependencyNodeFrom(proto DependencyNode) (*DependencyNode, error) {
 	node.Supplier = proto.Supplier.Clone()
 	node.Originator = proto.Originator.Clone()
 	node.ExternalReferences = MergeExternalReferences(nil, proto.ExternalReferences)
-	node.Metadata = cloneAnyMap(proto.Metadata)
+	// Same for metadata: normalization records its provenance breadcrumbs
+	// under the reserved prefix, and overwriting the map lost them. A
+	// prototype key wins for anything else, so a producer's own metadata
+	// still lands; a reserved key does not, because that namespace is this
+	// project's and the constructor is the one writing it.
+	node.Metadata = mergeMetadataPreservingReserved(node.Metadata, proto.Metadata)
 	node.Matched = proto.Matched
 	// PackageRef is derived, not carried: it names the package this node
 	// matched, which is the package its identity encodes. Copying a
