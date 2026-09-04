@@ -108,6 +108,7 @@ func TestNewDependencyNodeFromCarriesEveryStatedField(t *testing.T) {
 		ResolvedURL:  "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz",
 		Description:  "pads a string",
 		Homepage:     "https://example.com/left-pad",
+		Supplier:     &Contact{Kind: ContactKindOrganization, Name: "Acme"},
 		Metadata:     map[string]any{"npm": "yes"},
 		Matched:      true,
 		PackageRef:   "pkg:npm/left-pad@1.3.0",
@@ -141,11 +142,36 @@ func TestNewDependencyNodeFromCarriesEveryStatedField(t *testing.T) {
 		}
 	}
 
-	// Slices are copied, not aliased: a producer that reuses a prototype must
-	// not be able to mutate a node it already built.
+	// Nothing aliases the prototype: a producer that reuses one -- which is
+	// the reason this constructor takes one at all -- must not be able to
+	// mutate a node it already built.
 	proto.Digests[0].Value = "mutated"
 	if node.Digests[0].Value != "abc" {
 		t.Error("digests alias the prototype's slice")
+	}
+	proto.Metadata["npm"] = "mutated"
+	if node.Metadata["npm"] != "yes" {
+		t.Error("metadata aliases the prototype's map")
+	}
+	if proto.Supplier != nil && node.Supplier == proto.Supplier {
+		t.Error("supplier aliases the prototype's contact")
+	}
+}
+
+// PackageRef names the package a node matched, and a node's identity is that
+// package's URL: the two cannot disagree. Carrying a prototype's stale value
+// pointed the node at a different package, which is the entry enrichment then
+// reads.
+func TestNewDependencyNodeFromDerivesPackageRefFromTheIdentity(t *testing.T) {
+	node, err := NewDependencyNodeFrom(DependencyNode{
+		Coordinates: Coordinates{Ecosystem: EcosystemNPM, Name: "left-pad", Version: "1.3.0"},
+		PackageRef:  "pkg:npm/some-other-package@9.9.9",
+	})
+	if err != nil {
+		t.Fatalf("NewDependencyNodeFrom() error = %v", err)
+	}
+	if node.PackageRef != node.NodeID() {
+		t.Fatalf("PackageRef = %q, want the node identity %q", node.PackageRef, node.NodeID())
 	}
 }
 
@@ -162,8 +188,8 @@ func TestIdentityFallsBackToGenericWithAWarning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDependencyNode() error = %v, want a generic identity instead", err)
 	}
-	if node.NodeID() != "pkg:generic/internal-tools@2.0.0" {
-		t.Fatalf("identity = %q, want a generic package URL", node.NodeID())
+	if node.NodeID() != "pkg:generic/swift/internal-tools@2.0.0" {
+		t.Fatalf("identity = %q, want a generic package URL namespaced by the failed type", node.NodeID())
 	}
 	if node.Ecosystem != EcosystemSwift {
 		t.Fatalf("ecosystem = %q, want it kept on the coordinates", node.Ecosystem)
@@ -176,6 +202,32 @@ func TestIdentityFallsBackToGenericWithAWarning(t *testing.T) {
 	}
 	if !warned {
 		t.Fatalf("no generic-identity warning; warnings = %+v", node.NodeWarnings())
+	}
+
+	// A bare Go module fails the same way -- the golang type requires a
+	// namespace too -- and must not land on the same identity. Two
+	// ecosystems folding into one node is worse than the loose type this
+	// fallback accepts, so the failed type leads the namespace.
+	goPackage, err := NewDependencyNode(Coordinates{
+		Ecosystem: EcosystemGo, Name: "internal-tools", Version: "2.0.0",
+	})
+	if err != nil {
+		t.Fatalf("NewDependencyNode(go) error = %v, want a generic identity instead", err)
+	}
+	if goPackage.NodeID() != "pkg:generic/golang/internal-tools@2.0.0" {
+		t.Fatalf("go identity = %q, want the failed type in the namespace", goPackage.NodeID())
+	}
+	if goPackage.NodeID() == node.NodeID() {
+		t.Fatalf("two ecosystems folded onto one generic identity: %q", node.NodeID())
+	}
+
+	// A stated package URL is an assertion, not a hint: it is refused, never
+	// replaced by a looser one the caller did not write.
+	if _, err := NewDependencyNode(Coordinates{
+		Ecosystem: EcosystemGo, Name: "internal-tools", Version: "2.0.0",
+		PURL: "pkg:golang/internal-tools@2.0.0",
+	}); err == nil {
+		t.Fatal("a stated but invalid package URL was silently replaced with a generic one")
 	}
 
 	// An ecosystem whose type profile is satisfied is untouched.

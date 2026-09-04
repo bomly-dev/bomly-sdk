@@ -252,12 +252,19 @@ func NewDependencyNodeFrom(proto DependencyNode) (*DependencyNode, error) {
 	node.Licenses = MergeLicenses(nil, proto.Licenses)
 	node.Description = proto.Description
 	node.Homepage = proto.Homepage
-	node.Supplier = proto.Supplier
-	node.Originator = proto.Originator
+	// Cloned, not aliased, like Clone does: a producer that reuses a
+	// prototype across packages -- which is the whole reason this takes one
+	// -- would otherwise mutate nodes it already built.
+	node.Supplier = proto.Supplier.Clone()
+	node.Originator = proto.Originator.Clone()
 	node.ExternalReferences = MergeExternalReferences(nil, proto.ExternalReferences)
-	node.Metadata = proto.Metadata
+	node.Metadata = cloneAnyMap(proto.Metadata)
 	node.Matched = proto.Matched
-	node.PackageRef = proto.PackageRef
+	// PackageRef is derived, not carried: it names the package this node
+	// matched, which is the package its identity encodes. Copying a
+	// prototype's value lets the two disagree, and a node whose PackageRef
+	// points at a different package is enriched from the wrong entry.
+	node.PackageRef = node.NodeID()
 	return node, nil
 }
 
@@ -277,23 +284,42 @@ func newDependencyNode(coords Coordinates, rawPURL string) (*DependencyNode, err
 	if minted == "" {
 		minted = scratch.CanonicalPURL()
 	}
-	genericIdentity := false
-	if minted == "" {
+	// A stated package URL is an assertion: honored or refused, never quietly
+	// replaced by a looser one the caller did not write. Only coordinates
+	// that assert none may fall back.
+	stated := strings.TrimSpace(coords.PURL) != "" || strings.TrimSpace(rawPURL) != ""
+
+	var (
+		identity        dependencyIdentity
+		evidence        []purlkit.Qualifier
+		err             error
+		genericIdentity bool
+	)
+	if minted != "" {
+		identity, evidence, err = dependencyIdentityFromPURL(minted)
+	} else {
+		err = fmt.Errorf("no package URL is derivable from %q", coords.QualifiedName())
+	}
+	if err != nil && !stated {
 		// The ecosystem's own package URL type could not express these
 		// coordinates. Some type profiles require more than a resolver gives:
-		// a SwiftPM registry pin names a package by identity alone, and the
+		// a SwiftPM registry pin names a package by identity alone and the
 		// swift type requires a namespace; a bare Go module name has none
 		// either. Fall back to a generic identity rather than refusing a
 		// package that is genuinely installed -- and record that it happened,
 		// so the looseness is observable rather than silent.
-		if minted = scratch.GenericPURL(); minted != "" {
-			genericIdentity = true
+		//
+		// Both failure shapes reach here. A type whose profile rejects the
+		// parts outright mints nothing; one that mints a string the profile
+		// then refuses fails the parse above. Handling only the first left a
+		// bare Go module erroring where a bare Swift package fell back.
+		if fallback := scratch.GenericPURL(); fallback != "" {
+			if fallbackIdentity, fallbackEvidence, fallbackErr := dependencyIdentityFromPURL(fallback); fallbackErr == nil {
+				identity, evidence, err = fallbackIdentity, fallbackEvidence, nil
+				genericIdentity = true
+			}
 		}
 	}
-	if minted == "" {
-		return nil, fmt.Errorf("dependency node: no package URL is derivable from %q", coords.QualifiedName())
-	}
-	identity, evidence, err := dependencyIdentityFromPURL(minted)
 	if err != nil {
 		return nil, fmt.Errorf("dependency node: %w", err)
 	}

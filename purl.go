@@ -161,6 +161,14 @@ func CanonicalPackageURLFromParts(existingPURL string, ecosystem Ecosystem, pack
 // generic URL would make every caller unable to tell the two apart. Node
 // construction is the only place that reaches for this, and it records a
 // warning when it does.
+//
+// The namespace leads with the type that could not express the package. Two
+// ecosystems whose profiles both reject otherwise identical coordinates would
+// otherwise mint the same identity -- a bare Swift "internal-tools@2.0.0" and
+// a bare Go one both becoming pkg:generic/internal-tools@2.0.0 -- and folding
+// two distinct packages into one node is a worse outcome than the loose type
+// this fallback already accepts. A degraded identity still has to be an
+// identity.
 func (i Coordinates) GenericPURL() string {
 	if i.Type == PackageTypeManifest {
 		return ""
@@ -169,7 +177,14 @@ func (i Coordinates) GenericPURL() string {
 	if name == "" {
 		return ""
 	}
-	return BuildPackageURL("generic", strings.TrimSpace(i.Org), name, i.Version)
+	namespace := strings.TrimSpace(PackageURLTypeForValues(i.Ecosystem, i.PackageManager, i.Type))
+	if namespace == "" {
+		return ""
+	}
+	if org := strings.TrimSpace(i.Org); org != "" {
+		namespace += "/" + org
+	}
+	return BuildPackageURL("generic", namespace, name, i.Version)
 }
 
 // CanonicalPURL returns the canonical package URL for the identity.

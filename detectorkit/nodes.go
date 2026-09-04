@@ -66,15 +66,18 @@ func PromoteToModule(g *sdk.Graph, nodeID, manifestPath string) (string, error) 
 		return nodeID, nil
 	}
 
-	var locations []sdk.PackageLocation
+	var (
+		locations []sdk.PackageLocation
+		metadata  map[string]any
+	)
 	switch typed := existing.(type) {
 	case *sdk.DependencyNode:
-		locations = typed.Locations
+		locations, metadata = typed.Locations, typed.Metadata
 	case *sdk.ModuleNode:
 		if typed.DeclaringManifestPath == manifestPath {
 			return nodeID, nil
 		}
-		locations = typed.Locations
+		locations, metadata = typed.Locations, typed.Metadata
 	default:
 		// A manifest node is already structural and declares nothing.
 		return nodeID, nil
@@ -92,17 +95,17 @@ func PromoteToModule(g *sdk.Graph, nodeID, manifestPath string) (string, error) 
 		return nodeID, nil
 	}
 	module.Locations = append([]sdk.PackageLocation(nil), locations...)
+	// Everything the detector learned before it discovered ownership. Copying
+	// only locations dropped the rest on the floor: RemoveNode below is
+	// final, and a module node holds metadata just as a dependency node does.
+	module.Metadata = cloneMetadata(metadata)
 
-	parents, _ := g.Dependents(nodeID)
-	children, _ := g.DirectDependencies(nodeID)
-	parentIDs := make([]string, 0, len(parents))
-	for _, parent := range parents {
-		parentIDs = append(parentIDs, parent.NodeID())
-	}
-	childIDs := make([]string, 0, len(children))
-	for _, child := range children {
-		childIDs = append(childIDs, child.NodeID())
-	}
+	// Edge kinds travel with the edges. An edge created with AddTypedEdge
+	// carries a kind that need not match what the node kinds derive, and
+	// re-adding it with AddEdge would recompute -- turning an explicit
+	// depends-on into a describes the moment its target became a module.
+	parents := incidentEdges(g, nodeID, true)
+	children := incidentEdges(g, nodeID, false)
 
 	g.RemoveNode(nodeID)
 	surviving, err := g.InsertNode(module)
@@ -110,27 +113,67 @@ func PromoteToModule(g *sdk.Graph, nodeID, manifestPath string) (string, error) 
 		return nodeID, fmt.Errorf("insert promoted module %q: %w", module.NodeID(), err)
 	}
 	survivingID := surviving.NodeID()
-	for _, parentID := range parentIDs {
-		if err := reattach(g, parentID, survivingID); err != nil {
+	for _, edge := range parents {
+		if err := reattach(g, edge.id, survivingID, edge.kind); err != nil {
 			return survivingID, err
 		}
 	}
-	for _, childID := range childIDs {
-		if err := reattach(g, survivingID, childID); err != nil {
+	for _, edge := range children {
+		if err := reattach(g, survivingID, edge.id, edge.kind); err != nil {
 			return survivingID, err
 		}
 	}
 	return survivingID, nil
 }
 
-func reattach(g *sdk.Graph, fromID, toID string) error {
+// incidentEdge is one edge touching a node: the node at its other end, and
+// the kind the edge was recorded with.
+type incidentEdge struct {
+	id   string
+	kind sdk.EdgeKind
+}
+
+// incidentEdges collects the edges into (inbound) or out of a node, with
+// their kinds, before the node is removed.
+func incidentEdges(g *sdk.Graph, nodeID string, inbound bool) []incidentEdge {
+	var neighbours []sdk.GraphNode
+	if inbound {
+		neighbours, _ = g.Dependents(nodeID)
+	} else {
+		neighbours, _ = g.DirectDependencies(nodeID)
+	}
+	edges := make([]incidentEdge, 0, len(neighbours))
+	for _, neighbour := range neighbours {
+		kind := g.EdgeKindOf(nodeID, neighbour.NodeID())
+		if inbound {
+			kind = g.EdgeKindOf(neighbour.NodeID(), nodeID)
+		}
+		edges = append(edges, incidentEdge{id: neighbour.NodeID(), kind: kind})
+	}
+	return edges
+}
+
+func reattach(g *sdk.Graph, fromID, toID string, kind sdk.EdgeKind) error {
 	if fromID == toID {
 		return nil
 	}
-	if err := g.AddEdge(fromID, toID); err != nil && !errors.Is(err, sdk.ErrSelfDependency) {
+	if err := g.AddTypedEdge(fromID, toID, kind); err != nil && !errors.Is(err, sdk.ErrSelfDependency) {
 		return fmt.Errorf("re-point %q -> %q: %w", fromID, toID, err)
 	}
 	return nil
+}
+
+// cloneMetadata copies a metadata map one level deep, so the promoted node
+// does not alias the map the removed node handed over.
+func cloneMetadata(in map[string]any) map[string]any {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 // PropagateScopes seeds the scopes of a root's direct dependencies and
@@ -184,11 +227,20 @@ func PropagateScopes(g *sdk.Graph, rootID string, seed func(*sdk.DependencyNode)
 			if child.NodeID() == rootID {
 				continue
 			}
-			next := sdk.MergeScope(propagated[child.NodeID()], scope)
-			// Stop when neither the propagated value nor the node's own scope
-			// would change: without this the queue revisits every cycle
-			// forever.
-			if next == propagated[child.NodeID()] && child.PrimaryScope() == next {
+			// The node's own scope is part of what propagates onward: a
+			// package that already carries runtime is reachable at runtime,
+			// whichever path found it, and its children inherit that.
+			//
+			// Folding it in is also what makes the walk terminate. The
+			// previous condition also required the node's primary scope to
+			// equal the propagated value, and those two can disagree forever
+			// -- a node marked runtime by its detector, reached only on a
+			// development path, never satisfies it -- so a cycle through such
+			// a node re-enqueued it until the process was killed. Merging is
+			// monotone over a finite vocabulary, so comparing the propagated
+			// value alone always settles.
+			next := sdk.MergeScope(sdk.MergeScope(propagated[child.NodeID()], scope), child.PrimaryScope())
+			if next == propagated[child.NodeID()] {
 				continue
 			}
 			propagated[child.NodeID()] = next

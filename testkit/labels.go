@@ -145,13 +145,14 @@ func nodeMatchesLabel(node sdk.GraphNode, name, version string, loose bool) bool
 	if !ok {
 		return false
 	}
+	// Versions compare exactly, in both passes. A case-insensitive fallback
+	// would let a fixture asking for Maven "1.0-snapshot" match a graph's
+	// "1.0-SNAPSHOT" -- two different versions, since Maven versions are case
+	// sensitive, so the test would then assert against the wrong dependency.
+	// Nothing needs the fallback: normalization no longer folds a version's
+	// case, so a label written as the manifest spelled it matches as written.
 	if version != "" && coords.Version != version {
-		// Coordinates are normalized at construction, and some ecosystems
-		// canonicalize a version's case, so a label written as the manifest
-		// spelled it need not match exactly. The loose pass accepts it.
-		if !loose || !strings.EqualFold(coords.Version, version) {
-			return false
-		}
+		return false
 	}
 	actual := []string{coords.Name, coords.EcosystemName(), coords.DisplayName()}
 	for _, want := range labelSpellings(name, loose) {

@@ -1,6 +1,7 @@
 package sdk
 
 import (
+	"context"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // packageurl-go decides what casing a package URL's version canonicalizes to,
@@ -141,7 +143,9 @@ func clauseLowercases(clause *ast.CaseClause) bool {
 // cache, so the test reads the version this module actually compiles against.
 func packageURLModuleDir(t *testing.T) string {
 	t.Helper()
-	out, err := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "github.com/package-url/packageurl-go").Output()
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "go", "list", "-m", "-f", "{{.Dir}}", "github.com/package-url/packageurl-go").Output()
 	if err != nil {
 		t.Skipf("packageurl-go source is unavailable (module cache not populated): %v", err)
 	}

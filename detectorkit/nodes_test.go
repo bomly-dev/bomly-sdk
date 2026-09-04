@@ -2,6 +2,7 @@ package detectorkit_test
 
 import (
 	"testing"
+	"time"
 
 	sdk "github.com/bomly-dev/bomly-sdk"
 	"github.com/bomly-dev/bomly-sdk/detectorkit"
@@ -142,7 +143,12 @@ func TestPropagateScopesPrefersRuntimeAndTerminatesOnCycles(t *testing.T) {
 	runtime := testkit.MustDependencyCoords(t, sdk.Coordinates{Ecosystem: sdk.EcosystemPython, Name: "requests", Version: "2.31.0"})
 	shared := testkit.MustDependencyCoords(t, sdk.Coordinates{Ecosystem: sdk.EcosystemPython, Name: "urllib3", Version: "2.2.0"})
 	cyclic := testkit.MustDependencyCoords(t, sdk.Coordinates{Ecosystem: sdk.EcosystemPython, Name: "idna", Version: "3.6"})
-	for _, node := range []sdk.GraphNode{root, dev, runtime, shared, cyclic} {
+	// Reachable only through the development dependency. It is the node that
+	// makes this test mean something: every other package here ends up
+	// runtime, which the closing default would produce on its own even if
+	// propagation never ran.
+	devOnly := testkit.MustDependencyCoords(t, sdk.Coordinates{Ecosystem: sdk.EcosystemPython, Name: "iniconfig", Version: "2.0.0"})
+	for _, node := range []sdk.GraphNode{root, dev, runtime, shared, cyclic, devOnly} {
 		if err := g.AddNode(node); err != nil {
 			t.Fatal(err)
 		}
@@ -151,6 +157,7 @@ func TestPropagateScopesPrefersRuntimeAndTerminatesOnCycles(t *testing.T) {
 		{root.NodeID(), dev.NodeID()},
 		{root.NodeID(), runtime.NodeID()},
 		{dev.NodeID(), shared.NodeID()},
+		{dev.NodeID(), devOnly.NodeID()},
 		{runtime.NodeID(), shared.NodeID()},
 		{shared.NodeID(), cyclic.NodeID()},
 		{cyclic.NodeID(), shared.NodeID()},
@@ -167,6 +174,10 @@ func TestPropagateScopesPrefersRuntimeAndTerminatesOnCycles(t *testing.T) {
 
 	if dev.PrimaryScope() != sdk.ScopeDevelopment {
 		t.Fatalf("pytest scope = %q, want development", dev.PrimaryScope())
+	}
+	if devOnly.PrimaryScope() != sdk.ScopeDevelopment {
+		t.Fatalf("iniconfig scope = %q, want development carried down the only path that reaches it",
+			devOnly.PrimaryScope())
 	}
 	if shared.PrimaryScope() != sdk.ScopeRuntime {
 		t.Fatalf("urllib3 scope = %q, want runtime to win over the development path", shared.PrimaryScope())
@@ -206,4 +217,123 @@ func artifactOrigins(url string) []sdk.DependencyOrigin {
 		return nil
 	}
 	return []sdk.DependencyOrigin{*origin}
+}
+
+// A node the detector already marked runtime, reached only on a development
+// path, inside a cycle: the walk used to re-enqueue it forever.
+//
+// The old termination test required the propagated value *and* the node's own
+// primary scope to settle, and those two never agreed here -- runtime on the
+// node, development on the path -- so the queue never drained and the process
+// hung rather than failed. The topology is small and specific because that is
+// what it takes: a plain cycle terminates either way.
+func TestPropagateScopesTerminatesWhenANodeOutranksItsPath(t *testing.T) {
+	g := sdk.New()
+	root := testkit.MustModuleNode(t, "pyproject.toml", sdk.Coordinates{
+		Ecosystem: sdk.EcosystemPython, Name: "app", Version: "1.0.0",
+	})
+	dev := testkit.MustDependencyCoords(t, sdk.Coordinates{Ecosystem: sdk.EcosystemPython, Name: "pytest", Version: "8.0.0"})
+	first := testkit.MustDependencyCoords(t, sdk.Coordinates{Ecosystem: sdk.EcosystemPython, Name: "cee", Version: "1.0.0"})
+	second := testkit.MustDependencyCoords(t, sdk.Coordinates{Ecosystem: sdk.EcosystemPython, Name: "dee", Version: "1.0.0"})
+	// Marked runtime by the detector, and reachable only through the
+	// development dependency.
+	first.AddScope(sdk.ScopeRuntime)
+	second.AddScope(sdk.ScopeRuntime)
+	for _, node := range []sdk.GraphNode{root, dev, first, second} {
+		if err := g.AddNode(node); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, edge := range [][2]string{
+		{root.NodeID(), dev.NodeID()},
+		{dev.NodeID(), first.NodeID()},
+		{first.NodeID(), second.NodeID()},
+		{second.NodeID(), first.NodeID()},
+	} {
+		if err := g.AddEdge(edge[0], edge[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		detectorkit.PropagateScopes(g, root.NodeID(), func(*sdk.DependencyNode) sdk.Scope {
+			return sdk.ScopeDevelopment
+		})
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("PropagateScopes did not terminate: a node outranking its path re-enqueued forever")
+	}
+
+	// And the stronger scope still wins: a package marked runtime is
+	// reachable at runtime whichever path found it.
+	if first.PrimaryScope() != sdk.ScopeRuntime || second.PrimaryScope() != sdk.ScopeRuntime {
+		t.Fatalf("scopes = %q and %q, want runtime to survive the development path",
+			first.PrimaryScope(), second.PrimaryScope())
+	}
+}
+
+// Promotion replaces a node, and RemoveNode is final: anything the detector
+// learned before it discovered ownership has to travel across. Locations and
+// metadata are what a dependency and a module both hold.
+func TestPromoteToModuleCarriesLocationsAndMetadata(t *testing.T) {
+	g := sdk.New()
+	root := testkit.MustDependencyCoords(t, sdk.Coordinates{
+		Ecosystem: sdk.EcosystemMaven, Org: "com.acme", Name: "app", Version: "1.0.0",
+	})
+	root.Locations = []sdk.PackageLocation{{RealPath: "app/pom.xml", AccessPath: "app/pom.xml"}}
+	root.Metadata = map[string]any{"maven": "reactor"}
+	if err := g.AddNode(root); err != nil {
+		t.Fatal(err)
+	}
+
+	promotedID, err := detectorkit.PromoteToModule(g, root.NodeID(), "app/pom.xml")
+	if err != nil {
+		t.Fatalf("PromoteToModule() error = %v", err)
+	}
+	promoted, ok := g.Node(promotedID)
+	if !ok {
+		t.Fatalf("no node at %q after promotion", promotedID)
+	}
+	module, ok := sdk.AsModuleNode(promoted)
+	if !ok {
+		t.Fatalf("promoted node is a %s node, want a module", promoted.Kind())
+	}
+	if len(module.Locations) != 1 || module.Locations[0].RealPath != "app/pom.xml" {
+		t.Errorf("locations = %+v, want the ones the dependency carried", module.Locations)
+	}
+	if module.Metadata["maven"] != "reactor" {
+		t.Errorf("metadata = %+v, want what the detector recorded before promotion", module.Metadata)
+	}
+}
+
+// An edge's kind is recorded on the edge, not derived on read. Re-adding a
+// promoted node's edges without it turned an explicit depends-on into a
+// describes the moment its target became a module, changing the relationship
+// the graph exports.
+func TestPromoteToModuleKeepsExplicitEdgeKinds(t *testing.T) {
+	g := sdk.New()
+	manifest := testkit.MustManifestNode(t, "pom.xml", sdk.ManifestKindPomXML)
+	dependency := testkit.MustDependencyCoords(t, sdk.Coordinates{
+		Ecosystem: sdk.EcosystemMaven, Org: "com.acme", Name: "app", Version: "1.0.0",
+	})
+	for _, node := range []sdk.GraphNode{manifest, dependency} {
+		if err := g.AddNode(node); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := g.AddTypedEdge(manifest.NodeID(), dependency.NodeID(), sdk.EdgeKindDependsOn); err != nil {
+		t.Fatal(err)
+	}
+
+	promotedID, err := detectorkit.PromoteToModule(g, dependency.NodeID(), "app/pom.xml")
+	if err != nil {
+		t.Fatalf("PromoteToModule() error = %v", err)
+	}
+	if got := g.EdgeKindOf(manifest.NodeID(), promotedID); got != sdk.EdgeKindDependsOn {
+		t.Fatalf("edge kind = %q, want the depends-on the edge was recorded with", got)
+	}
 }
