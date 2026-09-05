@@ -92,7 +92,8 @@ branch.
   before adding any dependency.
 - Kits are adapters around established libraries, not replacement
   implementations: go-spdx owns what an SPDX expression means, validates
-  as, and normalizes to; packageurl-go owns PURL parsing and rendering.
+  as, and normalizes to; packageurl-go owns PURL parsing and rendering;
+  go-pep440-version owns what a PyPI version is and how it canonicalizes.
   When review proposes sharpening a hand-written heuristic, replace it
   with library delegation instead — and keep unavoidable resource bounds
   dumb (bytes and counts), frozen once pinned. Delegate grammar parsing, validation, normalization,

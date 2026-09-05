@@ -26,6 +26,14 @@ var boundedImports = []struct {
 		allowed: map[string]string{},
 	},
 	{
+		// PEP 440 canonical versions are part of what a pypi identity is,
+		// and purlkit's normalization step is where every identity passes;
+		// a second caller would fold versions on one path and not another.
+		module:  "github.com/aquasecurity/go-pep440-version",
+		kitDir:  "purlkit",
+		allowed: map[string]string{},
+	},
+	{
 		// The SPDX expression parser panics on some untrusted inputs;
 		// spdxkit contains those panics, so no other package may reach the
 		// parser directly.

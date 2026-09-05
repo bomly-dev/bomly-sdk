@@ -216,6 +216,12 @@ func normNormalizeSlashPath(value string) string {
 // TestVersionCasingMatchesPackageURLLibrary reads the library's own source and
 // fails if that set grows, so a change upstream is a test failure rather than
 // a silent divergence.
+//
+// The one rule layered on top is PyPI's: PEP 440 makes "1.0.0RC1" and
+// "1.0.0rc1" one release, and the purl specification says nothing about it.
+// purlkit applies that inside its normalization step, delegated to
+// go-pep440-version, so it too reaches the coordinates through the canonical
+// package URL rather than through a rule written here.
 
 func normCollapseRepeated(value string, separator rune) string {
 	if value == "" {

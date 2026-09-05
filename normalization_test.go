@@ -11,7 +11,7 @@ func TestNormalizePackageIdentityPython(t *testing.T) {
 	// NormalizeDependencyIdentity is gone: NormalizeCoordinates returns the
 	// applied rules, and the constructors record the provenance breadcrumbs.
 	applied := NormalizeCoordinates(&coords)
-	if !reflect.DeepEqual(applied, []string{"name"}) {
+	if !reflect.DeepEqual(applied, []string{"name", "version"}) {
 		t.Fatalf("NormalizeCoordinates() applied = %#v", applied)
 	}
 
@@ -19,13 +19,17 @@ func TestNormalizePackageIdentityPython(t *testing.T) {
 	if pkg.Name != "requests-toolbelt" {
 		normReturnNameMismatch(t, pkg.Name, "requests-toolbelt")
 	}
-	// The version keeps the spelling the manifest used. Case folding a
-	// version is packageurl-go's call, per type, and it makes it for
-	// huggingface only -- see TestVersionCasingMatchesPackageURLLibrary.
-	if pkg.Version != "1.0.0RC1" {
-		normReturnNameMismatch(t, pkg.Version, "1.0.0RC1")
+	// The version takes its PEP 440 canonical form: PyPI holds "1.0.0RC1"
+	// and "1.0.0rc1" as one release, so the identity does too. The fold is
+	// pypi's alone -- see TestPyPIVersionFoldsToOneIdentity -- and the
+	// spelling the manifest used survives in the provenance breadcrumb.
+	if pkg.Version != "1.0.0rc1" {
+		normReturnNameMismatch(t, pkg.Version, "1.0.0rc1")
 	}
-	normAssertAppliedMetadata(t, pkg.Metadata, []string{"name"})
+	normAssertAppliedMetadata(t, pkg.Metadata, []string{"name", "version"})
+	if got := pkg.Metadata[normMetadataOriginalVersionKey]; got != "1.0.0RC1" {
+		t.Fatalf("original version breadcrumb = %v, want the manifest's spelling", got)
+	}
 }
 
 func TestNormalizePackageIdentityRust(t *testing.T) {
