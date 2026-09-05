@@ -65,7 +65,7 @@ func mergeMetadataPreservingReserved(constructed, caller map[string]any) map[str
 	if len(constructed) == 0 && len(caller) == 0 {
 		return nil
 	}
-	merged := make(map[string]any, len(constructed)+len(caller))
+	merged := make(map[string]any, mergeCapacity(len(constructed), len(caller)))
 	for key, value := range caller {
 		if IsReservedMetadataKey(key) {
 			continue
