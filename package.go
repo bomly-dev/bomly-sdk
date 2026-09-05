@@ -44,23 +44,19 @@ func (t PackageType) String() string { return string(t) }
 const maxVocabularyTokenLength = 64
 
 // maxLicenseSourceLength bounds a license source. It is a component name, not
-// a vocabulary token, so it takes the same allowance a contact name does
-// rather than the tighter token limit -- a component descriptor puts no length
-// on its name, and a bound that rejected a valid one would erase provenance
-// rather than protect anything.
+// a vocabulary token, so it is the component-name bound by reference: every
+// name that validates as a component survives here, and a bound that rejected
+// a valid one would erase provenance rather than protect anything. It used to
+// be the contact-name allowance instead, which happened to be the same number
+// while descriptor validation put no length on a name at all -- so a 257-byte
+// matcher was a valid component whose source this erased (#32). Tying the two
+// by name rather than by value is what keeps them from drifting again.
 //
-// The domains are still not identical, and that is deliberate.
-// ValidateMatcherDescriptor asks only that a name be non-blank, so a
-// 257-byte name is a valid component whose source this erases. Closing that
-// properly means bounding the name where the contract lives -- descriptor
-// validation -- which would reject plugins that validate today and is not a
-// patch release's change to make. Filed as bomly-dev/bomly-sdk#32.
-//
-// Removing the bound instead is the wrong direction: this value arrives on an
-// untrusted wire and is written into published documents, and an unbounded
-// field there is worth more than the theoretical matcher whose name runs past
-// 256 bytes. The bound is a resource limit and stays a dumb one.
-const maxLicenseSourceLength = maxContactNameLength
+// The bound itself stays: this value arrives on an untrusted wire and is
+// written into published documents, and an unbounded field there costs more
+// than any name a component would carry. It is a resource limit and stays a
+// dumb one.
+const maxLicenseSourceLength = maxComponentNameLength
 
 // LicenseType identifies license provenance: who is making the claim. Both
 // SBOM formats draw the same distinction -- SPDX as licenseDeclared versus
@@ -248,11 +244,11 @@ func (l PackageLicense) Normalized() (PackageLicense, bool) {
 	if licenseType, err := ParseLicenseType(string(l.Type)); err == nil {
 		normalized.Type = licenseType
 	}
-	// A source is a component name written into published output. Its domain
-	// is therefore the component-name domain -- descriptor validation asks
-	// only that a name be non-blank -- narrowed by what publication requires:
-	// valid UTF-8, no control characters (they would corrupt SPDX's
-	// line-oriented tag form), and a bound. Whitespace is legal in a name and
+	// A source is a component name written into published output, so its
+	// domain is the component-name domain descriptor validation enforces:
+	// bounded, valid UTF-8, no control characters (they would corrupt SPDX's
+	// line-oriented tag form). Re-checked here because a source arrives on
+	// the wire, not through a descriptor. Whitespace is legal in a name and
 	// is kept.
 	if source := strings.TrimSpace(l.Source); source != "" &&
 		len(source) <= maxLicenseSourceLength &&

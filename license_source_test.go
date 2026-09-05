@@ -6,10 +6,11 @@ import (
 )
 
 // TestLicenseSourceIsGated pins the source's domain. It is a component name,
-// and descriptor validation asks only that a name be non-blank -- so "My
-// Matcher" is a valid component and gating this as a single short token would
-// silently erase the provenance of a legitimately named matcher. What is
-// enforced is what publication needs.
+// and "My Matcher" is a valid component -- so gating this as a single short
+// token would silently erase the provenance of a legitimately named matcher.
+// What is enforced is what publication needs, which is the same domain
+// descriptor validation holds a name to (TestComponentNameIsBounded pins the
+// two agreeing).
 func TestLicenseSourceIsGated(t *testing.T) {
 	// Refused: a control character would corrupt SPDX's line-oriented tag
 	// form, and an unbounded value is not a name.
