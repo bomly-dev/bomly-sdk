@@ -408,11 +408,11 @@ func MergeLicenses(existing, additions []PackageLicense) []PackageLicense {
 	if len(existing) == 0 && len(additions) == 0 {
 		return nil
 	}
-	merged := make([]PackageLicense, 0, len(existing)+len(additions))
-	seen := make(map[string]int, len(existing)+len(additions))
+	merged := make([]PackageLicense, 0, mergeCapacity(len(existing), len(additions)))
+	seen := make(map[string]int, mergeCapacity(len(existing), len(additions)))
 	// textByRef records which text each surviving reference names, so a second
 	// claim reusing that reference for different terms can be spotted.
-	textByRef := make(map[string]string, len(existing)+len(additions))
+	textByRef := make(map[string]string, mergeCapacity(len(existing), len(additions)))
 	for _, group := range [][]PackageLicense{existing, additions} {
 		for _, license := range group {
 			normalized, ok := license.Normalized()

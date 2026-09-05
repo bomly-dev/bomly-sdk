@@ -67,8 +67,8 @@ func MergeFillGap[T comparable](current, next T, publishable func(T) bool) T {
 // Sorted because documents are built from these: two runs that found the same
 // members in a different order must produce the same bytes.
 func MergeUnion[T any](current, next []T, key func(T) string, publishable func(T) (T, bool)) []T {
-	seen := make(map[string]struct{}, len(current)+len(next))
-	merged := make([]T, 0, len(current)+len(next))
+	seen := make(map[string]struct{}, mergeCapacity(len(current), len(next)))
+	merged := make([]T, 0, mergeCapacity(len(current), len(next)))
 	for _, group := range [2][]T{current, next} {
 		for _, item := range group {
 			cleaned := item

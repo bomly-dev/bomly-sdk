@@ -1020,8 +1020,8 @@ func MergeExternalReferences(existing, additions []ExternalReference) []External
 	if len(existing) == 0 && len(additions) == 0 {
 		return nil
 	}
-	merged := make([]ExternalReference, 0, len(existing)+len(additions))
-	seen := make(map[string]int, len(existing)+len(additions))
+	merged := make([]ExternalReference, 0, mergeCapacity(len(existing), len(additions)))
+	seen := make(map[string]int, mergeCapacity(len(existing), len(additions)))
 	for _, group := range [][]ExternalReference{existing, additions} {
 		for _, reference := range group {
 			normalized, ok := reference.Normalized()

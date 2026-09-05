@@ -368,7 +368,7 @@ func mergeStringSet(existing, additions []string) []string {
 	if len(additions) == 0 {
 		return existing
 	}
-	seen := make(map[string]struct{}, len(existing)+len(additions))
+	seen := make(map[string]struct{}, mergeCapacity(len(existing), len(additions)))
 	for _, value := range existing {
 		seen[value] = struct{}{}
 	}
@@ -403,8 +403,8 @@ func mergeStringSet(existing, additions []string) []string {
 // rejected assertion it replaced. Filtering here, where digest slices are
 // assembled, means every path that builds one is covered by the same rule.
 func mergeDigestSet(existing, additions []Digest) []Digest {
-	merged := make([]Digest, 0, len(existing)+len(additions))
-	seen := make(map[Digest]struct{}, len(existing)+len(additions))
+	merged := make([]Digest, 0, mergeCapacity(len(existing), len(additions)))
+	seen := make(map[Digest]struct{}, mergeCapacity(len(existing), len(additions)))
 	for _, group := range [][]Digest{existing, additions} {
 		for _, digest := range group {
 			normalized, ok := digest.Normalized()
@@ -929,7 +929,7 @@ func Compare(base, head *Graph) Diff {
 
 	baseByIdentity := groupNodesByIdentity(baseRemainder)
 	headByIdentity := groupNodesByIdentity(headRemainder)
-	identities := make(map[string]struct{}, len(baseByIdentity)+len(headByIdentity))
+	identities := make(map[string]struct{}, mergeCapacity(len(baseByIdentity), len(headByIdentity)))
 	for key := range baseByIdentity {
 		identities[key] = struct{}{}
 	}

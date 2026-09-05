@@ -551,8 +551,8 @@ func isValidOriginRevision(revision string) bool {
 // asserting the same location in different spellings collapse to one entry
 // because the key is the normalized form, not the input bytes.
 func MergeOrigins(existing, additions []DependencyOrigin) []DependencyOrigin {
-	merged := make([]DependencyOrigin, 0, len(existing)+len(additions))
-	seen := make(map[string]struct{}, len(existing)+len(additions))
+	merged := make([]DependencyOrigin, 0, mergeCapacity(len(existing), len(additions)))
+	seen := make(map[string]struct{}, mergeCapacity(len(existing), len(additions)))
 	appendNormalized := func(origin DependencyOrigin) {
 		normalized := origin.Normalized()
 		if normalized == nil {

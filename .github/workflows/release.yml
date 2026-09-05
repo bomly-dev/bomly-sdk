@@ -12,8 +12,9 @@ on:
           - minor
           - major
 
+# Least privilege at the top level; the tag job raises its own write scope.
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-main
@@ -22,8 +23,11 @@ concurrency:
 jobs:
   tag:
     runs-on: ubuntu-latest
+    # Pushing the tag and creating the GitHub release both need contents:write.
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
