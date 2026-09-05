@@ -1,5 +1,13 @@
 # Bomly SDK
 
+<p align="center">
+  <a href="https://github.com/bomly-dev/bomly-sdk/actions/workflows/ci.yml"><img src="https://github.com/bomly-dev/bomly-sdk/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/bomly-dev/bomly-sdk"><img src="https://api.scorecard.dev/projects/github.com/bomly-dev/bomly-sdk/badge" alt="OpenSSF Scorecard"></a>
+  <a href="https://github.com/bomly-dev/bomly-sdk/releases/latest"><img src="https://img.shields.io/github/v/release/bomly-dev/bomly-sdk?sort=semver" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/bomly-dev/bomly-sdk" alt="License: Apache-2.0"></a>
+  <a href="https://pkg.go.dev/github.com/bomly-dev/bomly-sdk"><img src="https://pkg.go.dev/badge/github.com/bomly-dev/bomly-sdk.svg" alt="Go Reference"></a>
+</p>
+
 `github.com/bomly-dev/bomly-sdk` is the contract module for building Bomly
 components: detectors, matchers, auditors, and analyzers. It contains the
 neutral domain types (dependencies, packages, vulnerabilities, findings, the

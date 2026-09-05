@@ -1,0 +1,50 @@
+# Scheduled native Go fuzzing over the module's untrusted-input boundaries:
+# package URL parsing and canonicalization, SPDX expression classification,
+# graph and package-registry JSON, wire payloads, and the origin, contact,
+# URL, and external-reference normalizers. Every parser ships its own fuzz
+# target (see AGENTS.md), and scripts/run-fuzz.sh discovers them all, so a
+# new target is exercised here without registration. Deeper runs happen
+# locally via `make fuzz FUZZTIME=...`.
+name: Fuzz
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 8 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    name: Native Go fuzzing
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Run native Go fuzz targets
+        run: make fuzz FUZZTIME=2m
+
+      - name: Upload fuzz failures
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: go-fuzz-failures
+          path: |
+            **/testdata/fuzz/**
+          if-no-files-found: ignore
+          retention-days: 7

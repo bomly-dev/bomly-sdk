@@ -11,30 +11,65 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
+    name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
       - name: Test
         run: go test ./...
       - name: Vet
         run: go vet ./...
       - name: Format
+        run: make fmt-check
+      - name: Module tidy drift
+        run: go mod tidy -diff
+      - name: Forbid replace directives
+        # A library must resolve the same way for every consumer; a replace
+        # directive only applies inside this module and silently vanishes
+        # when bomly-cli or a plugin imports it.
         run: |
-          fmt_out="$(gofmt -l .)"
-          if [[ -n "$fmt_out" ]]; then
-            echo "gofmt needed on:" >&2
-            echo "$fmt_out" >&2
+          set -euo pipefail
+          replaces="$(go mod edit -json | jq '.Replace // [] | length')"
+          if [ "${replaces}" != "0" ]; then
+            echo "go.mod must not contain replace directives" >&2
+            go mod edit -json | jq '.Replace' >&2
             exit 1
           fi
-      - name: Module tidy drift
-        run: |
-          go mod tidy
-          git diff --exit-code go.mod go.sum
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          # Keep in sync with GOLANGCI_LINT_VERSION in the Makefile.
+          version: v2.12.0
 
   # API-compatibility gate (ADR-0040 program, plan step 0.1): diff the exported
   # Go API against the latest release tag with gorelease. Incompatible changes
@@ -43,6 +78,7 @@ jobs:
   # Pull requests only: a push run on main has no PR labels, so a just-merged
   # approved break would fail there until the next tag moves the baseline.
   api-compat:
+    name: API compatibility
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
