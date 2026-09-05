@@ -382,7 +382,22 @@ func (n *DependencyNode) backfillCoordinates() {
 	// name handling. A custom purl type resolves to no known ecosystem, so
 	// a detector's own token survives there — the open vocabulary keeps its
 	// say where the table has none.
-	if resolved := ecosystemForPURLType(n.purl.Type); resolved != "" {
+	//
+	// A generic fallback identity is read through the type it fell back
+	// from, not the generic type it landed on. The qualifier is part of the
+	// identity, so it is the same source of truth the rest of this
+	// projection reads; construction kept the caller's ecosystem, and
+	// reconstruction from the identity alone (NewDependencyNodeFromPURL, a
+	// wire payload stating only its purl) used to come back with none. Same
+	// identity, different ecosystem -- and ecosystem drives family seeding,
+	// name handling, and display. A failed type the tables do not know
+	// resolves to nothing, and the caller's token survives as it would for
+	// any custom type.
+	family := n.purl.Type
+	if failedType, ok := genericFallbackType(n.purl); ok {
+		family = failedType
+	}
+	if resolved := ecosystemForPURLType(family); resolved != "" {
 		n.Ecosystem = resolved
 	}
 	// The identity is the single source of truth for these fields: name,
