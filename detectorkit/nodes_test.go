@@ -375,3 +375,40 @@ func TestPropagateScopesMergesADirectDependencysStoredScope(t *testing.T) {
 		t.Fatalf("urllib3 scope = %q, want the runtime its parent already carried", child.PrimaryScope())
 	}
 }
+
+// A root that is not in the graph propagates nothing, and must not default
+// anything either. The seeding lookup's error used to be discarded, so the
+// walk never ran but the closing runtime default still did: every unscoped
+// dependency was stamped runtime without a single scope having propagated
+// from any root. A caller holding a stale ID -- one from before
+// PromoteToModule replaced it -- got no signal, and development-only
+// packages presented as shipped.
+func TestPropagateScopesIsANoOpForARootAbsentFromTheGraph(t *testing.T) {
+	g := sdk.New()
+	dev := testkit.MustDependencyCoords(t, sdk.Coordinates{Ecosystem: sdk.EcosystemNPM, Name: "only-dev", Version: "1.0.0"})
+	dev.Scopes = nil
+	if err := g.AddNode(dev); err != nil {
+		t.Fatal(err)
+	}
+
+	detectorkit.PropagateScopes(g, "module:does/not#exist", nil)
+
+	if got := dev.PrimaryScope(); got != sdk.ScopeUnknown {
+		t.Fatalf("only-dev scope = %q, want it left unscoped when no root could seed it", got)
+	}
+
+	// The distinction is presence, not degree: a root that is in the graph
+	// with no direct dependencies is not an error, and the runtime default
+	// still applies to it (TestPropagateScopesDefaultsOrphansToRuntime pins
+	// that side).
+	root := testkit.MustModuleNode(t, "package.json", sdk.Coordinates{
+		Ecosystem: sdk.EcosystemNPM, Name: "app", Version: "1.0.0",
+	})
+	if err := g.AddNode(root); err != nil {
+		t.Fatal(err)
+	}
+	detectorkit.PropagateScopes(g, root.NodeID(), nil)
+	if got := dev.PrimaryScope(); got != sdk.ScopeRuntime {
+		t.Fatalf("only-dev scope = %q, want the runtime default once a present root ran the pass", got)
+	}
+}

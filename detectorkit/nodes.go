@@ -190,6 +190,11 @@ func cloneMetadata(in map[string]any) map[string]any {
 // nil seed reads the node's own primary scope. Non-dependency nodes are
 // skipped; scope is a claim about a consumed package, and a manifest or a
 // module does not carry one.
+//
+// A root that is not in the graph is a no-op: nothing is seeded, nothing
+// propagates, and the runtime default is not applied either. A root that is
+// present but has no direct dependencies is not that case -- the default
+// still runs, because the resolver installed whatever is there.
 func PropagateScopes(g *sdk.Graph, rootID string, seed func(*sdk.DependencyNode) sdk.Scope) {
 	if g == nil {
 		return
@@ -198,7 +203,18 @@ func PropagateScopes(g *sdk.Graph, rootID string, seed func(*sdk.DependencyNode)
 		seed = func(node *sdk.DependencyNode) sdk.Scope { return node.PrimaryScope() }
 	}
 
-	directNodes, _ := g.DirectDependencies(rootID)
+	directNodes, err := g.DirectDependencies(rootID)
+	if err != nil {
+		// The root is absent -- most plausibly an ID held from before
+		// PromoteToModule replaced it. Discarding this error used to leave
+		// the seeding loop empty and let the closing default run anyway, so
+		// every unscoped dependency in the graph was stamped runtime without
+		// a single scope having propagated from any root. That is wrong in
+		// the unsafe direction: development-only packages presented as
+		// shipped. With nothing to propagate from there is nothing to
+		// default, so the whole pass stands down.
+		return
+	}
 	directDeps := sdk.DependencyNodesOf(directNodes)
 	propagated := make(map[string]sdk.Scope, g.Size())
 	queue := make([]*sdk.DependencyNode, 0, len(directDeps))
