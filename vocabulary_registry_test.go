@@ -32,7 +32,11 @@ func declaredConstants(t *testing.T, importPath, typeName string) map[string]str
 	t.Helper()
 	dir := packageDir(t, importPath)
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, dir, func(info fs.FileInfo) bool {
+	// ParseDir is deprecated in favor of golang.org/x/tools/go/packages
+	// because it ignores build tags. The two vocabulary packages read here
+	// carry no build-tagged files, and go/packages would add a dependency
+	// the module does not otherwise need.
+	pkgs, err := parser.ParseDir(fset, dir, func(info fs.FileInfo) bool { //nolint:staticcheck // see above
 		return !strings.HasSuffix(info.Name(), "_test.go")
 	}, 0)
 	if err != nil {
