@@ -147,11 +147,17 @@ func restoreNPMScope(purl *packageurl.PackageURL) {
 	}
 }
 
-// normalizeAndRender applies the two Bomly boundary policies that compose
-// with packageurl-go normalization: surrounding field whitespace is ignored,
-// and npm producer scopes missing their '@' prefix are repaired. The library
-// remains responsible for PURL validation, type rules, and canonical
-// rendering.
+// normalizeAndRender applies the Bomly boundary policies that compose with
+// packageurl-go normalization: surrounding field whitespace is ignored, npm
+// producer scopes missing their '@' prefix are repaired, and a pypi version
+// takes its PEP 440 canonical form (delegated to go-pep440-version, see
+// canonicalPyPIVersion). The library remains responsible for PURL
+// validation, type rules, and canonical rendering.
+//
+// Every identity this module mints or accepts passes through here -- Build
+// from coordinates, Parse of a stated or decoded package URL -- which is
+// what makes a rule applied here hold on every path at once rather than on
+// whichever constructor remembered it.
 func normalizeAndRender(purl *packageurl.PackageURL) (string, error) {
 	if purl == nil {
 		return "", ErrInvalidPURL
@@ -161,6 +167,9 @@ func normalizeAndRender(purl *packageurl.PackageURL) (string, error) {
 	restoreNPMScope(purl)
 	if err := purl.Normalize(); err != nil {
 		return "", fmt.Errorf("%w: %v", ErrInvalidPURL, err)
+	}
+	if purl.Type == pypiType {
+		purl.Version = canonicalPyPIVersion(purl.Version)
 	}
 	// The whitespace boundary policy makes a blank-after-trim name invalid on
 	// Build; Parse must agree, or a parsed value fails to re-render and the

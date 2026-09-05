@@ -4,9 +4,10 @@
 // root helpers cannot represent — the one purl-type mapping table, and the
 // per-ecosystem split of an ecosystem-native name back into org and name.
 //
-// purlkit is a leaf package: it imports the packageurl library and the
-// standard library only, never the root SDK package, so the root package can
-// delegate to it without an import cycle. Its APIs are therefore string-typed;
+// purlkit is a leaf package: it imports the packageurl library, the PEP 440
+// version library that owns PyPI's canonical version form, and the standard
+// library only, never the root SDK package, so the root package can delegate
+// to it without an import cycle. Its APIs are therefore string-typed;
 // the typed wrappers live in the root package.
 //
 // PURL strings are untrusted input (they arrive from lockfiles, SBOM
