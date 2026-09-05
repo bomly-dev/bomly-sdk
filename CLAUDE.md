@@ -41,9 +41,11 @@ code lands here.
 `GraphNode` exposes only what every kind has: an ID, a kind, locations,
 warnings, a clone. Coordinates, a display name, a scope belong to some kinds
 and not others, so a consumer that renders or narrows a node reaches for
-`NodeCoordinates`, `NodeDisplayName`, `NodeVersion`, `AsDependencyNode`,
-`AsModuleNode`, `DependencyNodesOf`, `IsProjectOwned`, or `IsNilNode` rather
-than writing its own type switch. Written per consumer, that switch
+`NodeCoordinates`, `NodeDisplayName`, `NodeVersion`, `NodePURL`,
+`AsDependencyNode`, `AsModuleNode`, `DependencyNodesOf`, `IsProjectOwned`,
+or `IsNilNode` rather than writing its own type switch. `NodePURL` is the
+one a consumer is most tempted to answer with `NodeID()`, which is right
+for a dependency and wrong for the other two kinds. Written per consumer, that switch
 disagrees with itself about what a manifest looks like -- the CLI grew four
 such copies in one release before these existed.
 

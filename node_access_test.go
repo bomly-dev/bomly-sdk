@@ -25,6 +25,9 @@ func TestNodeAccessorsTolerateATypedNil(t *testing.T) {
 			if got := NodeDisplayName(node); got != "" {
 				t.Fatalf("NodeDisplayName = %q, want empty", got)
 			}
+			if got := NodePURL(node); got != "" {
+				t.Fatalf("NodePURL = %q, want empty", got)
+			}
 			if _, ok := AsDependencyNode(node); ok {
 				t.Fatal("AsDependencyNode narrowed a nil node")
 			}
@@ -32,6 +35,56 @@ func TestNodeAccessorsTolerateATypedNil(t *testing.T) {
 				t.Fatal("IsProjectOwned reported ownership for a nil node")
 			}
 		})
+	}
+}
+
+// "What package URL does this node publish" has a different answer per kind,
+// and a consumer that reaches for NodeID gets it wrong for two of the three:
+// a module's ID is the structural module:<path>#... grammar, not a package
+// URL, and a manifest has none. The CLI rendered a module's ID under a "PURL"
+// column before this existed.
+func TestNodePURLReadsEachKind(t *testing.T) {
+	dep, err := NewDependencyNode(Coordinates{Ecosystem: EcosystemNPM, Name: "left-pad", Version: "1.3.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	module, err := NewModuleNode("package.json", Coordinates{Ecosystem: EcosystemNPM, Name: "app", Version: "1.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := NewManifestNode("package-lock.json", ManifestKindPackageLockJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A dependency node's ID is its canonical package URL.
+	if got := NodePURL(dep); got != "pkg:npm/left-pad@1.3.0" || got != dep.NodeID() {
+		t.Fatalf("dependency NodePURL = %q, want the identity %q", got, dep.NodeID())
+	}
+	// A module's package URL is not its ID.
+	if got := NodePURL(module); got != "pkg:npm/app@1.0.0" {
+		t.Fatalf("module NodePURL = %q, want the derived package URL", got)
+	}
+	if NodePURL(module) == module.NodeID() {
+		t.Fatalf("module NodePURL = %q, want the package URL rather than the structural ID", module.NodeID())
+	}
+	// A manifest is a file.
+	if got := NodePURL(manifest); got != "" {
+		t.Fatalf("manifest NodePURL = %q, want none", got)
+	}
+
+	// A module whose coordinates cannot mint a package URL publishes none --
+	// not a generic fallback the constructor already declined to fabricate.
+	// It is identified by path and name instead, and that ID is not a purl.
+	pathOnly, err := NewModuleNode("Makefile", Coordinates{Name: "app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := NodePURL(pathOnly); got != "" {
+		t.Fatalf("path-identified module NodePURL = %q, want none", got)
+	}
+	if pathOnly.NodeID() != "module:Makefile#app" {
+		t.Fatalf("path-identified module ID = %q; the test assumes a name-tailed identity", pathOnly.NodeID())
 	}
 }
 

@@ -60,6 +60,39 @@ func NodeVersion(node GraphNode) string {
 	return coords.Version
 }
 
+// NodePURL returns the package URL a node publishes, or "" when it has none.
+//
+// The three kinds answer differently, which is why this lives here: a
+// dependency node's ID is its canonical package URL; a module's ID is the
+// structural "module:<path>#..." grammar and its package URL is a separate
+// field, derived only when its coordinates genuinely allow one; a manifest
+// is a file and has none. Written per consumer, the switch drifts -- the
+// CLI's interactive view rendered a module's NodeID under a column labelled
+// "PURL", handing the viewer a string no consumer can parse as a package
+// URL, while its SBOM and JSON paths had the projection right.
+//
+// A module whose coordinates could not mint a package URL returns "" rather
+// than a fallback. NewModuleNode already declined to fabricate one for it
+// (a module is the project's own record, and the generic type is a registry
+// lookup fabrication), and this reports what the node publishes, not what it
+// might have.
+func NodePURL(node GraphNode) string {
+	switch typed := node.(type) {
+	case *DependencyNode:
+		if typed == nil {
+			return ""
+		}
+		return typed.NodeID()
+	case *ModuleNode:
+		if typed == nil {
+			return ""
+		}
+		return typed.PURL()
+	default:
+		return ""
+	}
+}
+
 // AsDependencyNode narrows a node to a dependency node, reporting whether it
 // is one. A typed nil is not.
 func AsDependencyNode(node GraphNode) (*DependencyNode, bool) {
