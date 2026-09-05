@@ -508,3 +508,67 @@ func TestWireV1NestedAssertionFieldsAreOmitEmpty(t *testing.T) {
 		})
 	}
 }
+
+// wireV1DuplicateName repeats "version" on a dependency node. Under v1
+// decoding the last value wins for a scalar field, which is the behavior this
+// fixture pins -- not because the behavior is good, but because it is the
+// behavior old plugins were built against.
+const wireV1DuplicateName = `{"nodes":[{"id":"pkg:npm/left-pad@1.3.0","purl":"pkg:npm/left-pad@1.3.0",` +
+	`"name":"left-pad","version":"1.3.0","version":"1.3.0"}]}`
+
+// wireV1InvalidUTF8 carries a lone 0xff byte in a free-text field. Under v1
+// decoding it becomes U+FFFD and the payload still decodes.
+const wireV1InvalidUTF8 = "{\"nodes\":[{\"id\":\"pkg:npm/left-pad@1.3.0\",\"purl\":\"pkg:npm/left-pad@1.3.0\"," +
+	"\"name\":\"left-pad\",\"version\":\"1.3.0\",\"copyright\":\"\xff\"}]}"
+
+// The plugin wire keeps v1 decoding semantics, and these fixtures are what
+// stop that from changing by accident.
+//
+// ADR-0039 moves untrusted-document parsing to encoding/json/v2, whose
+// defaults reject duplicate object names and invalid UTF-8. That is the right
+// posture for an SBOM a stranger produced. It is the wrong posture for this
+// wire: enabled plugins are trusted native processes launched by the user, so
+// the contract here is frozen fixtures and strict additivity, and tightening
+// decoding is a protocol decision that needs its own ADR rather than a side
+// effect of a parser migration in a consumer.
+//
+// The hazard being guarded is drift. Nobody sets out to tighten the plugin
+// wire; someone swaps a decoder because it is the one they just used
+// elsewhere, and a plugin built last year stops loading. If these fail,
+// the change under review did exactly that.
+//
+// One deliberate exception already exists and is pinned separately by
+// TestWireV1StrictDependencyIdentity: a dependency payload whose identity
+// cannot mint a well-formed package URL fails decode (ADR-0041). That is
+// tightening on purpose, ruled and fixture-backed -- which is precisely why
+// accidental tightening needs its own guard rather than being assumed absent.
+func TestWireV1KeepsLenientDecoding(t *testing.T) {
+	t.Run("duplicate object name", func(t *testing.T) {
+		var graph Graph
+		if err := json.Unmarshal([]byte(wireV1DuplicateName), &graph); err != nil {
+			t.Fatalf("a payload with a duplicate member name must keep decoding on the plugin wire: %v", err)
+		}
+		if graph.Size() != 1 {
+			t.Fatalf("size = %d, want the one node", graph.Size())
+		}
+		node := graph.DependencyNodes()[0]
+		if node.Version != "1.3.0" {
+			t.Fatalf("version = %q, want the decoded value", node.Version)
+		}
+	})
+
+	t.Run("invalid utf-8", func(t *testing.T) {
+		var graph Graph
+		if err := json.Unmarshal([]byte(wireV1InvalidUTF8), &graph); err != nil {
+			t.Fatalf("a payload with invalid UTF-8 must keep decoding on the plugin wire: %v", err)
+		}
+		if graph.Size() != 1 {
+			t.Fatalf("size = %d, want the one node", graph.Size())
+		}
+		// The replacement is v1's own behavior, restated here so a change to
+		// it is visible rather than silent.
+		if node := graph.DependencyNodes()[0]; node.Copyright != "�" {
+			t.Fatalf("copyright = %q, want the replacement character v1 substitutes", node.Copyright)
+		}
+	})
+}
