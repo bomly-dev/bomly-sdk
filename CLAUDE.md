@@ -126,8 +126,11 @@ release tag with gorelease; a deliberate v0 break needs the
 `api:break-approved` label. Fuzz targets are discovered by
 `scripts/run-fuzz.sh`, not listed, so a new `Fuzz*` function is picked up
 by the nightly run without registration. Dependabot (Go modules and
-Actions, weekly, grouped), CodeQL, Dependency Review, OpenSSF Scorecard,
-and Bomly Guard run as separate workflows under `.github/workflows/`.
+Actions, weekly, grouped), Dependency Review, OpenSSF Scorecard, and Bomly
+Guard run as separate workflows under `.github/workflows/`. CodeQL runs
+through GitHub's default code-scanning setup (Go and Actions), which is a
+repository setting rather than a workflow file; GitHub rejects an advanced
+CodeQL workflow while default setup is enabled, so do not add one.
 
 The `conformance` package is the reusable plugin-contract suite; changes to
 descriptors, validation, or the serve surface must keep it green, and the

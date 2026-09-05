@@ -1,6 +1,6 @@
 # Keep GOLANGCI_LINT_VERSION in sync with the golangci-lint-action `version`
 # input in .github/workflows/ci.yml.
-GOLANGCI_LINT_VERSION=v2.12.0
+GOLANGCI_LINT_VERSION=v2.13.2
 GOPATH_BIN=$(shell go env GOPATH)/bin
 EXE_SUFFIX=$(if $(filter Windows_NT,$(OS)),.exe,)
 GOLANGCI_LINT=$(GOPATH_BIN)/golangci-lint$(EXE_SUFFIX)
