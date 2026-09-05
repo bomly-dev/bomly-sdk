@@ -3,7 +3,7 @@ module github.com/bomly-dev/bomly-sdk
 go 1.27.0
 
 require (
-	github.com/CycloneDX/cyclonedx-go v0.11.0
+	github.com/CycloneDX/cyclonedx-go v0.12.0
 	github.com/aquasecurity/go-pep440-version v0.0.1
 	github.com/github/go-spdx/v2 v2.7.0
 	github.com/hashicorp/go-plugin v1.8.0
