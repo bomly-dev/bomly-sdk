@@ -111,11 +111,26 @@ branch.
 ## Build & test
 
 ```sh
-go test ./...    # all tests must pass before work is done
-go vet ./...
-gofmt -l .          # CI gates on formatting
-go mod tidy -diff   # CI gates on go.mod/go.sum tidiness
+make test          # go test ./... — all tests must pass before work is done
+make vet           # go vet ./...
+make fmt-check     # CI gates on gofmt formatting (make fmt rewrites)
+make lint          # golangci-lint, pinned in the Makefile and ci.yml
+make tidy-check    # go mod tidy -diff — CI gates on go.mod/go.sum tidiness
+make fuzz FUZZTIME=5s   # every Fuzz* target briefly; nightly in CI at 2m each
+make install-hooks # pre-commit runs fmt-check and lint
 ```
+
+CI also forbids `replace` directives in `go.mod` (a library must resolve the
+same way for every consumer) and diffs the exported API against the latest
+release tag with gorelease; a deliberate v0 break needs the
+`api:break-approved` label. Fuzz targets are discovered by
+`scripts/run-fuzz.sh`, not listed, so a new `Fuzz*` function is picked up
+by the nightly run without registration. Dependabot (Go modules and
+Actions, weekly, grouped), Dependency Review, OpenSSF Scorecard, and Bomly
+Guard run as separate workflows under `.github/workflows/`. CodeQL runs
+through GitHub's default code-scanning setup (Go and Actions), which is a
+repository setting rather than a workflow file; GitHub rejects an advanced
+CodeQL workflow while default setup is enabled, so do not add one.
 
 The `conformance` package is the reusable plugin-contract suite; changes to
 descriptors, validation, or the serve surface must keep it green, and the

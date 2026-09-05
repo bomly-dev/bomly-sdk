@@ -44,7 +44,9 @@ func FuzzValid(f *testing.F) {
 		if len(value) > maxFuzzInputSize {
 			t.Skip("input exceeds fuzz bound")
 		}
-		if Valid(value) != Valid(value) {
+		first := Valid(value)
+		second := Valid(value)
+		if first != second {
 			t.Fatal("Valid is not deterministic")
 		}
 		if ok, err := Satisfies(value, []string{"MIT"}); err == nil {

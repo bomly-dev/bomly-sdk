@@ -299,7 +299,7 @@ func ParseSPDXContact(value string) (Contact, bool) {
 	if strings.EqualFold(trimmed, spdxNoAssertion) {
 		return Contact{Kind: ContactKindNoAssertion}, true
 	}
-	kind := ContactKindUnknown
+	var kind ContactKind
 	switch {
 	case hasCaseInsensitivePrefix(trimmed, "Organization:"):
 		kind = ContactKindOrganization
