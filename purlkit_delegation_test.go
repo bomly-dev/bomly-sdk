@@ -1,6 +1,7 @@
 package sdk
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/bomly-dev/bomly-sdk/purlkit"
@@ -115,6 +116,116 @@ func TestCanonicalEcosystemCoversTheFullVocabulary(t *testing.T) {
 		canonical, ok := purlkit.CanonicalEcosystem(string(ecosystem))
 		if !ok || canonical != string(ecosystem) {
 			t.Errorf("ecosystem %q does not resolve to itself: (%q, %v)", ecosystem, canonical, ok)
+		}
+	}
+}
+
+// TestEcosystemForPURLTypeAnswersEveryRowTheCLICopiesLost pins the join the
+// root package now owns. The five rows at the top are the ones bomly-cli's
+// benchmark copy never learned, so they came back unknown there; the rest are
+// the types whose spec name differs from the Bomly token, plus the direct
+// ones the type table deliberately omits and only the alias table answers.
+func TestEcosystemForPURLTypeAnswersEveryRowTheCLICopiesLost(t *testing.T) {
+	rows := map[string]Ecosystem{
+		"hackage": EcosystemHaskell,
+		"cran":    EcosystemR,
+		"opam":    EcosystemOCaml,
+		"deb":     EcosystemDPKG,
+		"otp":     EcosystemErlang,
+
+		"golang":        EcosystemGo,
+		"cargo":         EcosystemRust,
+		"nuget":         EcosystemDotNet,
+		"pypi":          EcosystemPython,
+		"gem":           EcosystemRuby,
+		"composer":      EcosystemPHP,
+		"pub":           EcosystemDart,
+		"conan":         EcosystemCPP,
+		"cocoapods":     EcosystemSwift,
+		"swift":         EcosystemSwift,
+		"maven":         EcosystemMaven,
+		"githubactions": EcosystemGitHub,
+
+		"npm":       EcosystemNPM,
+		"apk":       EcosystemAPK,
+		"rpm":       EcosystemRPM,
+		"alpm":      EcosystemALPM,
+		"conda":     EcosystemConda,
+		"nix":       EcosystemNix,
+		"homebrew":  EcosystemHomebrew,
+		"portage":   EcosystemPortage,
+		"snap":      EcosystemSnap,
+		"terraform": EcosystemTerraform,
+		"wordpress": EcosystemWordPress,
+		"lua":       EcosystemLua,
+	}
+	for purlType, want := range rows {
+		if got := EcosystemForPURLType(purlType); got != want {
+			t.Errorf("EcosystemForPURLType(%q) = %q, want %q", purlType, got, want)
+		}
+		// A resolved value must be a token the SDK vocabulary actually
+		// knows, or the ecosystem it seeds a node with would fail the very
+		// parse that gates a caller-supplied one.
+		if _, err := ParseEcosystem(string(want)); err != nil {
+			t.Errorf("EcosystemForPURLType(%q) answers %q, which ParseEcosystem rejects: %v", purlType, want, err)
+		}
+		// Untrusted spelling is folded, as it is everywhere else a purl type
+		// is read: a SBOM stating "GOLANG " is the same type.
+		if got := EcosystemForPURLType("  " + strings.ToUpper(purlType) + "\t"); got != want {
+			t.Errorf("EcosystemForPURLType(padded, upper %q) = %q, want %q", purlType, got, want)
+		}
+	}
+}
+
+// TestEcosystemForPURLTypeRefusesWhatItCannotDecide pins the refusals as
+// decisions rather than omissions. pkg:hex is the one the drifted CLI copy
+// got wrong: it serves Elixir and Erlang alike, and answering either
+// relabels half the packages that round-trip through it.
+func TestEcosystemForPURLTypeRefusesWhatItCannotDecide(t *testing.T) {
+	for _, purlType := range []string{
+		"hex",                          // Elixir and Erlang both publish here
+		"multiple",                     // names a set of managers, not an ecosystem
+		"generic",                      // the fallback type names no ecosystem
+		"",                             // no type at all
+		"a-detector-type-nobody-knows", // the open vocabulary keeps its say
+	} {
+		if got := EcosystemForPURLType(purlType); got != EcosystemUnknown {
+			t.Errorf("EcosystemForPURLType(%q) = %q, want a refusal", purlType, got)
+		}
+	}
+}
+
+// TestEcosystemForPURLTypeRoundTripsTheEcosystemVocabulary walks the SDK's
+// full ecosystem registry and fails when an ecosystem cannot be recovered
+// from the purl type it mints — the drift guard that makes an addition to
+// the vocabulary a test failure rather than a silently unknown ecosystem.
+// The two exceptions are the documented ambiguities, asserted as such so
+// neither can be "fixed" into a guess.
+func TestEcosystemForPURLTypeRoundTripsTheEcosystemVocabulary(t *testing.T) {
+	// pkg:hex serves Elixir and Erlang, so an Elixir package's own type
+	// cannot name it back; pkg:maven covers Scala too, and resolves to
+	// maven by grandfathering (dropping the row would regress every Java
+	// SBOM to unknown). See the purlkit table comment for both.
+	ambiguous := map[Ecosystem]Ecosystem{
+		EcosystemElixir: EcosystemUnknown,
+		EcosystemScala:  EcosystemMaven,
+	}
+	for _, item := range ecosystemRegistry {
+		ecosystem := item.Ecosystem
+		if ecosystem == EcosystemUnknown {
+			continue
+		}
+		purlType := PackageURLTypeForValues(ecosystem)
+		want, isAmbiguous := ambiguous[ecosystem]
+		if !isAmbiguous {
+			want = ecosystem
+		}
+		if got := EcosystemForPURLType(purlType); got != want {
+			if isAmbiguous {
+				t.Errorf("ecosystem %q mints %q, which now resolves to %q; the documented answer is %q", ecosystem, purlType, got, want)
+				continue
+			}
+			t.Errorf("ecosystem %q mints %q, which resolves back to %q", ecosystem, purlType, got)
 		}
 	}
 }

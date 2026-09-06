@@ -413,7 +413,7 @@ func (n *DependencyNode) backfillCoordinates() {
 	if failedType, ok := genericFallbackType(n.purl); ok {
 		family = failedType
 	}
-	if resolved := ecosystemForPURLType(family); resolved != "" {
+	if resolved := EcosystemForPURLType(family); resolved != EcosystemUnknown {
 		n.Ecosystem = resolved
 	}
 	// The identity is the single source of truth for these fields: name,
@@ -439,23 +439,6 @@ func (n *DependencyNode) backfillCoordinates() {
 	// something the identity never claimed. Verbatim projection is also
 	// what keeps the codec idempotent: the same identity always projects
 	// the same coordinates, however many times a node round-trips.
-}
-
-// ecosystemForPURLType resolves the SDK ecosystem a purl type belongs to.
-// The type table covers the types whose names differ from Bomly's
-// ecosystem token (golang, gem, …); the canonical alias table covers the
-// direct ones (npm, apk, rpm, conda, …), which the type table deliberately
-// omits. Without the second lookup a node built from a bare package URL
-// would carry no ecosystem, and ecosystem-specific behavior — an npm
-// scope in EcosystemName(), for one — would silently degrade.
-func ecosystemForPURLType(purlType string) Ecosystem {
-	if ecosystem, ok := purlkit.EcosystemForType(purlType); ok {
-		return Ecosystem(ecosystem)
-	}
-	if ecosystem, ok := purlkit.CanonicalEcosystem(purlType); ok {
-		return Ecosystem(ecosystem)
-	}
-	return ""
 }
 
 // adoptEvidenceQualifiers relocates the URL-valued evidence qualifiers into
