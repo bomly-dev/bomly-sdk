@@ -212,6 +212,17 @@ const maxDescriptionLength = 8 * 1024
 // Over-long input yields "" rather than a truncation, because half a
 // description attributed to a package is a false assertion where no
 // description is merely a missing one.
+//
+// The result is a fixed point: normalizing it again returns it unchanged,
+// and it is within the bound. Both have to be checked on the *output*.
+// Ranging over the string repairs invalid UTF-8 by turning each bad byte
+// into U+FFFD, which is three bytes, so a value that passed the input bound
+// could leave here at three times the documented maximum -- and the next
+// pass, seeing an over-long value, emptied it. A description that survived
+// one hop vanished on the second, which is exactly the kind of untrusted
+// input a third-party document supplies. The input check stays as a plain
+// size guard on what gets transformed; the output check is the bound the
+// doc comment promises.
 func NormalizeDescription(value string) string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" || len(trimmed) > maxDescriptionLength {
@@ -230,7 +241,11 @@ func NormalizeDescription(value string) string {
 			b.WriteRune(r)
 		}
 	}
-	return strings.TrimSpace(b.String())
+	repaired := strings.TrimSpace(b.String())
+	if len(repaired) > maxDescriptionLength {
+		return ""
+	}
+	return repaired
 }
 
 // NormalizeHomepage is the gate for a component homepage: URLFormReference,
