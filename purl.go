@@ -56,6 +56,42 @@ func PackageURLTypeForValues(values ...any) string {
 	return purlkit.TypeForValues(converted...)
 }
 
+// EcosystemForPURLType resolves the Bomly ecosystem a package URL type names,
+// and returns EcosystemUnknown when no ecosystem is decidable from the type
+// alone. It is the reverse of PackageURLTypeForValues.
+//
+// This is the durable home for a join consumers used to transcribe: bomly-cli
+// carried three copies of it, and they had already drifted — one answered
+// Elixir for pkg:hex, which is exactly the guess this refuses, and none of
+// them had learned hackage, cran, opam, deb or otp, so five ecosystems came
+// back unknown (ADR-0040; issue #69).
+//
+// Two purlkit tables answer, in that order. The type join covers the purl
+// types whose spec name differs from Bomly's ecosystem token (golang → go,
+// gem → ruby, …); the canonical alias table covers the direct ones (npm, apk,
+// rpm, conda, …), which the type join deliberately omits. Without the second
+// lookup a node built from a bare package URL would carry no ecosystem, and
+// ecosystem-specific behavior — an npm scope in EcosystemName(), for one —
+// would silently degrade.
+//
+// Ambiguity is refused rather than guessed. pkg:hex serves Elixir and Erlang
+// alike and resolves to EcosystemUnknown: relabelling every round-tripped
+// Erlang dependency as Elixir is worse than declining to answer. pkg:generic
+// names no ecosystem either — an identity that fell back to it records the
+// type it could not express in the GenericFallbackTypeQualifier qualifier,
+// and that value resolves here. A type outside both tables resolves to
+// EcosystemUnknown, which leaves a detector's own token to stand: the
+// ecosystem vocabulary is open where the tables have no say.
+func EcosystemForPURLType(purlType string) Ecosystem {
+	if ecosystem, ok := purlkit.EcosystemForType(purlType); ok {
+		return Ecosystem(ecosystem)
+	}
+	if ecosystem, ok := purlkit.CanonicalEcosystem(purlType); ok {
+		return Ecosystem(ecosystem)
+	}
+	return EcosystemUnknown
+}
+
 // legacyPackageURLTypeSwitch is retained only by its parity test, which pins
 // that the purlkit table matches the historical mapping row for row.
 func legacyPackageURLTypeSwitch(values ...any) string {

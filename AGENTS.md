@@ -92,6 +92,14 @@ such copies in one release before these existed.
 nil is not an untyped one, so `node != nil` is true for a
 `(*DependencyNode)(nil)` and the next field read panics.
 
+The same rule covers the vocabulary joins between a package URL and the
+domain types. `PackageURLTypeForValues` maps ecosystem, package manager,
+and package type to a purl type; `EcosystemForPURLType` maps the type back
+to an `Ecosystem`, refusing the ambiguous ones (`pkg:hex` serves Elixir and
+Erlang alike) rather than guessing. Both are spec-derived tables, so a
+transcription is stale the day the vocabulary grows -- the CLI's three
+copies of the reverse join had already drifted when this was exported.
+
 ### Narrowing by scope
 
 Never compare a scope by hand. `ScopeSetMatches` and `MatchesScopeFilter` are

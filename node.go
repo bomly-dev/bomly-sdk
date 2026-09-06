@@ -289,7 +289,7 @@ func (n *ModuleNode) adoptIdentity(identity dependencyIdentity) {
 	n.Name = identity.parsed.Name
 	n.Org = strings.TrimPrefix(identity.parsed.Namespace, "@")
 	n.Version = identity.parsed.Version
-	if resolved := ecosystemForPURLType(identity.parsed.Type); resolved != "" {
+	if resolved := EcosystemForPURLType(identity.parsed.Type); resolved != EcosystemUnknown {
 		n.Ecosystem = resolved
 	}
 	if identity.missingVersion {
