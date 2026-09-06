@@ -10,8 +10,12 @@ import (
 
 // ADR-0037: an ingested scope scalar is re-emitted verbatim on export unless
 // Bomly's own scope set changed, so "optional" and "excluded" never collapse
-// across a round trip that asserted neither. Before the field existed a
-// CycloneDX "optional" ingested as {runtime} and re-exported as "required".
+// across a round trip that asserted neither.
+//
+// What the field prevents, rather than what it does: a CycloneDX "optional"
+// ingests as {development}, and projecting that set on its own would write
+// "excluded". The assertions below are the behavior with the field -- the
+// word survives, so "optional" goes in and "optional" comes back out.
 func TestSourceScopeSurvivesARoundTripUnlessTheSetChanged(t *testing.T) {
 	node := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "left-pad", Version: "1.3.0"})
 	node.Scopes = ScopesFromCycloneDX("optional")
@@ -37,10 +41,10 @@ func TestSourceScopeSurvivesARoundTripUnlessTheSetChanged(t *testing.T) {
 		t.Fatalf("export after the codec = %q, want %q", got, cdx.ScopeOptional)
 	}
 
-	// Bomly's set changed -- propagation found it on a development path too
-	// -- so the set now says something the word did not, and the projection
-	// is written instead.
-	node.AddScope(ScopeDevelopment)
+	// Bomly's set changed -- propagation found it on a runtime path too --
+	// so the set now says something the word did not, and the projection is
+	// written instead.
+	node.AddScope(ScopeRuntime)
 	if got := CycloneDXScopeForExport(node.Scopes, node.SourceScope); got != string(cdx.ScopeRequired) {
 		t.Fatalf("export after the set changed = %q, want the projection %q", got, cdx.ScopeRequired)
 	}
@@ -62,6 +66,20 @@ func TestSourceScopeSurvivesARoundTripUnlessTheSetChanged(t *testing.T) {
 	// the set changed from what the word derives to.
 	if got := CycloneDXScopeForExport(nil, "optional"); got != "" {
 		t.Errorf("export for an empty set = %q, want none", got)
+	}
+}
+
+// A component that stated no scope is ingested at CycloneDX's default for an
+// unspecified scope, so it exports as an explicit "required" rather than as
+// nothing. That is a visible difference in the written document, and it is
+// deliberate: the source asserted no word to re-emit, and "required" is what
+// the specification says an unspecified scope means, so writing it states the
+// reading Bomly actually applied instead of leaving the next consumer to
+// re-derive it.
+func TestAnUnscopedComponentExportsTheDefaultExplicitly(t *testing.T) {
+	scopes := ScopesFromCycloneDX("")
+	if got := CycloneDXScopeForExport(scopes, ""); got != string(cdx.ScopeRequired) {
+		t.Errorf("export = %q, want the default written as %q", got, cdx.ScopeRequired)
 	}
 }
 
