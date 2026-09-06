@@ -362,7 +362,10 @@ func (d DocumentAssertions) Normalized() (DocumentAssertions, bool) {
 	// ingested document controls how many entries it claims, and bounding
 	// only the published list would let a list of ten thousand -- even one
 	// of duplicates or junk -- cost ten thousand gate passes and a map that
-	// size. Entries past the bound are not read at all.
+	// size. Entries past the bound are not read at all. This is the gate on
+	// untrusted input, where arrival order is all there is; the merge of two
+	// gated lists bounds the sorted union instead, so that a merge is not
+	// decided by operand order (see MergeDocumentAssertions).
 	sources := d.Sources
 	if len(sources) > maxDocumentSources {
 		sources = sources[:maxDocumentSources]
@@ -570,15 +573,27 @@ func MergeDocumentAssertions(dst, src DocumentAssertions) DocumentAssertions {
 	}
 	merged.Creators = MergeUnion(left.Creators, right.Creators, creatorKey, nil)
 	merged.Tools = MergeUnion(left.Tools, right.Tools, toolKey, nil)
-	// Sources union by document, which is what the gate does when it folds
-	// entries naming the same document: the union is left's list followed by
-	// right's, passed through the gate again so the merged record's own
-	// identity drops from among the other side's sources, folds fill gaps,
-	// and the bound holds -- left's entries first, so they are the ones a
-	// bound keeps. Sorted by the gate, so merge order does not change the
-	// bytes of what survives.
-	merged.Sources = append(append([]DocumentSource(nil), left.Sources...), right.Sources...)
-	merged, _ = merged.Normalized()
+	// Sources union as a set keyed exactly, the way the gate folds them.
+	// Both sides were gated above, so each list is already bounded and
+	// clean; the union is at most twice the bound, and it is folded and
+	// sorted as a whole before the bound is applied to the sorted result.
+	// Running the union back through the gate instead applied the input
+	// bound to the concatenation, which kept the left operand's entries and
+	// dropped the right's -- merge direction decided what provenance
+	// survived, which a set must not do. What the bound keeps now is the
+	// same set whichever side is merged first. The merged record's own
+	// identity still drops from among the other side's sources.
+	union := make([]DocumentSource, 0, len(left.Sources)+len(right.Sources))
+	for _, source := range append(append([]DocumentSource(nil), left.Sources...), right.Sources...) {
+		if sameDocumentLink(merged.Identity, merged.Version, source.Identity, source.Version) {
+			continue
+		}
+		union = append(union, source)
+	}
+	merged.Sources = foldDocumentSources(union)
+	if len(merged.Sources) > maxDocumentSources {
+		merged.Sources = merged.Sources[:maxDocumentSources]
+	}
 	return merged
 }
 

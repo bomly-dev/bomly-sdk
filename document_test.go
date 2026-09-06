@@ -440,6 +440,23 @@ func TestDocumentSourcesAreGatedAndUnion(t *testing.T) {
 			{Identity: b, Checksum: &shaDigest}, {Identity: b, Version: 1}, {Identity: b, Version: 2},
 		})
 	}
+	// The bound on a merge is applied to the sorted union, so which sources
+	// survive an over-full union does not depend on operand order: two
+	// records each carrying a full, disjoint list merge to the same set
+	// either way round, rather than to whichever operand came first.
+	fullA := make([]DocumentSource, 0, maxDocumentSources)
+	fullB := make([]DocumentSource, 0, maxDocumentSources)
+	for i := 0; i < maxDocumentSources; i++ {
+		fullA = append(fullA, DocumentSource{Identity: "https://a.test/spdxdocs/" + strconv.Itoa(i)})
+		fullB = append(fullB, DocumentSource{Identity: "https://b.test/spdxdocs/" + strconv.Itoa(i)})
+	}
+	ab := MergeDocumentAssertions(DocumentAssertions{Identity: self, Sources: fullA}, DocumentAssertions{Identity: self, Sources: fullB})
+	ba := MergeDocumentAssertions(DocumentAssertions{Identity: self, Sources: fullB}, DocumentAssertions{Identity: self, Sources: fullA})
+	if len(ab.Sources) != maxDocumentSources {
+		t.Fatalf("merged union kept %d sources, want the bound %d", len(ab.Sources), maxDocumentSources)
+	}
+	assertSources(t, "over-full union, either order", ab.Sources, ba.Sources)
+
 	// Associative under pairwise merges: three records contributing the
 	// unversioned checksum, version 1, and version 2 give the same set
 	// whichever two merge first.
