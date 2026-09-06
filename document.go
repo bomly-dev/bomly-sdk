@@ -1,7 +1,9 @@
 package sdk
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -446,35 +448,58 @@ func (d DocumentAssertions) MarshalJSON() ([]byte, error) {
 // the zero value rather than failing the payload: the entry it belongs to is
 // still a graph, and a document with no publishable claims is merely absent.
 func (d *DocumentAssertions) UnmarshalJSON(data []byte) error {
-	// Sources are held as raw messages first and only the first
-	// maxDocumentSources of them are decoded. Decoding the whole list and
-	// bounding afterwards let a payload of ten thousand entries pay ten
+	// Sources decode through boundedDocumentSources, which reads the array
+	// as a stream and stops at maxDocumentSources. Decoding the whole list
+	// and bounding afterwards let a payload of ten thousand entries pay ten
 	// thousand element decodes -- each through DocumentSource's own gate --
-	// before the bound saw any of them. A raw message is a view over bytes
-	// the decoder already holds, so the entries past the bound cost nothing
-	// beyond that view.
+	// and as many byte copies before the bound saw any of them.
 	var wire struct {
 		documentAssertionsWire
-		Sources []json.RawMessage `json:"sources,omitempty"`
+		Sources boundedDocumentSources `json:"sources,omitempty"`
 	}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
 	}
-	raw := wire.Sources
-	if len(raw) > maxDocumentSources {
-		raw = raw[:maxDocumentSources]
-	}
 	assertions := DocumentAssertions(wire.documentAssertionsWire)
-	assertions.Sources = make([]DocumentSource, 0, len(raw))
-	for _, message := range raw {
-		var source DocumentSource
-		if err := json.Unmarshal(message, &source); err != nil {
-			return err
-		}
-		assertions.Sources = append(assertions.Sources, source)
-	}
+	assertions.Sources = []DocumentSource(wire.Sources)
 	normalized, _ := assertions.Normalized()
 	*d = normalized
+	return nil
+}
+
+// boundedDocumentSources decodes a sources array element by element and
+// stops after maxDocumentSources, so the entries past the bound are neither
+// copied nor decoded. What remains is the outer decoder's single pass over
+// the bytes, which encoding/json makes over the whole document before any
+// field decodes and which no field-level decoder can avoid; that pass is
+// bounded by whatever bounds the payload itself. Stopping early is safe for
+// the same reason: the outer pass has already validated the array's syntax.
+type boundedDocumentSources []DocumentSource
+
+// UnmarshalJSON reads at most maxDocumentSources elements. A null array is
+// no sources.
+func (s *boundedDocumentSources) UnmarshalJSON(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	opening, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	if opening == nil {
+		*s = nil
+		return nil
+	}
+	if delim, ok := opening.(json.Delim); !ok || delim != '[' {
+		return fmt.Errorf("document sources: expected an array, got %v", opening)
+	}
+	out := make([]DocumentSource, 0, 4)
+	for decoder.More() && len(out) < maxDocumentSources {
+		var source DocumentSource
+		if err := decoder.Decode(&source); err != nil {
+			return err
+		}
+		out = append(out, source)
+	}
+	*s = out
 	return nil
 }
 
