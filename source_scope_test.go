@@ -10,9 +10,12 @@ import (
 
 // ADR-0037: an ingested scope scalar is re-emitted verbatim on export unless
 // Bomly's own scope set changed, so "optional" and "excluded" never collapse
-// across a round trip that asserted neither. Before the field existed a
-// CycloneDX "optional" ingested as {development} and re-exported as
-// "excluded".
+// across a round trip that asserted neither.
+//
+// What the field prevents, rather than what it does: a CycloneDX "optional"
+// ingests as {development}, and projecting that set on its own would write
+// "excluded". The assertions below are the behavior with the field -- the
+// word survives, so "optional" goes in and "optional" comes back out.
 func TestSourceScopeSurvivesARoundTripUnlessTheSetChanged(t *testing.T) {
 	node := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "left-pad", Version: "1.3.0"})
 	node.Scopes = ScopesFromCycloneDX("optional")

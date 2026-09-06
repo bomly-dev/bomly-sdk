@@ -96,10 +96,13 @@ type DependencyNode struct {
 	// component, in that document's own vocabulary -- "optional", for a
 	// CycloneDX component -- when a document asserted one. It is a preserved
 	// claim, never an input to filtering: Scopes is what filters read, and
-	// ScopesFromCycloneDX derives it. Without this the source's own word was
-	// replaced by Bomly's projection of it on every export, so a CycloneDX
-	// "optional" ingested as development came back out as "excluded"
-	// (ADR-0037).
+	// ScopesFromCycloneDX derives it.
+	//
+	// The field exists because a projection cannot round-trip the word on its
+	// own. A CycloneDX "optional" ingests as {development}, and projecting
+	// that set alone writes "excluded" back out -- collapsing two distinct
+	// source words the document had kept apart (ADR-0037). Holding the word
+	// itself is what makes "optional" in, "optional" out possible;
 	// CycloneDXScopeForExport is the one place that decides when the word is
 	// re-emitted and when the projection is.
 	//
