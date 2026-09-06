@@ -132,6 +132,15 @@ through GitHub's default code-scanning setup (Go and Actions), which is a
 repository setting rather than a workflow file; GitHub rejects an advanced
 CodeQL workflow while default setup is enabled, so do not add one.
 
+Where a specification's rules have no library that owns them, the
+specification's own machine-readable documents are vendored and diffed
+against, rather than trusted to a transcription that was right when it was
+written: `purlkit/testdata/purl-spec/` holds the purl type definitions
+verbatim (refresh with `scripts/vendor-purl-spec.sh <sha>`), and
+`TestTypeProfilesMatchSpecification` fails on any difference the
+`specDeviations` map does not name and justify. A deliberate departure from
+a specification lives in that map, never as an unexplained table row.
+
 The `conformance` package is the reusable plugin-contract suite; changes to
 descriptors, validation, or the serve surface must keep it green, and the
 CLI's `TestExamplePluginFixtureCompiles` compiles against the released SDK —

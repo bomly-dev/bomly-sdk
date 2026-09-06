@@ -3,18 +3,23 @@ package purlkit
 import "fmt"
 
 // typeProfile records the structural requirements a purl type's specification
-// states beyond generic purl syntax. The table below is transcribed from the
-// machine-readable per-type definitions in the purl specification repository
-// (https://github.com/package-url/purl-spec/tree/main/types, the
-// *-definition.json documents; transcribed 2026-08-29) and deliberately
-// contains only the rules the packageurl-go library does NOT already enforce
-// — the library enforces namespace-required for swift and vscode-extension,
-// namespace-prohibited for chrome-extension, julia, otp, and vcpkg, and
-// julia's required uuid qualifier, so those rows are omitted here rather
-// than duplicated. Types absent from both the table and the library's rules
-// validate on generic syntax alone: the purl type vocabulary is open by
-// design, and an unknown type — a custom ecosystem's own purl type — is
-// first-class, never rejected for being unknown.
+// states beyond generic purl syntax. No library owns these: packageurl-go
+// enforces a handful of them and packages no machine-readable form of the
+// rest, so the authority is the purl specification repository's own per-type
+// definitions (https://github.com/package-url/purl-spec, the
+// types/*-definition.json documents). Those documents are vendored verbatim
+// under testdata/purl-spec/ and TestTypeProfilesMatchSpecification diffs
+// this table against them, so a rule the specification grows or drops fails
+// a test that names the row instead of quietly degrading an identity.
+//
+// The table deliberately carries only the rules the packageurl-go library
+// does NOT already enforce — the library enforces namespace-required for
+// swift and vscode-extension, namespace-prohibited for chrome-extension,
+// julia, otp, and vcpkg, and julia's required uuid qualifier, so those rows
+// are omitted here rather than duplicated. Types absent from both the table
+// and the library's rules validate on generic syntax alone: the purl type
+// vocabulary is open by design, and an unknown type — a custom ecosystem's
+// own purl type — is first-class, never rejected for being unknown.
 type typeProfile struct {
 	namespaceRequired   bool
 	namespaceProhibited bool
@@ -30,7 +35,6 @@ var typeProfiles = map[string]typeProfile{
 	"deb":         {namespaceRequired: true},
 	"git":         {namespaceRequired: true},
 	"github":      {namespaceRequired: true},
-	"golang":      {namespaceRequired: true},
 	"huggingface": {namespaceRequired: true},
 	"maven":       {namespaceRequired: true},
 	"qpkg":        {namespaceRequired: true},
@@ -54,6 +58,40 @@ var typeProfiles = map[string]typeProfile{
 
 	// Qualifiers the type's specification marks required.
 	"swid": {requiredQualifiers: []string{"tag_id"}},
+}
+
+// specDeviations records where typeProfiles deliberately departs from the
+// purl specification's own type definition, keyed by purl type, with the
+// reason. TestTypeProfilesMatchSpecification allows exactly these entries
+// and fails on any other difference — and fails on an entry that no longer
+// describes a real difference, so a departure disappears from here once
+// upstream no longer needs it.
+//
+// A deviation is a last resort, admitted only where following the
+// specification would make a real, published package unrepresentable. It is
+// not a place to encode a preference.
+var specDeviations = map[string]string{
+	// The specification marks the golang namespace required. A Go module
+	// path is not required to contain a slash: go4.org and go.opencensus.io
+	// are published modules whose whole path is one segment, so the rule
+	// makes them unrepresentable as a golang purl.
+	//
+	// Enforcing it degraded them to pkg:generic with a bomly_source_type
+	// qualifier, and that is not a cosmetic loss — OSV advisories are keyed
+	// by package URL, so a pkg:generic identity does not match a pkg:golang
+	// advisory and a vulnerable single-segment module goes unreported. The
+	// failure direction decides it: a purl this table is too strict to mint
+	// is a missed finding.
+	//
+	// The specification's own golang definition notes that it predates Go
+	// modules and "has several practical problems", package-url/purl-spec#817
+	// is open to make the namespace optional for exactly this reason, and
+	// packageurl-go does not enforce the rule either. So the row is dropped
+	// here until upstream settles it.
+	"golang": "namespace required by the specification, not enforced here: " +
+		"a single-segment Go module path (go4.org) is valid and would " +
+		"otherwise degrade to pkg:generic and lose OSV matching " +
+		"(package-url/purl-spec#817)",
 }
 
 // Validate reports whether the package URL satisfies its type's
