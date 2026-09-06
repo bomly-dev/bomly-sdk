@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
 )
@@ -146,6 +148,58 @@ func DecodeScopeSet(value string) ([]Scope, error) {
 	}
 	sort.Slice(scopes, func(i, j int) bool { return scopes[i] < scopes[j] })
 	return scopes, nil
+}
+
+// NormalizeSourceScope is the gate for DependencyNode.SourceScope: the scope
+// word a source document used, kept in that document's vocabulary. A scope
+// scalar is a single token in every format that has one, so the value is
+// trimmed and refused when it is empty, longer than a vocabulary token, not
+// valid UTF-8, or carries a control or whitespace character -- any of which
+// means it was not a scope a document stated. It is not lowercased: what is
+// preserved is the claim as written, and the export helper below applies the
+// target format's spelling when it re-emits it.
+func NormalizeSourceScope(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || len(trimmed) > maxVocabularyTokenLength || !utf8.ValidString(trimmed) {
+		return ""
+	}
+	for _, r := range trimmed {
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
+			return ""
+		}
+	}
+	return trimmed
+}
+
+// CycloneDXScopeForExport returns the scalar scope a CycloneDX export writes
+// for a component: the source document's own word when Bomly's scope set
+// still means what that word meant, and Bomly's projection of the set
+// otherwise.
+//
+// ADR-0037 asks that an ingested scope scalar be re-emitted verbatim unless
+// Bomly's own scope set changed, so "optional" and "excluded" never collapse
+// across a round trip that asserted neither. "Still means the same" is
+// decided by the same rule that read the word in: the set ScopesFromCycloneDX
+// derives from it must equal the set the node carries now. A node ingested
+// as "optional" carries {runtime} and re-exports as "optional"; once
+// propagation adds development to it, the set says something the word did
+// not, and the projection ("required") is written instead. A source word
+// outside the CycloneDX vocabulary -- another format's, or nothing -- never
+// reaches a CycloneDX document; the projection does.
+//
+// The result is always "" or one of cyclonedx-go's three scope spellings, in
+// the library's case, whatever case the source wrote.
+func CycloneDXScopeForExport(scopes []Scope, sourceScope string) string {
+	projected := CycloneDXScope(scopes)
+	source := NormalizeSourceScope(sourceScope)
+	if source == "" {
+		return projected
+	}
+	derived := ScopesFromCycloneDX(source)
+	if derived == nil || EncodeScopeSet(derived) != EncodeScopeSet(scopes) {
+		return projected
+	}
+	return string(cdx.Scope(strings.ToLower(source)))
 }
 
 // ScopesFromCycloneDXComponent reads a component's scopes, preferring the

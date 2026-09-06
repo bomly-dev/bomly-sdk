@@ -92,11 +92,26 @@ type DependencyNode struct {
 	Relationship DependencyRelationship
 	Source       DependencySource
 	Scopes       []Scope
-	Locations    []PackageLocation
-	CPEs         []string
-	Digests      []Digest
-	Copyright    string
-	FoundBy      string
+	// SourceScope is the scope the source document asserted about this
+	// component, in that document's own vocabulary -- "optional", for a
+	// CycloneDX component -- when a document asserted one. It is a preserved
+	// claim, never an input to filtering: Scopes is what filters read, and
+	// ScopesFromCycloneDX derives it. Without this the source's own word was
+	// replaced by Bomly's projection of it on every export, so a CycloneDX
+	// "optional" ingested as runtime came back out as "required" (ADR-0037).
+	// CycloneDXScopeForExport is the one place that decides when the word is
+	// re-emitted and when the projection is.
+	//
+	// Gate: NormalizeSourceScope, on both wire directions and when a
+	// prototype is copied -- a single token, bounded, no control or
+	// whitespace characters. Merge class: scalar, fill-gaps. Two documents
+	// disagreeing about a component's scope is not resolved by picking one.
+	SourceScope string
+	Locations   []PackageLocation
+	CPEs        []string
+	Digests     []Digest
+	Copyright   string
+	FoundBy     string
 	// ResolvedURL is the manifest's resolution field verbatim — it may be a
 	// pseudo-URL, a registry or index root, or a local path, and is never
 	// published. It is raw evidence; Origins carry the validated assertions.
@@ -242,6 +257,7 @@ func NewDependencyNodeFrom(proto DependencyNode) (*DependencyNode, error) {
 	node.Relationship = proto.Relationship
 	node.Source = proto.Source
 	node.Scopes = append([]Scope(nil), proto.Scopes...)
+	node.SourceScope = NormalizeSourceScope(proto.SourceScope)
 	// Through the shared helper, not a slice append: a location holds a
 	// Position pointer and a Scopes slice, and copying only the outer slice
 	// left both aliasing the prototype.
