@@ -70,7 +70,10 @@ documented as policy rather than dressed up as the format's meaning.
 `ScopesFromCycloneDX` in `scope_cyclonedx.go` is the worked example: the SDK
 read CycloneDX's `optional` as runtime on a pre-1.6 gloss, argued it was the
 safer reading for a scanner, and was wrong on both counts against the
-specification's own text (issue #63).
+specification's own text. Reading that text also turned up a second deviation
+nobody had argued about at all — an absent scope, which CycloneDX says a
+consumer should assume is `required`, was read as no scope and dropped from
+every runtime filter (issue #63).
 
 ### Reading a node of any kind
 

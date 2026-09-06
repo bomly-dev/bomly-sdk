@@ -72,9 +72,9 @@ func CycloneDXScope(scopes []Scope) string {
 }
 
 // ScopesFromCycloneDX derives a scope set from CycloneDX's scalar scope, for a
-// document Bomly did not write. It returns nil when the value says nothing,
-// which is also what an unrecognized value gives: a scope Bomly cannot read is
-// not a scope it should guess at.
+// document Bomly did not write. It returns nil for a value it cannot read: a
+// scope spelled in a vocabulary that is not CycloneDX's is not a scope to
+// guess at.
 //
 // The mapping is the specification's reading of its own vocabulary, not a
 // judgment call made here. CycloneDX states it normatively: "required" is
@@ -98,9 +98,29 @@ func CycloneDXScope(scopes []Scope) string {
 // conforming document wrongly to accommodate the ones that are not. Bomly's
 // own documents never reach this mapping: CycloneDXScopeProperty carries their
 // full scope set, and the scalar is read only when that carrier is absent.
+//
+// An absent scope reads as runtime, for the same reason. The attribute is
+// optional and most documents Bomly did not write omit it, and CycloneDX tells
+// a consumer what to do with that: scope "SHOULD be assumed" to be "required"
+// when it is not specified, which the schema restates as a "required" default.
+// An absent attribute decodes to the empty string, so that -- and a value that
+// is only space, which no conforming document writes -- is what "not
+// specified" looks like here. Reading an unscoped component as unscoped
+// instead dropped it from every runtime filter, which was a false negative on
+// the majority of foreign documents rather than an edge case. The default
+// lives in this mapping rather than at each ingest site for the reason the
+// rest of it does: a second copy is how two readings come to disagree.
+//
+// A value that is present but unreadable is not defaulted. "Not specified" and
+// "spelled something this build cannot read" are different statements, and
+// only the first is the one CycloneDX assigns a default to; the second has an
+// unknown meaning, where answering "runtime" would put a claim in the graph
+// that nothing in the document supports. Such a value still returns nil, and
+// the caller decides what to do with a component whose scope it could not
+// read.
 func ScopesFromCycloneDX(value string) []Scope {
 	switch cdx.Scope(strings.ToLower(strings.TrimSpace(value))) {
-	case cdx.ScopeRequired:
+	case cdx.ScopeRequired, "":
 		return []Scope{ScopeRuntime}
 	case cdx.ScopeOptional, cdx.ScopeExcluded:
 		return []Scope{ScopeDevelopment}
@@ -354,6 +374,10 @@ func CycloneDXScopeForExport(scopes []Scope, sourceScope string) string {
 // scope entirely because the richer field was unreadable would lose more
 // than it protects. A caller that wants to surface the unknown tokens reads
 // the carrier with DecodeScopeSetLenient itself.
+//
+// A component with neither -- no carrier and no scope attribute -- takes
+// CycloneDX's default for an unspecified scope, which is runtime, since that
+// is what falling through to the scalar reading means for an absent scalar.
 func ScopesFromCycloneDXComponent(scope, carrier string) []Scope {
 	if decoded, err := DecodeScopeSetLenient(carrier); err == nil && len(decoded.Scopes) > 0 {
 		return decoded.Scopes

@@ -66,6 +66,20 @@ func TestSourceScopeSurvivesARoundTripUnlessTheSetChanged(t *testing.T) {
 	}
 }
 
+// A component that stated no scope is ingested at CycloneDX's default for an
+// unspecified scope, so it exports as an explicit "required" rather than as
+// nothing. That is a visible difference in the written document, and it is
+// deliberate: the source asserted no word to re-emit, and "required" is what
+// the specification says an unspecified scope means, so writing it states the
+// reading Bomly actually applied instead of leaving the next consumer to
+// re-derive it.
+func TestAnUnscopedComponentExportsTheDefaultExplicitly(t *testing.T) {
+	scopes := ScopesFromCycloneDX("")
+	if got := CycloneDXScopeForExport(scopes, ""); got != string(cdx.ScopeRequired) {
+		t.Errorf("export = %q, want the default written as %q", got, cdx.ScopeRequired)
+	}
+}
+
 // The gate: a scope scalar is one token. It is applied on both wire
 // directions and when a prototype is copied, so no call site can bypass it.
 func TestSourceScopeIsGated(t *testing.T) {
