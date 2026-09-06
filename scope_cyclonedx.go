@@ -129,6 +129,19 @@ type ScopeSetDecoding struct {
 	Unknown []string
 }
 
+// isPrintableASCII reports whether every byte of a value is printable ASCII
+// (space through tilde). It is the domain of a carrier value as a whole:
+// tokens, commas, and space padding, nothing that trimming might silently
+// remove before a token is judged.
+func isPrintableASCII(value string) bool {
+	for i := 0; i < len(value); i++ {
+		if value[i] < 0x20 || value[i] > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
 // isScopeTokenShaped reports whether a token this build does not know still
 // has the shape of a scope token, so that it can be one a newer build wrote,
 // rather than structure a carrier would never contain. The shape is the one
@@ -183,15 +196,19 @@ func DecodeScopeSetLenient(value string) (ScopeSetDecoding, error) {
 	if len(value) > maxScopeSetCarrierLength {
 		return ScopeSetDecoding{}, fmt.Errorf("scope set is %d bytes, over the %d byte limit", len(value), maxScopeSetCarrierLength)
 	}
-	// A carrier is a single-line property value, and Bomly writes nothing
-	// into one but tokens and commas. A control character anywhere in it --
-	// a line break, a tab -- is corruption, not padding, and is refused on
-	// the raw value before anything is trimmed: trimming first let a field
-	// such as "\nfuture" shed the control character and pass the shape
-	// check as a well-formed unknown token, so a malformed carrier could
-	// still take precedence over a valid scalar scope.
-	if containsControlChar(value) {
-		return ScopeSetDecoding{}, fmt.Errorf("scope set %q contains a control character", value)
+	// A carrier is printable ASCII: Bomly writes nothing into one but
+	// tokens and commas, and a space is the only padding tolerated. Anything
+	// else in the raw value -- a C0 or C1 control, a Unicode space, any
+	// non-ASCII rune -- is corruption, not padding, and is refused before
+	// anything is trimmed. The check is on the whole class rather than on a
+	// list of characters because trimming is Unicode-aware, in the field
+	// split here and inside ParseScope: a next-line character or a no-break
+	// space at a field's edge was shed before the shape check saw the
+	// field, so "development,\u0085future" read as a carrier naming a future
+	// scope and took precedence over a valid scalar. Enumerating controls
+	// closed C0 and left C1 open; the class closes both and the spaces.
+	if !isPrintableASCII(value) {
+		return ScopeSetDecoding{}, fmt.Errorf("scope set %q is not printable ASCII", value)
 	}
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {

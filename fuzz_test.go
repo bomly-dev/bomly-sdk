@@ -767,8 +767,8 @@ func FuzzDecodeScopeSet(f *testing.F) {
 		// fails where the strict one succeeds. Unknown tokens are reported,
 		// never silently dropped, and never re-encoded as a scope.
 		lenient, lerr := DecodeScopeSetLenient(raw)
-		if lerr == nil && containsControlChar(raw) {
-			t.Fatalf("a carrier with a control character was read: %q -> %+v", raw, lenient)
+		if lerr == nil && !isPrintableASCII(raw) {
+			t.Fatalf("a carrier that is not printable ASCII was read: %q -> %+v", raw, lenient)
 		}
 		if err == nil && (lerr != nil || len(lenient.Unknown) != 0 || EncodeScopeSet(lenient.Scopes) != EncodeScopeSet(scopes)) {
 			t.Fatalf("lenient and strict disagree on %q: %+v/%v vs %v", raw, lenient, lerr, scopes)

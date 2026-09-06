@@ -184,6 +184,11 @@ func TestCarrierDecodingIsLenientAboutUnknownTokens(t *testing.T) {
 		// in it is corruption, not padding -- around a known token as much
 		// as an unknown one.
 		"runtime,\nfuture", "runtime,\tfuture", "runtime,\ndevelopment", "\nruntime",
+		// Trimming is Unicode-aware, so the rule is the class -- printable
+		// ASCII -- not a list of characters: a C1 next-line control, a
+		// no-break space, and an em space were all shed by TrimSpace before
+		// the shape check saw the field.
+		"development,\u0085future", "runtime,\u00a0future", "runtime,\u2003development", "\u00a0runtime",
 	} {
 		if decoded, err := DecodeScopeSetLenient(value); err == nil {
 			t.Errorf("DecodeScopeSetLenient(%q) accepted, giving %+v", value, decoded)
