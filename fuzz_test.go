@@ -897,6 +897,13 @@ func FuzzDocumentAssertions(f *testing.F) {
 		if normalized.Version < 0 {
 			t.Fatalf("a non-positive version survived the gate: %d", normalized.Version)
 		}
+		// A stated version never contradicts the version a BOM-Link identity
+		// names in its tail.
+		if normalized.Version != 0 && cdx.IsBOMLink(normalized.Identity) {
+			if link, err := cdx.ParseBOMLink(normalized.Identity); err == nil && link.Version() != normalized.Version {
+				t.Fatalf("version %d contradicts BOM-Link %q", normalized.Version, normalized.Identity)
+			}
+		}
 		if normalized.Checksum != nil {
 			if err := normalized.Checksum.Validate(); err != nil {
 				t.Fatalf("an unpublishable checksum survived the gate: %+v: %v", normalized.Checksum, err)

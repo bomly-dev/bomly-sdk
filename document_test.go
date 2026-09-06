@@ -208,6 +208,26 @@ func TestDocumentVersionAndChecksumAreGatedAndFillGaps(t *testing.T) {
 		}
 	}
 
+	// A BOM-Link identity names its version in the tail, and a stated
+	// version that disagrees with it is a self-contradiction: the identity
+	// wins and the version is dropped. An agreeing one is kept, and an SPDX
+	// namespace carries no version to disagree with.
+	bomLink := "urn:cdx:3e671687-395b-41f5-a30f-a58921a69b79/1"
+	for name, tc := range map[string]struct {
+		in   DocumentAssertions
+		want int
+	}{
+		"bom-link agrees":    {DocumentAssertions{Identity: bomLink, Version: 1}, 1},
+		"bom-link disagrees": {DocumentAssertions{Identity: bomLink, Version: 2}, 0},
+		"bom-link unstated":  {DocumentAssertions{Identity: bomLink}, 0},
+		"spdx namespace":     {DocumentAssertions{Identity: good.Identity, Version: 2}, 2},
+	} {
+		got, _ := tc.in.Normalized()
+		if got.Version != tc.want || got.Identity != tc.in.Identity {
+			t.Errorf("%s: version = %d, identity = %q; want %d and the identity kept", name, got.Version, got.Identity, tc.want)
+		}
+	}
+
 	// A checksum alone is a publishable record: it is the field the SPDX
 	// link cannot do without.
 	if _, ok := (DocumentAssertions{Checksum: good.Checksum}).Normalized(); !ok {

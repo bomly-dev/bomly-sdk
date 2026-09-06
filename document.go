@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	cdx "github.com/CycloneDX/cyclonedx-go"
 )
 
 // Both formats carry claims about the document itself, distinct from claims
@@ -152,6 +154,21 @@ func (d DocumentAssertions) Normalized() (DocumentAssertions, bool) {
 	// is not a version a document stated.
 	if d.Version > 0 {
 		normalized.Version = d.Version
+	}
+	// A BOM-Link identity carries the document version in its tail, and the
+	// two are one claim. A payload stating urn:cdx:<serial>/1 beside
+	// Version 2 is contradicting itself, and carrying both would let an
+	// export identify version 1 while asserting version 2. The stated
+	// version is the one dropped: the identity is the link a merged export
+	// needs, and it still says which version it names. The grammar is
+	// cyclonedx-go's -- ParseBOMLink reads the tail; nothing is parsed here.
+	// An SPDX namespace carries no version, so any stated one stands there.
+	// A missing version is not filled from the link: that would write a
+	// version onto every existing BOM-Link payload that never stated one.
+	if normalized.Version != 0 && cdx.IsBOMLink(normalized.Identity) {
+		if link, err := cdx.ParseBOMLink(normalized.Identity); err == nil && link.Version() != normalized.Version {
+			normalized.Version = 0
+		}
 	}
 	// The checksum takes the digest gate as a whole: an unpublishable digest
 	// is dropped rather than carried as a zero record, which is what Digest's
