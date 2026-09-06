@@ -161,6 +161,83 @@ func TestMergeDocumentAssertions(t *testing.T) {
 	}
 }
 
+// A merged SPDX export names its sources through externalDocumentRefs, and
+// SPDX 2.3 requires a checksum on every one -- so without a checksum on the
+// carrier the export could not link its sources at all. The digest is
+// captured at ingest while the bytes are in hand; the version rides beside
+// it because a BOM-Link needs it and SPDX records it.
+func TestDocumentVersionAndChecksumAreGatedAndFillGaps(t *testing.T) {
+	good := DocumentAssertions{
+		Identity: "https://example.test/spdxdocs/app",
+		Version:  2,
+		Checksum: &Digest{Algorithm: "SHA-256", Value: "  d1e8a70b5ccab1dc2f56bbf7e99f064a660c08e361a35751b9c483c88943d082  "},
+	}
+	normalized, ok := good.Normalized()
+	if !ok {
+		t.Fatal("a document with a version and checksum was rejected")
+	}
+	if normalized.Version != 2 {
+		t.Errorf("Version = %d, want 2", normalized.Version)
+	}
+	if normalized.Checksum == nil || normalized.Checksum.Algorithm != DigestAlgorithmSHA256 ||
+		normalized.Checksum.Value != "d1e8a70b5ccab1dc2f56bbf7e99f064a660c08e361a35751b9c483c88943d082" {
+		t.Errorf("Checksum = %+v, want the digest gate's canonical form", normalized.Checksum)
+	}
+
+	// The gates: a non-positive version is not one a document stated, and
+	// an unpublishable digest is dropped whole rather than carried as a zero
+	// record. Each field is independent of the others, as the rest are.
+	for name, bad := range map[string]DocumentAssertions{
+		"zero version":      {Identity: good.Identity, Version: 0},
+		"negative version":  {Identity: good.Identity, Version: -1},
+		"unknown algorithm": {Identity: good.Identity, Checksum: &Digest{Algorithm: "CRC32", Value: "abcd"}},
+		"empty value":       {Identity: good.Identity, Checksum: &Digest{Algorithm: "SHA-256", Value: "   "}},
+		"value with space":  {Identity: good.Identity, Checksum: &Digest{Algorithm: "SHA-256", Value: "ab cd"}},
+	} {
+		got, ok := bad.Normalized()
+		if !ok || got.Identity != good.Identity {
+			t.Errorf("%s: the identity was lost with the bad field: ok=%v %+v", name, ok, got)
+		}
+		if got.Version != 0 || got.Checksum != nil {
+			t.Errorf("%s: an ungated value survived: version=%d checksum=%+v", name, got.Version, got.Checksum)
+		}
+	}
+
+	// A checksum alone is a publishable record: it is the field the SPDX
+	// link cannot do without.
+	if _, ok := (DocumentAssertions{Checksum: good.Checksum}).Normalized(); !ok {
+		t.Error("a document carrying only a checksum was reported empty")
+	}
+
+	// Merge class, both fields: fill-gaps. Two documents' bytes are not the
+	// same bytes, and their versions are not comparable, so the first stated
+	// value stands.
+	other := DocumentAssertions{
+		Version:  7,
+		Checksum: &Digest{Algorithm: "SHA-1", Value: "da39a3ee5e6b4b0d3255bfef95601890afd80709"},
+	}
+	merged := MergeDocumentAssertions(good, other)
+	if merged.Version != 2 || merged.Checksum == nil || merged.Checksum.Algorithm != DigestAlgorithmSHA256 {
+		t.Errorf("a stated version or checksum was overwritten: %+v %+v", merged.Version, merged.Checksum)
+	}
+	filled := MergeDocumentAssertions(DocumentAssertions{Identity: good.Identity}, other)
+	if filled.Version != 7 || filled.Checksum == nil || filled.Checksum.Algorithm != DigestAlgorithmSHA1 {
+		t.Errorf("a gap was not filled: %+v %+v", filled.Version, filled.Checksum)
+	}
+	// The merge does not alias its inputs.
+	filled.Checksum.Value = "changed"
+	if other.Checksum.Value == "changed" {
+		t.Error("the merged checksum aliases the source digest")
+	}
+
+	// Clone is deep for the pointer too.
+	clone := normalized.Clone()
+	clone.Checksum.Value = "changed"
+	if normalized.Checksum.Value == "changed" {
+		t.Error("Clone aliased the checksum")
+	}
+}
+
 // TestMergeIsOrderIndependentForLists pins that two entries merged in either
 // order credit the same creators and tools, so a merged document does not
 // depend on which source was read first.
@@ -187,6 +264,23 @@ func TestGraphEntryDocumentIsOmitEmpty(t *testing.T) {
 	}
 	if _, present := decoded["document"]; present {
 		t.Error("an entry with no document wrote the field")
+	}
+
+	// The additive fields on the document itself vanish when unstated, so a
+	// document that never stated a version or checksum writes the exact
+	// bytes it wrote before the fields existed -- which is also why an
+	// unstated version is zero here and not the format default of one.
+	data, err = json.Marshal(DocumentAssertions{Identity: "https://example.test/spdxdocs/app"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, field := range []string{"version", "checksum"} {
+		if _, present := decoded[field]; present {
+			t.Errorf("an unstated %q was written to the wire", field)
+		}
 	}
 }
 

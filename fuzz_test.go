@@ -869,6 +869,11 @@ func FuzzDocumentAssertions(f *testing.F) {
 			Comment:     raw,
 			Creators:    []Contact{{Kind: ContactKindOrganization, Name: raw}},
 			Tools:       []DocumentTool{{Vendor: raw, Name: raw, Version: raw}},
+			// A signed version derived from the input, so both sides of the
+			// positive gate are reached; the checksum takes the raw value
+			// as both algorithm and digest.
+			Version:  len(raw) - 8,
+			Checksum: &Digest{Algorithm: DigestAlgorithm(raw), Value: raw},
 		}
 		normalized, ok := assertions.Normalized()
 		if !ok && !normalized.IsEmpty() {
@@ -884,8 +889,18 @@ func FuzzDocumentAssertions(f *testing.F) {
 		if again.Identity != normalized.Identity || again.Name != normalized.Name ||
 			again.DataLicense != normalized.DataLicense || again.Created != normalized.Created ||
 			again.Comment != normalized.Comment || len(again.Creators) != len(normalized.Creators) ||
-			len(again.Tools) != len(normalized.Tools) {
+			len(again.Tools) != len(normalized.Tools) || again.Version != normalized.Version ||
+			(again.Checksum == nil) != (normalized.Checksum == nil) ||
+			(again.Checksum != nil && *again.Checksum != *normalized.Checksum) {
 			t.Fatalf("normalizing is not a fixed point:\n%+v\n%+v", normalized, again)
+		}
+		if normalized.Version < 0 {
+			t.Fatalf("a non-positive version survived the gate: %d", normalized.Version)
+		}
+		if normalized.Checksum != nil {
+			if err := normalized.Checksum.Validate(); err != nil {
+				t.Fatalf("an unpublishable checksum survived the gate: %+v: %v", normalized.Checksum, err)
+			}
 		}
 		// Nothing published carries a control character, which would corrupt
 		// SPDX's line-oriented tag form.

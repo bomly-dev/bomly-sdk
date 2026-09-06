@@ -81,6 +81,26 @@ type DocumentAssertions struct {
 	Tools []DocumentTool `json:"tools,omitempty"`
 	// Comment is the document-level comment.
 	Comment string `json:"comment,omitempty"`
+	// Version is the document's own version number: CycloneDX's top-level
+	// version, which a BOM-Link's "/<n>" tail repeats, and which SPDX 2.x
+	// leaves implicit at 1. Zero means the source stated none; the default is
+	// the exporting format's to apply, not this carrier's, so an entry that
+	// never stated a version keeps writing the bytes it wrote before the
+	// field existed.
+	//
+	// Gate: a positive integer, else absent. Merge class: scalar, fill-gaps
+	// -- two documents' versions are not comparable, so a stated one stands.
+	Version int `json:"version,omitempty"`
+	// Checksum is a digest over the source document's original bytes,
+	// computed at ingest while those bytes are in hand: it cannot be
+	// recovered from the parsed model later, and an SPDX externalDocumentRef
+	// is invalid without one, so a merged export that lacks it cannot name
+	// its sources at all.
+	//
+	// Gate: Digest.Normalized, the same one a package digest passes. Merge
+	// class: scalar, fill-gaps -- two documents' bytes are not the same
+	// bytes, so a stated checksum stands and a second one is dropped.
+	Checksum *Digest `json:"checksum,omitempty"`
 }
 
 // Normalized returns the assertions with every field held to its gate, and
@@ -123,6 +143,19 @@ func (d DocumentAssertions) Normalized() (DocumentAssertions, bool) {
 	if len(normalized.Comment) > maxDocumentFieldLength {
 		normalized.Comment = ""
 	}
+	// A version is a count, and both formats count from one. Anything else
+	// is not a version a document stated.
+	if d.Version > 0 {
+		normalized.Version = d.Version
+	}
+	// The checksum takes the digest gate as a whole: an unpublishable digest
+	// is dropped rather than carried as a zero record, which is what Digest's
+	// own codec does with one.
+	if d.Checksum != nil {
+		if checksum, ok := d.Checksum.Normalized(); ok {
+			normalized.Checksum = &checksum
+		}
+	}
 
 	for _, creator := range d.Creators {
 		if contact, ok := creator.Normalized(); ok {
@@ -149,7 +182,8 @@ func (d DocumentAssertions) Normalized() (DocumentAssertions, bool) {
 // IsEmpty reports whether the assertions carry nothing.
 func (d DocumentAssertions) IsEmpty() bool {
 	return d.Identity == "" && d.Name == "" && d.DataLicense == "" &&
-		d.Created == "" && d.Comment == "" && len(d.Creators) == 0 && len(d.Tools) == 0
+		d.Created == "" && d.Comment == "" && len(d.Creators) == 0 && len(d.Tools) == 0 &&
+		d.Version == 0 && d.Checksum == nil
 }
 
 // Clone returns a deep copy.
@@ -160,6 +194,10 @@ func (d DocumentAssertions) Clone() DocumentAssertions {
 	}
 	if len(d.Tools) > 0 {
 		clone.Tools = append([]DocumentTool(nil), d.Tools...)
+	}
+	if d.Checksum != nil {
+		checksum := *d.Checksum
+		clone.Checksum = &checksum
 	}
 	return clone
 }
@@ -188,6 +226,14 @@ func MergeDocumentAssertions(dst, src DocumentAssertions) DocumentAssertions {
 	merged.DataLicense = MergeFillGap(left.DataLicense, right.DataLicense, nil)
 	merged.Created = MergeFillGap(left.Created, right.Created, nil)
 	merged.Comment = MergeFillGap(left.Comment, right.Comment, nil)
+	merged.Version = MergeFillGap(left.Version, right.Version, nil)
+	// Fill-gaps on the pointer: both sides were gated above, so a non-nil
+	// checksum is a publishable one, and the first stated digest stands.
+	// Cloned, so the merged record does not alias either input.
+	if merged.Checksum = MergeFillGap(left.Checksum, right.Checksum, nil); merged.Checksum != nil {
+		checksum := *merged.Checksum
+		merged.Checksum = &checksum
+	}
 	merged.Creators = MergeUnion(left.Creators, right.Creators, creatorKey, nil)
 	merged.Tools = MergeUnion(left.Tools, right.Tools, toolKey, nil)
 	return merged
