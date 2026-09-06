@@ -910,6 +910,13 @@ func FuzzDocumentAssertions(f *testing.F) {
 			// as both algorithm and digest.
 			Version:  len(raw) - 8,
 			Checksum: &Digest{Algorithm: DigestAlgorithm(raw), Value: raw},
+			// Twice, so folding is exercised; the identity itself, so the
+			// self-reference rule is; and a stated version and checksum,
+			// so the shared tuple gates run on a source too.
+			Sources: []DocumentSource{
+				{Identity: raw}, {Identity: raw, Version: len(raw) - 8, Checksum: &Digest{Algorithm: DigestAlgorithm(raw), Value: raw}},
+				{Identity: "https://example.test/spdxdocs/app"}, {Identity: raw},
+			},
 		}
 		normalized, ok := assertions.Normalized()
 		if !ok && !normalized.IsEmpty() {
@@ -926,6 +933,7 @@ func FuzzDocumentAssertions(f *testing.F) {
 			again.DataLicense != normalized.DataLicense || again.Created != normalized.Created ||
 			again.Comment != normalized.Comment || len(again.Creators) != len(normalized.Creators) ||
 			len(again.Tools) != len(normalized.Tools) || again.Version != normalized.Version ||
+			!sameDocumentSources(again.Sources, normalized.Sources) ||
 			(again.Checksum == nil) != (normalized.Checksum == nil) ||
 			(again.Checksum != nil && *again.Checksum != *normalized.Checksum) {
 			t.Fatalf("normalizing is not a fixed point:\n%+v\n%+v", normalized, again)
@@ -943,6 +951,25 @@ func FuzzDocumentAssertions(f *testing.F) {
 		if normalized.Checksum != nil {
 			if err := normalized.Checksum.Validate(); err != nil {
 				t.Fatalf("an unpublishable checksum survived the gate: %+v: %v", normalized.Checksum, err)
+			}
+		}
+		// Sources are sorted, folded by document, bounded, never the document
+		// itself, and each passes the tuple gates the document itself passes.
+		if len(normalized.Sources) > maxDocumentSources {
+			t.Fatalf("%d sources survived a bound of %d", len(normalized.Sources), maxDocumentSources)
+		}
+		for i, source := range normalized.Sources {
+			if source.Identity == "" || isSelfSource(normalized.Identity, normalized.Version, source) {
+				t.Fatalf("a source names nothing or the document itself: %+v", source)
+			}
+			if source.Version < 0 || (source.Checksum != nil && (source.Checksum.Validate() != nil || source.Checksum.Subject != DigestSubjectArtifact)) {
+				t.Fatalf("an ungated source survived: %+v", source)
+			}
+			if i > 0 {
+				prev := normalized.Sources[i-1]
+				if prev.Identity > source.Identity || (prev.Identity == source.Identity && prev.Version >= source.Version) {
+					t.Fatalf("sources are not sorted and folded by exact key: %+v", normalized.Sources)
+				}
 			}
 		}
 		// The codec applies the same gates, so the ungated value and its
@@ -985,6 +1012,69 @@ func FuzzDocumentAssertions(f *testing.F) {
 		if merged := MergeDocumentAssertions(DocumentAssertions{}, assertions); containsControlChar(merged.Name) {
 			t.Fatalf("a merge admitted a control character: %q", merged.Name)
 		}
+	})
+}
+
+// sameDocumentSources compares two source lists element by element,
+// checksum contents included, so a pass that changed an element while
+// keeping the count is caught.
+func sameDocumentSources(a, b []DocumentSource) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Identity != b[i].Identity || a[i].Version != b[i].Version ||
+			(a[i].Checksum == nil) != (b[i].Checksum == nil) ||
+			(a[i].Checksum != nil && *a[i].Checksum != *b[i].Checksum) {
+			return false
+		}
+	}
+	return true
+}
+
+// The sources array is read by a streaming decoder written here, so it is a
+// parser of untrusted input and gets its own fuzz target over raw bytes:
+// malformed arrays, elements of the wrong type, truncation, duplicate keys,
+// and over-bound lists all reach its token loop, which the typed fuzz target
+// above never does. Whatever the bytes, decoding never panics, a decoded
+// record is within the bound, and a decoded record survives the codec as a
+// fixed point.
+func FuzzDocumentAssertionsJSON(f *testing.F) {
+	for _, seed := range []string{
+		`{}`, `null`, `{"sources":null}`, `{"sources":[]}`, `{"sources":[{}]}`,
+		`{"identity":"https://example.test/spdxdocs/app","sources":[{"identity":"urn:cdx:3e671687-395b-41f5-a30f-a58921a69b79/1","version":1,"checksum":{"algorithm":"SHA-256","value":"d1e8a70b5ccab1dc2f56bbf7e99f064a660c08e361a35751b9c483c88943d082"}}]}`,
+		`{"sources":[1,"two",null,[],{"identity":3}]}`, `{"sources":{"identity":"x"}}`, `{"sources":[{"identity":"a"`,
+		`{"sources":[{"identity":"https://a.test","identity":"https://b.test"}]}`, `{"sources":"x"}`, `[]`, ``, `{"sources":[`,
+		`{"sources":[],"sources":[]}`, `{"a":{"sources":[]},"sources":[{"identity":"https://a.test"}]}`, `{"sources":[{"identity":"https://a.test"}],"comment":"{\"sources\":[]}"}`,
+		`{"sources":[{"identity":"https://a.test/` + strings.Repeat("x", maxDocumentSourcesBytes) + `"}]}`,
+	} {
+		f.Add([]byte(seed))
+	}
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		if len(raw) > maxFuzzInputSize {
+			t.Skip("input exceeds fuzz bound")
+		}
+		var decoded DocumentAssertions
+		if err := json.Unmarshal(raw, &decoded); err != nil {
+			return
+		}
+		if len(decoded.Sources) > maxDocumentSources {
+			t.Fatalf("decoded %d sources, past the bound %d", len(decoded.Sources), maxDocumentSources)
+		}
+		encoded, err := json.Marshal(decoded)
+		if err != nil {
+			t.Fatalf("re-encode failed: %v", err)
+		}
+		var again DocumentAssertions
+		if err := json.Unmarshal(encoded, &again); err != nil {
+			t.Fatalf("re-decode failed for %s: %v", encoded, err)
+		}
+		if reencoded, _ := json.Marshal(again); string(reencoded) != string(encoded) {
+			t.Fatalf("codec is not a fixed point:\n%s\n%s", encoded, reencoded)
+		}
+		// The element decoder alone, on the same bytes, never panics either.
+		var sources boundedDocumentSources
+		_ = sources.UnmarshalJSON(raw)
 	})
 }
 

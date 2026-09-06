@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -267,6 +268,42 @@ func TestDocumentVersionAndChecksumAreGatedAndFillGaps(t *testing.T) {
 	if mixed.Identity != good.Identity || mixed.Version != 0 || mixed.Checksum != nil {
 		t.Errorf("document B's link fields were attached to document A: %+v", mixed)
 	}
+	// A version or checksum with no identity is a link to nothing yet: two
+	// identity-less records fill each other's gaps in either order, and an
+	// identity-less record yields the whole tuple to one with an identity in
+	// either order -- so the merge does not depend on which came first.
+	orphanVersion := DocumentAssertions{Version: 4}
+	orphanChecksum := DocumentAssertions{Checksum: documentB.Checksum}
+	for name, merged := range map[string]DocumentAssertions{
+		"orphans, version first":  MergeDocumentAssertions(orphanVersion, orphanChecksum),
+		"orphans, checksum first": MergeDocumentAssertions(orphanChecksum, orphanVersion),
+	} {
+		if merged.Identity != "" || merged.Version != 4 || merged.Checksum == nil || merged.Checksum.Algorithm != DigestAlgorithmSHA1 {
+			t.Errorf("%s: identity-less fields did not fill each other's gaps: %+v %+v", name, merged, merged.Checksum)
+		}
+	}
+	// Orphan fields fill independently, not gated on their versions
+	// agreeing, so grouping does not decide whether the checksum survives:
+	// (v1 + checksum) + v2 and v1 + (checksum + v2) agree, with the first
+	// stated version standing either way.
+	orphanV1 := DocumentAssertions{Version: 1}
+	orphanV2 := DocumentAssertions{Version: 2}
+	for name, merged := range map[string]DocumentAssertions{
+		"(v1+checksum)+v2": MergeDocumentAssertions(MergeDocumentAssertions(orphanV1, orphanChecksum), orphanV2),
+		"v1+(checksum+v2)": MergeDocumentAssertions(orphanV1, MergeDocumentAssertions(orphanChecksum, orphanV2)),
+	} {
+		if merged.Identity != "" || merged.Version != 1 || merged.Checksum == nil || merged.Checksum.Algorithm != DigestAlgorithmSHA1 {
+			t.Errorf("%s: grouping changed the orphan tuple: %+v %+v", name, merged, merged.Checksum)
+		}
+	}
+	for name, merged := range map[string]DocumentAssertions{
+		"orphan then identified": MergeDocumentAssertions(orphanChecksum, good),
+		"identified then orphan": MergeDocumentAssertions(good, orphanChecksum),
+	} {
+		if merged.Identity != good.Identity || merged.Version != 2 || merged.Checksum == nil || merged.Checksum.Algorithm != DigestAlgorithmSHA256 {
+			t.Errorf("%s: the identified tuple did not win whole: %+v %+v", name, merged, merged.Checksum)
+		}
+	}
 	// The same identity at two stated versions is two documents too: version
 	// 1 must not take version 2's hash.
 	conflict := MergeDocumentAssertions(
@@ -351,6 +388,270 @@ func TestDocumentAssertionsCodecAppliesTheGates(t *testing.T) {
 	}
 }
 
+// A merged export writes one link per source document, and until this field
+// existed those links were write-only: ingest had nowhere to put them, so a
+// merged inventory lost every trace of its inputs after one round trip. A
+// source is the link tuple, not a bare identity, because an SPDX
+// externalDocumentRef requires a checksum on every entry and the wire is
+// frozen once shipped.
+func TestDocumentSourcesAreGatedAndUnion(t *testing.T) {
+	self := "https://example.test/spdxdocs/merged"
+	a := "urn:cdx:3e671687-395b-41f5-a30f-a58921a69b79/1"
+	b := "https://example.test/spdxdocs/b"
+	sha := &Digest{Algorithm: "SHA-256", Value: "d1e8a70b5ccab1dc2f56bbf7e99f064a660c08e361a35751b9c483c88943d082"}
+	doc := DocumentAssertions{
+		Identity: self,
+		Version:  3,
+		Sources: []DocumentSource{
+			{Identity: b},                           // unsorted relative to a
+			{Identity: " " + a + " ", Version: 1},   // padded, agrees with its BOM-Link
+			{Identity: b, Checksum: sha},            // same key again: fills the checksum gap
+			{Identity: a, Version: 2},               // contradicts its BOM-Link: version dropped, then the tail fills it, so it folds into a/1
+			{Identity: self, Version: 3},            // a document is not built from itself
+			{Identity: self},                        // its own namespace at an unknown version: a different key, kept
+			{Identity: "not an iri", Checksum: sha}, // fails the identity gate, checksum cannot save it
+			{Identity: "file:///etc"},               // a local path is not a link a document can publish
+			{Identity: b, Checksum: &Digest{Algorithm: "SHA-256", Value: sha.Value, Subject: DigestSubjectSourceTree}}, // wrong object
+		},
+	}
+	got, ok := doc.Normalized()
+	if !ok {
+		t.Fatal("a document with sources was rejected")
+	}
+	want := []DocumentSource{
+		{Identity: b, Checksum: &Digest{Algorithm: DigestAlgorithmSHA256, Value: sha.Value}},
+		{Identity: self},
+		{Identity: a, Version: 1},
+	}
+	assertSources(t, "normalized", got.Sources, want)
+	// While the document's own version is unknown, even an unversioned
+	// entry of its own namespace is retained: the version may still be
+	// stated by a later merge, and a drop made now could not be undone.
+	unknownSelf, _ := DocumentAssertions{Identity: self, Sources: []DocumentSource{{Identity: self}}}.Normalized()
+	assertSources(t, "unknown own version", unknownSelf.Sources, []DocumentSource{{Identity: self}})
+
+	// A BOM-Link's tail proves its version, so a source stating it with or
+	// without the redundant field is one key, and a document that is that
+	// BOM-Link drops it as itself whether or not either side spelled the
+	// field out. An SPDX namespace has no tail, so there an unstated
+	// version stays its own key.
+	for name, in := range map[string]DocumentAssertions{
+		"document states, source omits": {Identity: a, Version: 1, Sources: []DocumentSource{{Identity: a}}},
+		"document omits, source states": {Identity: a, Sources: []DocumentSource{{Identity: a, Version: 1}}},
+		"both omit":                     {Identity: a, Sources: []DocumentSource{{Identity: a}}},
+	} {
+		got, _ := in.Normalized()
+		if len(got.Sources) != 0 {
+			t.Errorf("%s: a BOM-Link document kept itself as a source: %+v", name, got.Sources)
+		}
+	}
+	tailFilled, _ := DocumentAssertions{Identity: self, Sources: []DocumentSource{{Identity: a}, {Identity: a, Version: 1, Checksum: sha}}}.Normalized()
+	assertSources(t, "tail fills the key", tailFilled.Sources, []DocumentSource{{Identity: a, Version: 1, Checksum: want[0].Checksum}})
+
+	// A prior version of the same namespace is provenance, not a cycle:
+	// version 2 built from version 1 keeps that source. Only the exact key
+	// -- the same identity and stated version -- is the cycle that drops;
+	// an unversioned entry of the same namespace is a different key and
+	// stays, as it would in the set.
+	versioned, _ := DocumentAssertions{Identity: b, Version: 2, Sources: []DocumentSource{
+		{Identity: b, Version: 1}, {Identity: b, Version: 2}, {Identity: b},
+	}}.Normalized()
+	assertSources(t, "prior version", versioned.Sources, []DocumentSource{{Identity: b}, {Identity: b, Version: 1}})
+	// And the drop is exact rather than compatible-version so that a
+	// document whose own version is filled by a later merge does not lose
+	// a source it would have kept had the version arrived first.
+	docX := DocumentAssertions{Identity: b}
+	docXv1 := DocumentAssertions{Identity: b, Version: 1}
+	fromXv2 := DocumentAssertions{Sources: []DocumentSource{{Identity: b, Version: 2}}}
+	wantKept := []DocumentSource{{Identity: b, Version: 2}}
+	assertSources(t, "(X+Xv1)+src", MergeDocumentAssertions(MergeDocumentAssertions(docX, docXv1), fromXv2).Sources, wantKept)
+	assertSources(t, "(X+src)+Xv1", MergeDocumentAssertions(MergeDocumentAssertions(docX, fromXv2), docXv1).Sources, wantKept)
+	// The same for an unversioned source of the document's own namespace:
+	// while the document's version is unknown it is retained, not dropped,
+	// because a drop made then cannot be undone once a later merge states
+	// the version -- and the groupings must agree.
+	fromX := DocumentAssertions{Sources: []DocumentSource{{Identity: b}}}
+	wantUnversioned := []DocumentSource{{Identity: b}}
+	assertSources(t, "(X+Xv1)+[X]", MergeDocumentAssertions(MergeDocumentAssertions(docX, docXv1), fromX).Sources, wantUnversioned)
+	assertSources(t, "(X+[X])+Xv1", MergeDocumentAssertions(MergeDocumentAssertions(docX, fromX), docXv1).Sources, wantUnversioned)
+	// Whereas a source that becomes the document itself once the version
+	// is known is dropped at that merge, whichever grouping reaches it.
+	fromXv1 := DocumentAssertions{Sources: []DocumentSource{{Identity: b, Version: 1}}}
+	assertSources(t, "(X+Xv1)+[Xv1]", MergeDocumentAssertions(MergeDocumentAssertions(docX, docXv1), fromXv1).Sources, nil)
+	assertSources(t, "(X+[Xv1])+Xv1", MergeDocumentAssertions(MergeDocumentAssertions(docX, fromXv1), docXv1).Sources, nil)
+
+	// The bound is applied to the input, before any gate runs: entries past
+	// it are not read at all, even when the ones before it are junk.
+	many := make([]DocumentSource, 0, maxDocumentSources+10)
+	for i := 0; i < maxDocumentSources+10; i++ {
+		many = append(many, DocumentSource{Identity: "https://example.test/spdxdocs/src-" + strconv.Itoa(i)})
+	}
+	bounded, _ := DocumentAssertions{Sources: many}.Normalized()
+	if len(bounded.Sources) != maxDocumentSources {
+		t.Fatalf("len(Sources) = %d, want the bound %d", len(bounded.Sources), maxDocumentSources)
+	}
+	junkThenGood := append(make([]DocumentSource, maxDocumentSources), DocumentSource{Identity: a})
+	if cut, _ := (DocumentAssertions{Sources: junkThenGood}).Normalized(); len(cut.Sources) != 0 {
+		t.Fatalf("an entry past the input bound was read: %+v", cut.Sources)
+	}
+	// Sources alone are a publishable record.
+	if _, ok := (DocumentAssertions{Sources: []DocumentSource{{Identity: a}}}).Normalized(); !ok {
+		t.Error("a document carrying only sources was reported empty")
+	}
+	// Two stated versions of one namespace are two documents.
+	twoVersions, _ := DocumentAssertions{Sources: []DocumentSource{{Identity: b, Version: 1}, {Identity: b, Version: 2}}}.Normalized()
+	assertSources(t, "two versions", twoVersions.Sources, []DocumentSource{{Identity: b, Version: 1}, {Identity: b, Version: 2}})
+	// An unversioned entry is its own key and is never folded into a stated
+	// version, however many or few there are: which one it belonged to is
+	// unknowable, and folding into "the one seen so far" made the answer
+	// depend on the order pairwise merges arrived in. The set is keyed
+	// exactly, so every arrangement of the same inputs gives the same set.
+	shaDigest := Digest{Algorithm: DigestAlgorithmSHA256, Value: sha.Value}
+	for name, in := range map[string][]DocumentSource{
+		"unversioned first": {{Identity: b, Checksum: sha}, {Identity: b, Version: 1}},
+		"unversioned last":  {{Identity: b, Version: 1}, {Identity: b, Checksum: sha}},
+	} {
+		got, _ := DocumentAssertions{Sources: in}.Normalized()
+		assertSources(t, name, got.Sources, []DocumentSource{{Identity: b, Checksum: &shaDigest}, {Identity: b, Version: 1}})
+	}
+	for name, in := range map[string][]DocumentSource{
+		"ambiguous, unversioned first":  {{Identity: b, Checksum: sha}, {Identity: b, Version: 1}, {Identity: b, Version: 2}},
+		"ambiguous, unversioned middle": {{Identity: b, Version: 1}, {Identity: b, Checksum: sha}, {Identity: b, Version: 2}},
+		"ambiguous, unversioned last":   {{Identity: b, Version: 2}, {Identity: b, Version: 1}, {Identity: b, Checksum: sha}},
+	} {
+		got, _ := DocumentAssertions{Sources: in}.Normalized()
+		assertSources(t, name, got.Sources, []DocumentSource{
+			{Identity: b, Checksum: &shaDigest}, {Identity: b, Version: 1}, {Identity: b, Version: 2},
+		})
+	}
+	// The bound on a merge is applied to the sorted union, so which sources
+	// survive an over-full union does not depend on operand order: two
+	// records each carrying a full, disjoint list merge to the same set
+	// either way round, rather than to whichever operand came first.
+	fullA := make([]DocumentSource, 0, maxDocumentSources)
+	fullB := make([]DocumentSource, 0, maxDocumentSources)
+	for i := 0; i < maxDocumentSources; i++ {
+		fullA = append(fullA, DocumentSource{Identity: "https://a.test/spdxdocs/" + strconv.Itoa(i)})
+		fullB = append(fullB, DocumentSource{Identity: "https://b.test/spdxdocs/" + strconv.Itoa(i)})
+	}
+	ab := MergeDocumentAssertions(DocumentAssertions{Identity: self, Sources: fullA}, DocumentAssertions{Identity: self, Sources: fullB})
+	ba := MergeDocumentAssertions(DocumentAssertions{Identity: self, Sources: fullB}, DocumentAssertions{Identity: self, Sources: fullA})
+	if len(ab.Sources) != maxDocumentSources {
+		t.Fatalf("merged union kept %d sources, want the bound %d", len(ab.Sources), maxDocumentSources)
+	}
+	assertSources(t, "over-full union, either order", ab.Sources, ba.Sources)
+
+	// Associative under pairwise merges: three records contributing the
+	// unversioned checksum, version 1, and version 2 give the same set
+	// whichever two merge first.
+	u := DocumentAssertions{Sources: []DocumentSource{{Identity: b, Checksum: sha}}}
+	v1 := DocumentAssertions{Sources: []DocumentSource{{Identity: b, Version: 1}}}
+	v2 := DocumentAssertions{Sources: []DocumentSource{{Identity: b, Version: 2}}}
+	wantAll := []DocumentSource{{Identity: b, Checksum: &shaDigest}, {Identity: b, Version: 1}, {Identity: b, Version: 2}}
+	assertSources(t, "(u+v1)+v2", MergeDocumentAssertions(MergeDocumentAssertions(u, v1), v2).Sources, wantAll)
+	assertSources(t, "(u+v2)+v1", MergeDocumentAssertions(MergeDocumentAssertions(u, v2), v1).Sources, wantAll)
+	assertSources(t, "(v1+v2)+u", MergeDocumentAssertions(MergeDocumentAssertions(v1, v2), u).Sources, wantAll)
+
+	// The bound holds at decode too: entries past it are not decoded, so a
+	// payload of many sources costs at most the bound in element decodes.
+	var payload strings.Builder
+	payload.WriteString(`{"identity":"` + self + `","sources":[`)
+	for i := 0; i < maxDocumentSources+50; i++ {
+		if i > 0 {
+			payload.WriteString(",")
+		}
+		payload.WriteString(`{"identity":"https://example.test/spdxdocs/src-` + strconv.Itoa(i) + `"}`)
+	}
+	payload.WriteString(`]}`)
+	var decodedMany DocumentAssertions
+	if err := json.Unmarshal([]byte(payload.String()), &decodedMany); err != nil {
+		t.Fatal(err)
+	}
+	if len(decodedMany.Sources) != maxDocumentSources {
+		t.Fatalf("decoded %d sources, want the bound %d", len(decodedMany.Sources), maxDocumentSources)
+	}
+
+	// Merge class: set, unioned by document, and the merged record's own
+	// identity never lands among its sources. Each side is gated first, so a
+	// side's own identity is already out of its list; which identity the
+	// merged record keeps decides what drops from the union.
+	left := DocumentAssertions{Identity: self, Version: 3, Sources: []DocumentSource{{Identity: a, Version: 1}}}
+	right := DocumentAssertions{Identity: b, Version: 1, Sources: []DocumentSource{{Identity: b, Version: 1}, {Identity: self, Version: 3}, {Identity: a, Version: 1, Checksum: sha}}}
+	one := MergeDocumentAssertions(left, right)
+	assertSources(t, "merged", one.Sources, []DocumentSource{{Identity: a, Version: 1, Checksum: want[0].Checksum}})
+	two := MergeDocumentAssertions(right, left)
+	assertSources(t, "merged (other order)", two.Sources, []DocumentSource{
+		{Identity: self, Version: 3},
+		{Identity: a, Version: 1, Checksum: want[0].Checksum},
+	})
+
+	// Through the codec, gated on both directions, and the element's own
+	// codec holds a hand-built source to the gate too.
+	data, err := json.Marshal(DocumentAssertions{Identity: self, Version: 3, Sources: []DocumentSource{{Identity: self, Version: 3}, {Identity: "not an iri"}, {Identity: a, Version: 2}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded DocumentAssertions
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	assertSources(t, "codec", decoded.Sources, []DocumentSource{{Identity: a, Version: 1}})
+	element, err := json.Marshal(DocumentSource{Identity: a, Version: 2, Checksum: &Digest{Algorithm: "CRC32", Value: "x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(element) != `{"identity":"`+a+`","version":1}` {
+		t.Errorf("a hand-built source was written ungated: %s", element)
+	}
+	// A repeated top-level "sources" key would give each copy its own
+	// decode budget; Bomly never writes one, so it is refused outright --
+	// by the field decoder itself, which encoding/json calls once per
+	// occurrence on the same value; this pins that it does. A nested
+	// object's own "sources" key is not a top-level repeat.
+	var repeated DocumentAssertions
+	if err := json.Unmarshal([]byte(`{"sources":[{"identity":"https://a.test"}],"name":"x","sources":[{"identity":"https://b.test"}]}`), &repeated); err == nil || !strings.Contains(err.Error(), `"sources" key repeated`) {
+		t.Errorf("repeated sources key: err = %v, want it refused", err)
+	}
+	var nested DocumentAssertions
+	if err := json.Unmarshal([]byte(`{"sources":[{"identity":"https://a.test","checksum":{"sources":1}}],"comment":"{\"sources\":[]}"}`), &nested); err != nil {
+		t.Errorf("a nested or quoted sources key was mistaken for a top-level repeat: %v", err)
+	}
+	// The encoded array is byte-bounded before any element is decoded, so
+	// one element cannot carry megabytes the decoder would materialize
+	// before the field gates saw them. A list within the count bound but
+	// past the byte bound is refused whole.
+	var oversized DocumentAssertions
+	if err := json.Unmarshal([]byte(`{"sources":[{"identity":"https://a.test/`+strings.Repeat("x", maxDocumentSourcesBytes)+`"}]}`), &oversized); err == nil || !strings.Contains(err.Error(), "over the") {
+		t.Errorf("oversized sources array: err = %v, want it refused before decoding", err)
+	}
+	// A malformed element fails with the boundary named, so a caller can
+	// tell which nested record refused the payload.
+	var malformed DocumentAssertions
+	if err := json.Unmarshal([]byte(`{"sources":[{"identity":"https://a.test"},{"identity":5}]}`), &malformed); err == nil || !strings.Contains(err.Error(), "document sources[1]") {
+		t.Errorf("malformed source error = %v, want the sources boundary and index named", err)
+	}
+	// Clone does not alias.
+	clone := got.Clone()
+	clone.Sources[0].Checksum.Value = "changed"
+	if got.Sources[0].Checksum.Value == "changed" {
+		t.Error("Clone aliased a source checksum")
+	}
+}
+
+func assertSources(t *testing.T, label string, got, want []DocumentSource) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s: sources = %+v, want %+v", label, got, want)
+	}
+	for i := range got {
+		if got[i].Identity != want[i].Identity || got[i].Version != want[i].Version ||
+			(got[i].Checksum == nil) != (want[i].Checksum == nil) ||
+			(got[i].Checksum != nil && *got[i].Checksum != *want[i].Checksum) {
+			t.Fatalf("%s: sources[%d] = %+v (checksum %+v), want %+v (checksum %+v)", label, i, got[i], got[i].Checksum, want[i], want[i].Checksum)
+		}
+	}
+}
+
 // TestMergeIsOrderIndependentForLists pins that two entries merged in either
 // order credit the same creators and tools, so a merged document does not
 // depend on which source was read first.
@@ -390,10 +691,31 @@ func TestGraphEntryDocumentIsOmitEmpty(t *testing.T) {
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	for _, field := range []string{"version", "checksum"} {
+	for _, field := range []string{"version", "checksum", "sources"} {
 		if _, present := decoded[field]; present {
 			t.Errorf("an unstated %q was written to the wire", field)
 		}
+	}
+	// The nested source record is new v1 wire surface too, so its own
+	// optional fields are pinned here and its checksum key in the shared
+	// guard; the top-level check above never marshals one.
+	data, err = json.Marshal(DocumentSource{Identity: "https://example.test/spdxdocs/src"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	// A fresh map: Unmarshal merges into a non-nil one, and the check must
+	// see this record's keys alone.
+	decoded = nil
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, field := range []string{"version", "checksum"} {
+		if _, present := decoded[field]; present {
+			t.Errorf("an unstated source %q was written to the wire", field)
+		}
+	}
+	if _, present := decoded["identity"]; !present {
+		t.Error("a source's identity was not written")
 	}
 }
 

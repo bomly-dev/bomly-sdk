@@ -1,7 +1,9 @@
 package sdk
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -23,6 +25,22 @@ import (
 // maxDocumentFieldLength bounds a free-text document field. These arrive from
 // an untrusted SBOM and are written back into a document.
 const maxDocumentFieldLength = 4096
+
+// maxDocumentSources bounds the documents one document may claim to be built
+// from. A merged export names a handful; the allowance leaves room for a deep
+// merge history without letting an ingested document mint thousands of
+// external references on the next export. A count, kept dumb.
+const maxDocumentSources = 256
+
+// maxDocumentSourcesBytes bounds the encoded sources array before any element
+// of it is decoded. It is derived from what a source that passes its gates
+// can encode to -- a locator within maxLocatorLength, a digest value within
+// maxDigestValueLength, and a few hundred bytes of keys, algorithm, version,
+// and framing -- times the count bound, so every list that passes its gates
+// fits and the two bounds cannot drift apart. What it refuses is a single
+// element carrying megabytes that the decoder would parse and materialize
+// before the field gates ever saw them. Bytes, kept dumb.
+const maxDocumentSourcesBytes = maxDocumentSources * (maxLocatorLength + maxDigestValueLength + 512)
 
 // DocumentTool is one tool that produced a document.
 //
@@ -56,6 +74,222 @@ func (t DocumentTool) Normalized() (DocumentTool, bool) {
 		return DocumentTool{}, false
 	}
 	return normalized, true
+}
+
+// DocumentSource names one document another document was built from: the
+// link tuple a merged export needs to reference it. It is the same tuple
+// DocumentAssertions carries for the document itself -- identity, version,
+// checksum -- because a reference is written from exactly those. An SPDX
+// externalDocumentRef requires the checksum on every entry, so a list of bare
+// identities could not be re-exported as valid SPDX references at all; and the
+// wire is frozen once shipped, so the record has to carry it from the start.
+//
+// Gates: Identity is required and held to the IRI rule Identity is held to;
+// Version is a positive integer that agrees with a BOM-Link identity's tail;
+// Checksum passes the digest gate with the artifact subject. Each is the rule
+// the document's own field follows, stated once in the shared helpers.
+//
+// Merge class, as an element of DocumentAssertions.Sources: a set keyed by
+// (Identity, Version) exactly. Two entries with the same key are one source
+// and fill each other's gaps; an entry with no stated version is a distinct
+// key from every stated version of the same identity, never folded into one.
+// That is what keeps the set commutative and associative under pairwise
+// merges: folding an unversioned entry into "the one stated version so far"
+// gave a different answer depending on which version a later merge brought,
+// and once folded the ambiguity could not be restored.
+type DocumentSource struct {
+	// Identity is the source document's own identifier. Merge class: part
+	// of the set key.
+	Identity string `json:"identity,omitempty"`
+	// Version is the source document's version, when the reference stated
+	// it or a BOM-Link identity's tail carries it. Merge class: part of the
+	// set key -- an unstated version is its own key, distinct from every
+	// stated one, which for a BOM-Link cannot arise since the tail fills it.
+	Version int `json:"version,omitempty"`
+	// Checksum is a digest over the source document's original bytes, when
+	// the reference carried one -- SPDX always does. Merge class: scalar,
+	// fill-gaps within the key; the first stated digest stands.
+	Checksum *Digest `json:"checksum,omitempty"`
+}
+
+// Normalized returns the source with each field held to its gate, and reports
+// whether it still names a document. A source with no publishable identity
+// names nothing and is dropped whole; the other two fields drop individually.
+func (s DocumentSource) Normalized() (DocumentSource, bool) {
+	identity, ok := normalizeLocator(strings.TrimSpace(s.Identity), LocatorKindIRI)
+	if !ok {
+		return DocumentSource{}, false
+	}
+	normalized := DocumentSource{Identity: identity}
+	// Gated like the document's own version, then filled from a BOM-Link
+	// tail when unstated: the tail proves the version, so a source stating
+	// urn:cdx:<serial>/1 with and without the redundant field is one key,
+	// not two. The document's own Version is not filled the same way, to
+	// keep existing payloads' bytes; a source is a new record with none.
+	normalized.Version = documentEffectiveVersion(identity, documentVersionFor(identity, s.Version))
+	normalized.Checksum = documentChecksumFor(s.Checksum)
+	return normalized, true
+}
+
+// Clone returns a deep copy.
+func (s DocumentSource) Clone() DocumentSource {
+	clone := s
+	if s.Checksum != nil {
+		checksum := *s.Checksum
+		clone.Checksum = &checksum
+	}
+	return clone
+}
+
+// documentSourceWire carries DocumentSource's fields without its methods, so
+// the codec hooks can encode and decode without recursing.
+type documentSourceWire DocumentSource
+
+// MarshalJSON applies the gates on the way out, so a hand-built source is held
+// to them at the wire like every other untrusted-input field.
+func (s DocumentSource) MarshalJSON() ([]byte, error) {
+	normalized, _ := s.Normalized()
+	return json.Marshal(documentSourceWire(normalized))
+}
+
+// UnmarshalJSON applies the gates on the way in. A source that names nothing
+// decodes to the zero value, which the parent's gate then drops.
+func (s *DocumentSource) UnmarshalJSON(data []byte) error {
+	var wire documentSourceWire
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	normalized, _ := DocumentSource(wire).Normalized()
+	*s = normalized
+	return nil
+}
+
+// documentVersionFor is the version gate shared by a document and its
+// sources: a positive integer, and one that agrees with the version a
+// BOM-Link identity names in its tail. A payload stating urn:cdx:<serial>/1
+// beside Version 2 is contradicting itself, and carrying both would let an
+// export identify version 1 while asserting version 2. The stated version is
+// the one dropped: the identity is the link a merged export needs, and it
+// still says which version it names. The grammar is cyclonedx-go's --
+// ParseBOMLink reads the tail; nothing is parsed here. An SPDX namespace
+// carries no version, so any stated one stands there. A missing version is
+// not filled from the link: that would write a version onto every existing
+// BOM-Link payload that never stated one.
+func documentVersionFor(identity string, version int) int {
+	if version <= 0 {
+		return 0
+	}
+	if cdx.IsBOMLink(identity) {
+		if link, err := cdx.ParseBOMLink(identity); err == nil && link.Version() != version {
+			return 0
+		}
+	}
+	return version
+}
+
+// documentEffectiveVersion is the version a link tuple names: the stated
+// one, or for a BOM-Link identity the version its tail carries when none is
+// stated. An SPDX namespace carries none, so an unstated version stays
+// unstated there. cyclonedx-go reads the tail; nothing is parsed here.
+func documentEffectiveVersion(identity string, version int) int {
+	if version != 0 || !cdx.IsBOMLink(identity) {
+		return version
+	}
+	link, err := cdx.ParseBOMLink(identity)
+	if err != nil {
+		return 0
+	}
+	return link.Version()
+}
+
+// documentChecksumFor is the checksum gate shared by a document and its
+// sources: the digest gate as a whole, so an unpublishable digest is dropped
+// rather than carried as a zero record, plus the artifact subject. The digest
+// vocabulary lets a package record say its hash covers a source tree or a
+// metadata record instead; a document checksum promises the original bytes,
+// and the SPDX external-document checksum has no subject slot to carry the
+// distinction, so a digest of anything else would be published as a checksum
+// for the wrong object.
+func documentChecksumFor(checksum *Digest) *Digest {
+	if checksum == nil {
+		return nil
+	}
+	normalized, ok := checksum.Normalized()
+	if !ok || normalized.Subject != DigestSubjectArtifact {
+		return nil
+	}
+	return &normalized
+}
+
+// foldDocumentSources folds gated sources with the same (Identity, Version)
+// key and returns them sorted. Entries sharing a key are one document and
+// fill each other's checksum gap, first stated standing. An entry with no
+// stated version is its own key, distinct from every stated version of the
+// same identity, and is never folded into one: which version it belonged to
+// is unknowable, and guessing "the one stated version seen so far" made the
+// answer depend on merge order -- Merge(Merge(unversioned, v1), v2) attached
+// its checksum to v1 and the other order to v2, with no way to restore the
+// ambiguity once folded. Keyed exactly, the set is commutative, associative,
+// and idempotent, which is what a set merge class promises.
+func foldDocumentSources(gated []DocumentSource) []DocumentSource {
+	type key struct {
+		identity string
+		version  int
+	}
+	index := make(map[key]int, len(gated))
+	folded := make([]DocumentSource, 0, len(gated))
+	for _, source := range gated {
+		k := key{source.Identity, source.Version}
+		if i, seen := index[k]; seen {
+			folded[i].Checksum = MergeFillGap(folded[i].Checksum, source.Checksum, nil)
+			continue
+		}
+		index[k] = len(folded)
+		folded = append(folded, source.Clone())
+	}
+	sort.SliceStable(folded, func(i, j int) bool {
+		if folded[i].Identity != folded[j].Identity {
+			return folded[i].Identity < folded[j].Identity
+		}
+		return folded[i].Version < folded[j].Version
+	})
+	if len(folded) == 0 {
+		return nil
+	}
+	return folded
+}
+
+// isSelfSource reports whether a source names the document that lists it,
+// by exact key: the same identity and the same known effective version --
+// the stated one, or the one a BOM-Link tail proves. A BOM-Link document
+// that states Version 1 and a source repeating urn:cdx:<serial>/1 without
+// the field name the same document, and the tail says so.
+//
+// When the document's own version is not known -- an SPDX namespace, which
+// has no tail, with no version stated yet -- an unversioned source of the
+// same namespace is retained rather than dropped. The document's version is
+// a fill-gaps scalar that a later merge may still state, and a drop made
+// while it was unstated cannot be undone: (X + Xv1) + [X] kept the source
+// and (X + [X]) + Xv1 lost it, so the merge was not associative. Retained,
+// the source is a distinct key that a later stated version leaves alone,
+// and an exporter that knows its final identity may skip it. It is
+// deliberately not sameDocumentLink's compatible-version test -- see the
+// caller.
+func isSelfSource(identity string, version int, source DocumentSource) bool {
+	if identity == "" || source.Identity != identity {
+		return false
+	}
+	own := documentEffectiveVersion(identity, version)
+	return own != 0 && own == documentEffectiveVersion(source.Identity, source.Version)
+}
+
+// sameDocumentLink reports whether two link tuples name the same document:
+// the same identity at a compatible version. Two stated versions that differ
+// are two documents sharing a namespace, and filling across them would pair
+// version 1 with version 2's hash.
+func sameDocumentLink(identity string, version int, otherIdentity string, otherVersion int) bool {
+	return identity != "" && identity == otherIdentity &&
+		(version == 0 || otherVersion == 0 || version == otherVersion)
 }
 
 // DocumentAssertions are the claims a source document makes about itself,
@@ -110,6 +344,26 @@ type DocumentAssertions struct {
 	// a checksum is a claim about one document's bytes and never attaches
 	// to another document's identity. See MergeDocumentAssertions.
 	Checksum *Digest `json:"checksum,omitempty"`
+	// Sources are the documents this one was built from, when it said so:
+	// SPDX externalDocumentRefs, or CycloneDX external references of type
+	// "bom". A merged export writes one link per source (ADR-0037); without
+	// somewhere to read them back into, a single ingest of that export lost
+	// every trace of its inputs.
+	//
+	// Gate: each entry passes DocumentSource.Normalized; entries with the
+	// same (Identity, Version) key fold, the checksum filling a gap; the
+	// list is sorted for byte-stable output and bounded by
+	// maxDocumentSources, applied to the input before any work is done on
+	// it. An entry naming this document itself -- the same identity and
+	// the same known version exactly, per isSelfSource -- is dropped: a
+	// document is not built from itself, and recording it would write a
+	// cycle. Any other key of the same namespace, a prior version included,
+	// is a different document and is kept, as is an unversioned entry while
+	// the document's own version is still unknown.
+	// Merge class: set, keyed by (Identity, Version) -- a document built
+	// from a merged document inherits that document's sources beside its
+	// own identity, so provenance survives more than one hop.
+	Sources []DocumentSource `json:"sources,omitempty"`
 }
 
 // Normalized returns the assertions with every field held to its gate, and
@@ -150,39 +404,48 @@ func (d DocumentAssertions) Normalized() (DocumentAssertions, bool) {
 	if len(normalized.Comment) > maxDocumentFieldLength {
 		normalized.Comment = ""
 	}
-	// A version is a count, and both formats count from one. Anything else
-	// is not a version a document stated.
-	if d.Version > 0 {
-		normalized.Version = d.Version
+	// The document's own link tuple takes the gates its sources take: the
+	// rules are the same because a reference is written from the same three
+	// fields, and stating them once keeps the two from drifting.
+	normalized.Version = documentVersionFor(normalized.Identity, d.Version)
+	normalized.Checksum = documentChecksumFor(d.Checksum)
+
+	// Sources take their gate one by one: a link a merged export cannot
+	// write is not worth carrying, and one entry failing must not lose the
+	// others. Entries naming the same document fold, sorted so two runs that
+	// read the same references in a different order produce the same bytes.
+	//
+	// The bound is applied to the input, before any of that work: an
+	// ingested document controls how many entries it claims, and bounding
+	// only the published list would let a list of ten thousand -- even one
+	// of duplicates or junk -- cost ten thousand gate passes and a map that
+	// size. Entries past the bound are not read at all. This is the gate on
+	// untrusted input, where arrival order is all there is; the merge of two
+	// gated lists bounds the sorted union instead, so that a merge is not
+	// decided by operand order (see MergeDocumentAssertions).
+	sources := d.Sources
+	if len(sources) > maxDocumentSources {
+		sources = sources[:maxDocumentSources]
 	}
-	// A BOM-Link identity carries the document version in its tail, and the
-	// two are one claim. A payload stating urn:cdx:<serial>/1 beside
-	// Version 2 is contradicting itself, and carrying both would let an
-	// export identify version 1 while asserting version 2. The stated
-	// version is the one dropped: the identity is the link a merged export
-	// needs, and it still says which version it names. The grammar is
-	// cyclonedx-go's -- ParseBOMLink reads the tail; nothing is parsed here.
-	// An SPDX namespace carries no version, so any stated one stands there.
-	// A missing version is not filled from the link: that would write a
-	// version onto every existing BOM-Link payload that never stated one.
-	if normalized.Version != 0 && cdx.IsBOMLink(normalized.Identity) {
-		if link, err := cdx.ParseBOMLink(normalized.Identity); err == nil && link.Version() != normalized.Version {
-			normalized.Version = 0
+	gated := make([]DocumentSource, 0, len(sources))
+	for _, source := range sources {
+		cleaned, ok := source.Normalized()
+		if !ok {
+			continue
 		}
-	}
-	// The checksum takes the digest gate as a whole: an unpublishable digest
-	// is dropped rather than carried as a zero record, which is what Digest's
-	// own codec does with one. It must also hash the bytes themselves. The
-	// digest vocabulary lets a package record say its hash covers a source
-	// tree or a metadata record instead; this field promises the original
-	// document bytes, and the SPDX external-document checksum has no subject
-	// slot to carry the distinction, so a digest of anything else would be
-	// published as a checksum for the wrong object.
-	if d.Checksum != nil {
-		if checksum, ok := d.Checksum.Normalized(); ok && checksum.Subject == DigestSubjectArtifact {
-			normalized.Checksum = &checksum
+		// Itself -- the same key exactly -- is a cycle. A different key of
+		// the same namespace is a different document: version 2 built from
+		// version 1 is real provenance and is kept. The match is exact, not
+		// compatible-version, for the same reason the set key is: with an
+		// unstated document version acting as a wildcard, whether a stated
+		// source version survived depended on whether the document's own
+		// version had been filled yet, so the merge was not associative.
+		if isSelfSource(normalized.Identity, normalized.Version, cleaned) {
+			continue
 		}
+		gated = append(gated, cleaned)
 	}
+	normalized.Sources = foldDocumentSources(gated)
 
 	for _, creator := range d.Creators {
 		if contact, ok := creator.Normalized(); ok {
@@ -237,12 +500,83 @@ func (d DocumentAssertions) MarshalJSON() ([]byte, error) {
 // the zero value rather than failing the payload: the entry it belongs to is
 // still a graph, and a document with no publishable claims is merely absent.
 func (d *DocumentAssertions) UnmarshalJSON(data []byte) error {
-	var wire documentAssertionsWire
+	// Sources decode through boundedDocumentSources, which reads the array
+	// as a stream and stops at maxDocumentSources. Decoding the whole list
+	// and bounding afterwards let a payload of ten thousand entries pay ten
+	// thousand element decodes -- each through DocumentSource's own gate --
+	// and as many byte copies before the bound saw any of them.
+	var wire struct {
+		documentAssertionsWire
+		Sources boundedDocumentSources `json:"sources,omitempty"`
+	}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
 	}
-	normalized, _ := DocumentAssertions(wire).Normalized()
+	assertions := DocumentAssertions(wire.documentAssertionsWire)
+	assertions.Sources = wire.Sources.sources
+	normalized, _ := assertions.Normalized()
 	*d = normalized
+	return nil
+}
+
+// boundedDocumentSources decodes a sources array element by element and
+// stops after maxDocumentSources, so the entries past the bound are neither
+// copied nor decoded. What remains is the outer decoder's single pass over
+// the bytes, which encoding/json makes over the whole document before any
+// field decodes and which no field-level decoder can avoid; that pass is
+// bounded by whatever bounds the payload itself. Stopping early is safe for
+// the same reason: the outer pass has already validated the array's syntax.
+//
+// It also refuses to decode twice. encoding/json calls a field's decoder
+// once per occurrence of its key, on the same field value, keeping the
+// last -- so a payload repeating "sources" would pay the bound once per
+// copy. Bomly never writes a duplicate key, so the second call is refused.
+// Carrying that in the decoder's own state costs nothing; a pre-scan of the
+// object for the repeated key walked every token of the array first, which
+// reintroduced work proportional to the payload the bound exists to avoid.
+// TestDocumentSourcesAreGatedAndUnion pins that encoding/json does hand the
+// second occurrence to the same value, so a change there fails loudly.
+type boundedDocumentSources struct {
+	sources []DocumentSource
+	decoded bool
+}
+
+// UnmarshalJSON reads at most maxDocumentSources elements, once, from an
+// array of at most maxDocumentSourcesBytes. A null array is no sources.
+func (s *boundedDocumentSources) UnmarshalJSON(data []byte) error {
+	if s.decoded {
+		return fmt.Errorf("document assertions: \"sources\" key repeated")
+	}
+	s.decoded = true
+	// The byte bound comes before the decoder exists. The count bound keeps
+	// the entries past it from being decoded, but says nothing about the
+	// size of the ones before it: one element carrying a multi-megabyte
+	// identity would be parsed and its strings materialized before
+	// normalizeLocator's far smaller limit rejected it.
+	if len(data) > maxDocumentSourcesBytes {
+		return fmt.Errorf("document sources: %d bytes, over the %d byte limit", len(data), maxDocumentSourcesBytes)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	opening, err := decoder.Token()
+	if err != nil {
+		return fmt.Errorf("document sources: %w", err)
+	}
+	if opening == nil {
+		s.sources = nil
+		return nil
+	}
+	if delim, ok := opening.(json.Delim); !ok || delim != '[' {
+		return fmt.Errorf("document sources: expected an array, got %v", opening)
+	}
+	out := make([]DocumentSource, 0, 4)
+	for decoder.More() && len(out) < maxDocumentSources {
+		var source DocumentSource
+		if err := decoder.Decode(&source); err != nil {
+			return fmt.Errorf("document sources[%d]: %w", len(out), err)
+		}
+		out = append(out, source)
+	}
+	s.sources = out
 	return nil
 }
 
@@ -250,7 +584,7 @@ func (d *DocumentAssertions) UnmarshalJSON(data []byte) error {
 func (d DocumentAssertions) IsEmpty() bool {
 	return d.Identity == "" && d.Name == "" && d.DataLicense == "" &&
 		d.Created == "" && d.Comment == "" && len(d.Creators) == 0 && len(d.Tools) == 0 &&
-		d.Version == 0 && d.Checksum == nil
+		d.Version == 0 && d.Checksum == nil && len(d.Sources) == 0
 }
 
 // Clone returns a deep copy.
@@ -265,6 +599,12 @@ func (d DocumentAssertions) Clone() DocumentAssertions {
 	if d.Checksum != nil {
 		checksum := *d.Checksum
 		clone.Checksum = &checksum
+	}
+	if len(d.Sources) > 0 {
+		clone.Sources = make([]DocumentSource, 0, len(d.Sources))
+		for _, source := range d.Sources {
+			clone.Sources = append(clone.Sources, source.Clone())
+		}
 	}
 	return clone
 }
@@ -302,16 +642,28 @@ func MergeDocumentAssertions(dst, src DocumentAssertions) DocumentAssertions {
 	// documents keep the first one's tuple, and the second's version and
 	// checksum go nowhere rather than onto the wrong identity.
 	//
-	// "The same document" is the same identity at a compatible version: two
-	// stated versions that differ are two documents sharing a namespace,
-	// and filling across them would pair version 1 with version 2's hash.
-	leftHasLink := left.Identity != "" || left.Version != 0 || left.Checksum != nil
-	sameIdentity := left.Identity != "" && left.Identity == right.Identity
-	versionsAgree := left.Version == 0 || right.Version == 0 || left.Version == right.Version
+	// "The same document" is sameDocumentLink: the same identity at a
+	// compatible version.
+	//
+	// A version or checksum with no identity is a link to nothing yet: the
+	// gate keeps them (a document may state them before its identity is
+	// known), but they cannot be published as a reference, and with no
+	// identity there is no document for them to be "the same" as. So an
+	// identity-less side yields the whole tuple to a side that has an
+	// identity, and two identity-less sides fill each field's gap
+	// independently, first stated standing -- not gated on their versions
+	// agreeing, which is a same-document test and has no document to apply
+	// to. Gating it there made grouping matter: (v1 + checksum) + v2 kept
+	// the checksum while v1 + (checksum + v2) lost it, since the inner merge
+	// had paired the checksum with version 2 first. Treating the orphan
+	// fields as a stated link had the same shape one step earlier -- one
+	// order kept the version and dropped the checksum, the other the
+	// reverse.
 	switch {
-	case !leftHasLink:
+	case left.Identity == "" && right.Identity != "":
 		merged.Identity, merged.Version, merged.Checksum = right.Identity, right.Version, right.Checksum
-	case sameIdentity && versionsAgree:
+	case left.Identity == "",
+		sameDocumentLink(left.Identity, left.Version, right.Identity, right.Version):
 		merged.Version = MergeFillGap(left.Version, right.Version, nil)
 		merged.Checksum = MergeFillGap(left.Checksum, right.Checksum, nil)
 	}
@@ -322,6 +674,27 @@ func MergeDocumentAssertions(dst, src DocumentAssertions) DocumentAssertions {
 	}
 	merged.Creators = MergeUnion(left.Creators, right.Creators, creatorKey, nil)
 	merged.Tools = MergeUnion(left.Tools, right.Tools, toolKey, nil)
+	// Sources union as a set keyed exactly, the way the gate folds them.
+	// Both sides were gated above, so each list is already bounded and
+	// clean; the union is at most twice the bound, and it is folded and
+	// sorted as a whole before the bound is applied to the sorted result.
+	// Running the union back through the gate instead applied the input
+	// bound to the concatenation, which kept the left operand's entries and
+	// dropped the right's -- merge direction decided what provenance
+	// survived, which a set must not do. What the bound keeps now is the
+	// same set whichever side is merged first. The merged record's own
+	// identity still drops from among the other side's sources.
+	union := make([]DocumentSource, 0, len(left.Sources)+len(right.Sources))
+	for _, source := range append(append([]DocumentSource(nil), left.Sources...), right.Sources...) {
+		if isSelfSource(merged.Identity, merged.Version, source) {
+			continue
+		}
+		union = append(union, source)
+	}
+	merged.Sources = foldDocumentSources(union)
+	if len(merged.Sources) > maxDocumentSources {
+		merged.Sources = merged.Sources[:maxDocumentSources]
+	}
 	return merged
 }
 

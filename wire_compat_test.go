@@ -125,6 +125,7 @@ func TestWireV1NewFieldsAreOmitEmpty(t *testing.T) {
 		"Package":            &Package{},
 		"Graph":              New(),
 		"DocumentAssertions": &DocumentAssertions{Identity: "https://example.test/spdxdocs/app"},
+		"DocumentSource":     &DocumentSource{Identity: "https://example.test/spdxdocs/src"},
 	} {
 		data, err := json.Marshal(value)
 		if err != nil {
@@ -147,8 +148,8 @@ func TestWireV1NewFieldsAreOmitEmpty(t *testing.T) {
 			// own tags, which that test never reaches.
 			"description", "homepage", "supplier", "originator", "licenses",
 			"external_references",
-			// DocumentAssertions' link-form fields (bomly-sdk#55).
-			"checksum",
+			// DocumentAssertions' link-form fields (bomly-sdk#55, #61).
+			"checksum", "sources",
 		} {
 			if _, ok := decoded[forbidden]; ok {
 				t.Errorf("%s: zero-valued %q must be omitted from the wire", name, forbidden)
