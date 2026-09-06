@@ -250,16 +250,27 @@ func foldDocumentSources(gated []DocumentSource) []DocumentSource {
 }
 
 // isSelfSource reports whether a source names the document that lists it,
-// by exact key: the same identity and the same effective version -- the
-// stated one, or the one a BOM-Link tail proves. A BOM-Link document that
-// states Version 1 and a source repeating urn:cdx:<serial>/1 without the
-// field name the same document, and the tail says so; an SPDX namespace has
-// no tail, and there an unstated version stays its own key. It is
+// by exact key: the same identity and the same known effective version --
+// the stated one, or the one a BOM-Link tail proves. A BOM-Link document
+// that states Version 1 and a source repeating urn:cdx:<serial>/1 without
+// the field name the same document, and the tail says so.
+//
+// When the document's own version is not known -- an SPDX namespace, which
+// has no tail, with no version stated yet -- an unversioned source of the
+// same namespace is retained rather than dropped. The document's version is
+// a fill-gaps scalar that a later merge may still state, and a drop made
+// while it was unstated cannot be undone: (X + Xv1) + [X] kept the source
+// and (X + [X]) + Xv1 lost it, so the merge was not associative. Retained,
+// the source is a distinct key that a later stated version leaves alone,
+// and an exporter that knows its final identity may skip it. It is
 // deliberately not sameDocumentLink's compatible-version test -- see the
 // caller.
 func isSelfSource(identity string, version int, source DocumentSource) bool {
-	return identity != "" && source.Identity == identity &&
-		documentEffectiveVersion(identity, version) == documentEffectiveVersion(source.Identity, source.Version)
+	if identity == "" || source.Identity != identity {
+		return false
+	}
+	own := documentEffectiveVersion(identity, version)
+	return own != 0 && own == documentEffectiveVersion(source.Identity, source.Version)
 }
 
 // sameDocumentLink reports whether two link tuples name the same document:
@@ -334,10 +345,11 @@ type DocumentAssertions struct {
 	// list is sorted for byte-stable output and bounded by
 	// maxDocumentSources, applied to the input before any work is done on
 	// it. An entry naming this document itself -- the same identity and
-	// stated version exactly -- is dropped: a document is not built from
-	// itself, and recording it would write a cycle. Any other key of the
-	// same namespace, a prior version included, is a different document and
-	// is kept.
+	// the same known version exactly, per isSelfSource -- is dropped: a
+	// document is not built from itself, and recording it would write a
+	// cycle. Any other key of the same namespace, a prior version included,
+	// is a different document and is kept, as is an unversioned entry while
+	// the document's own version is still unknown.
 	// Merge class: set, keyed by (Identity, Version) -- a document built
 	// from a merged document inherits that document's sources beside its
 	// own identity, so provenance survives more than one hop.
@@ -483,6 +495,15 @@ func (d *DocumentAssertions) UnmarshalJSON(data []byte) error {
 	// and bounding afterwards let a payload of ten thousand entries pay ten
 	// thousand element decodes -- each through DocumentSource's own gate --
 	// and as many byte copies before the bound saw any of them.
+	// A repeated "sources" key would give each occurrence its own decode
+	// budget, since encoding/json calls the field decoder once per
+	// occurrence and keeps the last. Bomly never writes a duplicate key, so
+	// one is structure the payload should not have, and it is refused
+	// before any array is decoded rather than letting the bound be paid
+	// once per copy.
+	if err := rejectRepeatedTopLevelKey(data, "sources"); err != nil {
+		return err
+	}
 	var wire struct {
 		documentAssertionsWire
 		Sources boundedDocumentSources `json:"sources,omitempty"`
@@ -494,6 +515,54 @@ func (d *DocumentAssertions) UnmarshalJSON(data []byte) error {
 	assertions.Sources = []DocumentSource(wire.Sources)
 	normalized, _ := assertions.Normalized()
 	*d = normalized
+	return nil
+}
+
+// rejectRepeatedTopLevelKey fails when an object names key more than once
+// at its top level. It walks the tokens of an already syntax-checked value
+// without copying any of it -- encoding/json validated the whole document
+// before this decoder was reached -- so the walk is the one pass the outer
+// decoder makes anyway. A value that is not an object is left for the outer
+// decoder to reject.
+func rejectRepeatedTopLevelKey(data []byte, key string) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	opening, err := decoder.Token()
+	if err != nil || opening != json.Delim('{') {
+		return nil
+	}
+	seen := false
+	for decoder.More() {
+		name, err := decoder.Token()
+		if err != nil {
+			return nil
+		}
+		if name == key {
+			if seen {
+				return fmt.Errorf("document assertions: %q key repeated", key)
+			}
+			seen = true
+		}
+		// Skip the value, tracking nesting so a nested object's keys are
+		// not mistaken for top-level ones.
+		depth := 0
+		for {
+			token, err := decoder.Token()
+			if err != nil {
+				return nil
+			}
+			if delim, ok := token.(json.Delim); ok {
+				switch delim {
+				case '{', '[':
+					depth++
+				case '}', ']':
+					depth--
+				}
+			}
+			if depth == 0 {
+				break
+			}
+		}
+	}
 	return nil
 }
 

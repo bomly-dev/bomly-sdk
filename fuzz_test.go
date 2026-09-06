@@ -992,6 +992,7 @@ func FuzzDocumentAssertionsJSON(f *testing.F) {
 		`{"identity":"https://example.test/spdxdocs/app","sources":[{"identity":"urn:cdx:3e671687-395b-41f5-a30f-a58921a69b79/1","version":1,"checksum":{"algorithm":"SHA-256","value":"d1e8a70b5ccab1dc2f56bbf7e99f064a660c08e361a35751b9c483c88943d082"}}]}`,
 		`{"sources":[1,"two",null,[],{"identity":3}]}`, `{"sources":{"identity":"x"}}`, `{"sources":[{"identity":"a"`,
 		`{"sources":[{"identity":"https://a.test","identity":"https://b.test"}]}`, `{"sources":"x"}`, `[]`, ``, `{"sources":[`,
+		`{"sources":[],"sources":[]}`, `{"a":{"sources":[]},"sources":[{"identity":"https://a.test"}]}`, `{"sources":[{"identity":"https://a.test"}],"comment":"{\"sources\":[]}"}`,
 	} {
 		f.Add([]byte(seed))
 	}
@@ -1005,6 +1006,12 @@ func FuzzDocumentAssertionsJSON(f *testing.F) {
 		}
 		if len(decoded.Sources) > maxDocumentSources {
 			t.Fatalf("decoded %d sources, past the bound %d", len(decoded.Sources), maxDocumentSources)
+		}
+		// A repeated top-level sources key never decodes; the walk that
+		// finds it must agree with the outer decoder about what is top
+		// level, so it is exercised on the same bytes.
+		if err := rejectRepeatedTopLevelKey(raw, "sources"); err != nil {
+			t.Fatalf("decoded a payload the duplicate-key walk rejects: %s", raw)
 		}
 		encoded, err := json.Marshal(decoded)
 		if err != nil {

@@ -365,12 +365,14 @@ func TestDocumentSourcesAreGatedAndUnion(t *testing.T) {
 	sha := &Digest{Algorithm: "SHA-256", Value: "d1e8a70b5ccab1dc2f56bbf7e99f064a660c08e361a35751b9c483c88943d082"}
 	doc := DocumentAssertions{
 		Identity: self,
+		Version:  3,
 		Sources: []DocumentSource{
 			{Identity: b},                           // unsorted relative to a
 			{Identity: " " + a + " ", Version: 1},   // padded, agrees with its BOM-Link
 			{Identity: b, Checksum: sha},            // same key again: fills the checksum gap
 			{Identity: a, Version: 2},               // contradicts its BOM-Link: version dropped, then the tail fills it, so it folds into a/1
-			{Identity: self},                        // a document is not built from itself
+			{Identity: self, Version: 3},            // a document is not built from itself
+			{Identity: self},                        // its own namespace at an unknown version: a different key, kept
 			{Identity: "not an iri", Checksum: sha}, // fails the identity gate, checksum cannot save it
 			{Identity: "file:///etc"},               // a local path is not a link a document can publish
 			{Identity: b, Checksum: &Digest{Algorithm: "SHA-256", Value: sha.Value, Subject: DigestSubjectSourceTree}}, // wrong object
@@ -382,9 +384,15 @@ func TestDocumentSourcesAreGatedAndUnion(t *testing.T) {
 	}
 	want := []DocumentSource{
 		{Identity: b, Checksum: &Digest{Algorithm: DigestAlgorithmSHA256, Value: sha.Value}},
+		{Identity: self},
 		{Identity: a, Version: 1},
 	}
 	assertSources(t, "normalized", got.Sources, want)
+	// While the document's own version is unknown, even an unversioned
+	// entry of its own namespace is retained: the version may still be
+	// stated by a later merge, and a drop made now could not be undone.
+	unknownSelf, _ := DocumentAssertions{Identity: self, Sources: []DocumentSource{{Identity: self}}}.Normalized()
+	assertSources(t, "unknown own version", unknownSelf.Sources, []DocumentSource{{Identity: self}})
 
 	// A BOM-Link's tail proves its version, so a source stating it with or
 	// without the redundant field is one key, and a document that is that
@@ -422,6 +430,19 @@ func TestDocumentSourcesAreGatedAndUnion(t *testing.T) {
 	wantKept := []DocumentSource{{Identity: b, Version: 2}}
 	assertSources(t, "(X+Xv1)+src", MergeDocumentAssertions(MergeDocumentAssertions(docX, docXv1), fromXv2).Sources, wantKept)
 	assertSources(t, "(X+src)+Xv1", MergeDocumentAssertions(MergeDocumentAssertions(docX, fromXv2), docXv1).Sources, wantKept)
+	// The same for an unversioned source of the document's own namespace:
+	// while the document's version is unknown it is retained, not dropped,
+	// because a drop made then cannot be undone once a later merge states
+	// the version -- and the groupings must agree.
+	fromX := DocumentAssertions{Sources: []DocumentSource{{Identity: b}}}
+	wantUnversioned := []DocumentSource{{Identity: b}}
+	assertSources(t, "(X+Xv1)+[X]", MergeDocumentAssertions(MergeDocumentAssertions(docX, docXv1), fromX).Sources, wantUnversioned)
+	assertSources(t, "(X+[X])+Xv1", MergeDocumentAssertions(MergeDocumentAssertions(docX, fromX), docXv1).Sources, wantUnversioned)
+	// Whereas a source that becomes the document itself once the version
+	// is known is dropped at that merge, whichever grouping reaches it.
+	fromXv1 := DocumentAssertions{Sources: []DocumentSource{{Identity: b, Version: 1}}}
+	assertSources(t, "(X+Xv1)+[Xv1]", MergeDocumentAssertions(MergeDocumentAssertions(docX, docXv1), fromXv1).Sources, nil)
+	assertSources(t, "(X+[Xv1])+Xv1", MergeDocumentAssertions(MergeDocumentAssertions(docX, fromXv1), docXv1).Sources, nil)
 
 	// The bound is applied to the input, before any gate runs: entries past
 	// it are not read at all, even when the ones before it are junk.
@@ -518,19 +539,19 @@ func TestDocumentSourcesAreGatedAndUnion(t *testing.T) {
 	// identity never lands among its sources. Each side is gated first, so a
 	// side's own identity is already out of its list; which identity the
 	// merged record keeps decides what drops from the union.
-	left := DocumentAssertions{Identity: self, Sources: []DocumentSource{{Identity: a, Version: 1}}}
-	right := DocumentAssertions{Identity: b, Sources: []DocumentSource{{Identity: b}, {Identity: self}, {Identity: a, Version: 1, Checksum: sha}}}
+	left := DocumentAssertions{Identity: self, Version: 3, Sources: []DocumentSource{{Identity: a, Version: 1}}}
+	right := DocumentAssertions{Identity: b, Version: 1, Sources: []DocumentSource{{Identity: b, Version: 1}, {Identity: self, Version: 3}, {Identity: a, Version: 1, Checksum: sha}}}
 	one := MergeDocumentAssertions(left, right)
 	assertSources(t, "merged", one.Sources, []DocumentSource{{Identity: a, Version: 1, Checksum: want[0].Checksum}})
 	two := MergeDocumentAssertions(right, left)
 	assertSources(t, "merged (other order)", two.Sources, []DocumentSource{
-		{Identity: self},
+		{Identity: self, Version: 3},
 		{Identity: a, Version: 1, Checksum: want[0].Checksum},
 	})
 
 	// Through the codec, gated on both directions, and the element's own
 	// codec holds a hand-built source to the gate too.
-	data, err := json.Marshal(DocumentAssertions{Identity: self, Sources: []DocumentSource{{Identity: self}, {Identity: "not an iri"}, {Identity: a, Version: 2}}})
+	data, err := json.Marshal(DocumentAssertions{Identity: self, Version: 3, Sources: []DocumentSource{{Identity: self, Version: 3}, {Identity: "not an iri"}, {Identity: a, Version: 2}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -545,6 +566,17 @@ func TestDocumentSourcesAreGatedAndUnion(t *testing.T) {
 	}
 	if string(element) != `{"identity":"`+a+`","version":1}` {
 		t.Errorf("a hand-built source was written ungated: %s", element)
+	}
+	// A repeated top-level "sources" key would give each copy its own
+	// decode budget; Bomly never writes one, so it is refused outright. A
+	// nested object's own "sources" key is not a top-level repeat.
+	var repeated DocumentAssertions
+	if err := json.Unmarshal([]byte(`{"sources":[{"identity":"https://a.test"}],"name":"x","sources":[{"identity":"https://b.test"}]}`), &repeated); err == nil || !strings.Contains(err.Error(), `"sources" key repeated`) {
+		t.Errorf("repeated sources key: err = %v, want it refused", err)
+	}
+	var nested DocumentAssertions
+	if err := json.Unmarshal([]byte(`{"sources":[{"identity":"https://a.test","checksum":{"sources":1}}],"comment":"{\"sources\":[]}"}`), &nested); err != nil {
+		t.Errorf("a nested or quoted sources key was mistaken for a top-level repeat: %v", err)
 	}
 	// A malformed element fails with the boundary named, so a caller can
 	// tell which nested record refused the payload.
