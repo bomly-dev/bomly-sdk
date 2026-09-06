@@ -98,7 +98,8 @@ type DependencyNode struct {
 	// claim, never an input to filtering: Scopes is what filters read, and
 	// ScopesFromCycloneDX derives it. Without this the source's own word was
 	// replaced by Bomly's projection of it on every export, so a CycloneDX
-	// "optional" ingested as runtime came back out as "required" (ADR-0037).
+	// "optional" ingested as development came back out as "excluded"
+	// (ADR-0037).
 	// CycloneDXScopeForExport is the one place that decides when the word is
 	// re-emitted and when the projection is.
 	//

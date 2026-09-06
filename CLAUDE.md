@@ -36,6 +36,42 @@ Bomly's architecture decisions live in
 decisions that shape this module's surface are recorded there even when the
 code lands here.
 
+### A specification outranks anything Bomly wrote
+
+Being the source of truth for Bomly's behavior is not being the source of
+truth for what someone else's format means. When a format's specification and
+a Bomly document disagree about the meaning of a value that format defines,
+**the specification wins, in every case, without being weighed against
+anything.** A Bomly document is an ADR — accepted ones included — a doc
+comment, a test that pins shipped behavior, a review conclusion, or an issue's
+framing of the merits. None of them is evidence about CycloneDX, SPDX, PURL,
+or SemVer, because Bomly never got to decide what a word means in a format it
+does not own.
+
+So an issue that turns on what a format's value means is resolved by a
+citation, not by an argument. Read the specification first — preferably as the
+pinned dependency vendors it, since `cyclonedx-go` ships the CycloneDX JSON
+schemas with their normative `meta:enum` descriptions and `spdx/tools-golang`
+its own vocabularies — quote it in the code next to the behavior it settles,
+and then correct whichever Bomly document was wrong. Correcting an accepted
+ADR is the expected outcome, not an escalation.
+
+Two arguments in particular do not survive this rule. That producers in the
+wild spell a value loosely is not a reason to read the vocabulary loosely: it
+would mean reading every conforming document wrongly to accommodate the ones
+that are not. And "this direction is safer for a scanner" does not license a
+non-conforming reading either — a safety concern is answered by a warning, a
+Bomly-owned policy knob that says plainly that it departs from the
+specification and why, or an upstream bug report against the producer, never
+by quietly redefining the format's word. Where a specification genuinely says
+nothing, the mapping onto Bomly's own vocabulary is Bomly's policy, and it is
+documented as policy rather than dressed up as the format's meaning.
+
+`ScopesFromCycloneDX` in `scope_cyclonedx.go` is the worked example: the SDK
+read CycloneDX's `optional` as runtime on a pre-1.6 gloss, argued it was the
+safer reading for a scanner, and was wrong on both counts against the
+specification's own text (issue #63).
+
 ### Reading a node of any kind
 
 `GraphNode` exposes only what every kind has: an ID, a kind, locations,

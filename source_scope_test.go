@@ -11,7 +11,8 @@ import (
 // ADR-0037: an ingested scope scalar is re-emitted verbatim on export unless
 // Bomly's own scope set changed, so "optional" and "excluded" never collapse
 // across a round trip that asserted neither. Before the field existed a
-// CycloneDX "optional" ingested as {runtime} and re-exported as "required".
+// CycloneDX "optional" ingested as {development} and re-exported as
+// "excluded".
 func TestSourceScopeSurvivesARoundTripUnlessTheSetChanged(t *testing.T) {
 	node := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "left-pad", Version: "1.3.0"})
 	node.Scopes = ScopesFromCycloneDX("optional")
@@ -37,10 +38,10 @@ func TestSourceScopeSurvivesARoundTripUnlessTheSetChanged(t *testing.T) {
 		t.Fatalf("export after the codec = %q, want %q", got, cdx.ScopeOptional)
 	}
 
-	// Bomly's set changed -- propagation found it on a development path too
-	// -- so the set now says something the word did not, and the projection
-	// is written instead.
-	node.AddScope(ScopeDevelopment)
+	// Bomly's set changed -- propagation found it on a runtime path too --
+	// so the set now says something the word did not, and the projection is
+	// written instead.
+	node.AddScope(ScopeRuntime)
 	if got := CycloneDXScopeForExport(node.Scopes, node.SourceScope); got != string(cdx.ScopeRequired) {
 		t.Fatalf("export after the set changed = %q, want the projection %q", got, cdx.ScopeRequired)
 	}

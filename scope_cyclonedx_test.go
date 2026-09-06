@@ -253,13 +253,29 @@ func TestIngestPrefersTheCarrier(t *testing.T) {
 	}
 }
 
-// TestOptionalReadsAsRuntime pins the one ingest mapping that is a judgment
-// call: an optional component provides additional functionality at runtime,
-// so it is not a development-only dependency.
-func TestOptionalReadsAsRuntime(t *testing.T) {
+// TestOptionalReadsAsDevelopment pins the mapping the specification settles:
+// a CycloneDX "optional" component is one "not capable of being called due to
+// [it] not being installed or otherwise accessible by any means", and one that
+// is installed but prohibited from being called "must be scoped as
+// 'required'". An optional component is therefore absent from what runs, which
+// is what Bomly's development scope means to a filter.
+//
+// This is the resolution of bomly-dev/bomly-sdk#63, which the SDK previously
+// read the other way on a pre-1.6 gloss of "optional". The test is here so
+// that reading cannot come back by accident.
+func TestOptionalReadsAsDevelopment(t *testing.T) {
 	got := ScopesFromCycloneDX(string(cdx.ScopeOptional))
-	if len(got) != 1 || got[0] != ScopeRuntime {
-		t.Errorf("optional read as %v, want runtime", got)
+	if len(got) != 1 || got[0] != ScopeDevelopment {
+		t.Errorf("optional read as %v, want development", got)
+	}
+	// Only "required" reads as runtime, and it is the sole such value.
+	for _, value := range []cdx.Scope{cdx.ScopeOptional, cdx.ScopeExcluded} {
+		if got := ScopesFromCycloneDX(string(value)); len(got) != 1 || got[0] != ScopeDevelopment {
+			t.Errorf("%q read as %v, want development", value, got)
+		}
+	}
+	if got := ScopesFromCycloneDX(string(cdx.ScopeRequired)); len(got) != 1 || got[0] != ScopeRuntime {
+		t.Errorf("required read as %v, want runtime", got)
 	}
 }
 

@@ -20,9 +20,12 @@ import (
 // when it is present. A Bomly document therefore round-trips exactly, while a
 // document from any other producer still yields a usable set.
 //
-// The three scope spellings are cyclonedx-go's own constants. What is Bomly's
-// here is only the policy -- which scope set projects onto which value -- and
-// no library states that, because no library knows what Bomly's scopes mean.
+// The three scope spellings are cyclonedx-go's own constants, and what they
+// mean is the CycloneDX specification's, stated normatively in the "meta:enum"
+// descriptions of the schemas the library vendors. That is the authority for
+// reading a scalar in. What is Bomly's here is only the export policy -- which
+// scope set projects onto which value -- because that is a statement about
+// Bomly's own vocabulary, which no specification and no library knows.
 
 // CycloneDXScopeProperty is the property name carrying the full scope set
 // through a CycloneDX document, so the projection below is not a one-way door.
@@ -47,9 +50,11 @@ const maxScopeSetCarrierLength = 256
 // wins over development in a mixed set for the same reason MergeScope prefers
 // it: a package reachable at runtime ships, whatever else is also true of it.
 //
-// "optional" is never produced. It means "provides additional functionality",
-// a distinction Bomly's scope vocabulary does not draw, and inventing it here
-// would put a claim in a document that no detector made.
+// "optional" is never produced. In CycloneDX it asserts that a component is
+// not installed and cannot be called by any means -- a claim no Bomly detector
+// makes, because a detector reports what a manifest or lockfile resolved, not
+// what is absent from the system that runs it. Writing it would put an
+// assertion in a document that nothing established.
 func CycloneDXScope(scopes []Scope) string {
 	found := false
 	for _, scope := range scopes {
@@ -71,15 +76,33 @@ func CycloneDXScope(scopes []Scope) string {
 // which is also what an unrecognized value gives: a scope Bomly cannot read is
 // not a scope it should guess at.
 //
-// "optional" reads as runtime. An optional component provides additional
-// functionality at runtime -- it is not a development-only dependency -- so
-// required and optional both land on runtime. That is lossy in the direction
-// that matters least, and it is why CycloneDXScopeProperty exists.
+// The mapping is the specification's reading of its own vocabulary, not a
+// judgment call made here. CycloneDX states it normatively: "required" is
+// "required for runtime"; an "optional" component is "not capable of being
+// called due to [it] not being installed or otherwise accessible by any
+// means", and one that is installed but merely prohibited from being called
+// "must be scoped as 'required'"; "excluded" documents "test and other
+// non-runtime purposes". So only "required" describes a component present in
+// what runs, and both of the others describe one that is not -- which is what
+// Bomly's development scope means to a filter.
+//
+// This replaces an earlier reading in which "optional" landed on runtime
+// because such a component "provides additional functionality" at runtime.
+// That was the pre-1.6 gloss rather than what the specification says, and it
+// was resolved against the specification in bomly-dev/bomly-sdk#63: a document
+// Bomly did not write is read in the vocabulary of the format that defines it.
+// The cost is real and was weighed -- a producer that spells an installed
+// conditional dependency "optional" now has that component dropped by a
+// runtime filter -- but a spelling that contradicts the specification is not
+// evidence Bomly can act on, and acting on it would mean reading every
+// conforming document wrongly to accommodate the ones that are not. Bomly's
+// own documents never reach this mapping: CycloneDXScopeProperty carries their
+// full scope set, and the scalar is read only when that carrier is absent.
 func ScopesFromCycloneDX(value string) []Scope {
 	switch cdx.Scope(strings.ToLower(strings.TrimSpace(value))) {
-	case cdx.ScopeRequired, cdx.ScopeOptional:
+	case cdx.ScopeRequired:
 		return []Scope{ScopeRuntime}
-	case cdx.ScopeExcluded:
+	case cdx.ScopeOptional, cdx.ScopeExcluded:
 		return []Scope{ScopeDevelopment}
 	default:
 		return nil
@@ -296,9 +319,9 @@ func NormalizeSourceScope(value string) string {
 // across a round trip that asserted neither. "Still means the same" is
 // decided by the same rule that read the word in: the set ScopesFromCycloneDX
 // derives from it must equal the set the node carries now. A node ingested
-// as "optional" carries {runtime} and re-exports as "optional"; once
-// propagation adds development to it, the set says something the word did
-// not, and the projection ("required") is written instead. A source word
+// as "optional" carries {development} and re-exports as "optional"; once
+// propagation adds runtime to it, the set says something the word did not,
+// and the projection ("required") is written instead. A source word
 // outside the CycloneDX vocabulary -- another format's, or nothing -- never
 // reaches a CycloneDX document; the projection does.
 //
