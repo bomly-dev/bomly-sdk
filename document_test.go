@@ -209,10 +209,10 @@ func TestDocumentVersionAndChecksumAreGatedAndFillGaps(t *testing.T) {
 		t.Error("a document carrying only a checksum was reported empty")
 	}
 
-	// Merge class, both fields: fill-gaps. Two documents' bytes are not the
-	// same bytes, and their versions are not comparable, so the first stated
-	// value stands.
+	// Merge class: fill-gaps, as one provenance tuple with the identity. A
+	// stated tuple stands...
 	other := DocumentAssertions{
+		Identity: good.Identity,
 		Version:  7,
 		Checksum: &Digest{Algorithm: "SHA-1", Value: "da39a3ee5e6b4b0d3255bfef95601890afd80709"},
 	}
@@ -220,9 +220,27 @@ func TestDocumentVersionAndChecksumAreGatedAndFillGaps(t *testing.T) {
 	if merged.Version != 2 || merged.Checksum == nil || merged.Checksum.Algorithm != DigestAlgorithmSHA256 {
 		t.Errorf("a stated version or checksum was overwritten: %+v %+v", merged.Version, merged.Checksum)
 	}
+	// ... the same document seen twice fills its own gaps...
 	filled := MergeDocumentAssertions(DocumentAssertions{Identity: good.Identity}, other)
 	if filled.Version != 7 || filled.Checksum == nil || filled.Checksum.Algorithm != DigestAlgorithmSHA1 {
-		t.Errorf("a gap was not filled: %+v %+v", filled.Version, filled.Checksum)
+		t.Errorf("a gap was not filled for the same document: %+v %+v", filled.Version, filled.Checksum)
+	}
+	// ... a side with no link at all takes the other's whole tuple...
+	whole := MergeDocumentAssertions(DocumentAssertions{Name: "unlinked"}, other)
+	if whole.Identity != good.Identity || whole.Version != 7 || whole.Checksum == nil || whole.Name != "unlinked" {
+		t.Errorf("a record with no link did not take the tuple whole: %+v", whole)
+	}
+	// ... and two different documents never mix: A's identity must not be
+	// paired with B's version or checksum, or an SPDX external-document
+	// reference would claim A's bytes have B's checksum.
+	documentB := DocumentAssertions{
+		Identity: "https://example.test/spdxdocs/other",
+		Version:  3,
+		Checksum: &Digest{Algorithm: "SHA-1", Value: "da39a3ee5e6b4b0d3255bfef95601890afd80709"},
+	}
+	mixed := MergeDocumentAssertions(DocumentAssertions{Identity: good.Identity}, documentB)
+	if mixed.Identity != good.Identity || mixed.Version != 0 || mixed.Checksum != nil {
+		t.Errorf("document B's link fields were attached to document A: %+v", mixed)
 	}
 	// The merge does not alias its inputs.
 	filled.Checksum.Value = "changed"

@@ -90,8 +90,9 @@ type DocumentAssertions struct {
 	// never stated a version keeps writing the bytes it wrote before the
 	// field existed.
 	//
-	// Gate: a positive integer, else absent. Merge class: scalar, fill-gaps
-	// -- two documents' versions are not comparable, so a stated one stands.
+	// Gate: a positive integer, else absent. Merge class: fill-gaps, as one
+	// provenance tuple with Identity and Checksum -- see
+	// MergeDocumentAssertions.
 	Version int `json:"version,omitempty"`
 	// Checksum is a digest over the source document's original bytes,
 	// computed at ingest while those bytes are in hand: it cannot be
@@ -100,8 +101,9 @@ type DocumentAssertions struct {
 	// its sources at all.
 	//
 	// Gate: Digest.Normalized, the same one a package digest passes. Merge
-	// class: scalar, fill-gaps -- two documents' bytes are not the same
-	// bytes, so a stated checksum stands and a second one is dropped.
+	// class: fill-gaps, as one provenance tuple with Identity and Version --
+	// a checksum is a claim about one document's bytes and never attaches
+	// to another document's identity. See MergeDocumentAssertions.
 	Checksum *Digest `json:"checksum,omitempty"`
 }
 
@@ -261,16 +263,29 @@ func MergeDocumentAssertions(dst, src DocumentAssertions) DocumentAssertions {
 	// it rather than this one copy. Both sides were gated above, so the
 	// per-item publishability tests here are nil.
 	merged := left
-	merged.Identity = MergeFillGap(left.Identity, right.Identity, nil)
 	merged.Name = MergeFillGap(left.Name, right.Name, nil)
 	merged.DataLicense = MergeFillGap(left.DataLicense, right.DataLicense, nil)
 	merged.Created = MergeFillGap(left.Created, right.Created, nil)
 	merged.Comment = MergeFillGap(left.Comment, right.Comment, nil)
-	merged.Version = MergeFillGap(left.Version, right.Version, nil)
-	// Fill-gaps on the pointer: both sides were gated above, so a non-nil
-	// checksum is a publishable one, and the first stated digest stands.
+	// Identity, Version, and Checksum are one provenance tuple: the link
+	// forms pair them, and a checksum is a claim about one document's bytes.
+	// Filling each independently let a record identifying document A take
+	// document B's version and digest, so an SPDX external-document
+	// reference could claim A's bytes have B's checksum. The tuple fills as
+	// a unit: a side that states no link at all takes the other's whole
+	// tuple; the same document seen twice fills its own gaps; two different
+	// documents keep the first one's tuple, and the second's version and
+	// checksum go nowhere rather than onto the wrong identity.
+	leftHasLink := left.Identity != "" || left.Version != 0 || left.Checksum != nil
+	switch {
+	case !leftHasLink:
+		merged.Identity, merged.Version, merged.Checksum = right.Identity, right.Version, right.Checksum
+	case left.Identity != "" && left.Identity == right.Identity:
+		merged.Version = MergeFillGap(left.Version, right.Version, nil)
+		merged.Checksum = MergeFillGap(left.Checksum, right.Checksum, nil)
+	}
 	// Cloned, so the merged record does not alias either input.
-	if merged.Checksum = MergeFillGap(left.Checksum, right.Checksum, nil); merged.Checksum != nil {
+	if merged.Checksum != nil {
 		checksum := *merged.Checksum
 		merged.Checksum = &checksum
 	}
