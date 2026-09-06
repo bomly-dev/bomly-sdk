@@ -56,6 +56,7 @@ func TestTypeForValuesMostSpecificWins(t *testing.T) {
 func TestEcosystemForTypeRows(t *testing.T) {
 	cases := map[string]string{
 		"golang": "go", "otp": "erlang", "hackage": "haskell", "cran": "r",
+		"brew": "homebrew",
 		"opam": "ocaml", "deb": "dpkg", "cargo": "rust", "nuget": "dotnet",
 		"pypi": "python", "gem": "ruby", "composer": "php", "pub": "dart",
 		"conan": "cpp", "cocoapods": "swift", "swift": "swift",

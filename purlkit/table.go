@@ -108,6 +108,13 @@ func TypeForValues(values ...string) string {
 // ambiguity recorded here.
 var purlTypeEcosystems = map[string]string{
 	"golang": "go",
+	// The specification's Homebrew type is pkg:brew; Bomly's token is
+	// homebrew. Its absence here was an omission, not a decision: a
+	// document carrying pkg:brew ingested with no ecosystem at all. Note
+	// that the mint direction still emits the non-spec pkg:homebrew --
+	// correcting that changes minted identities, so it is tracked
+	// separately.
+	"brew": "homebrew",
 	// pkg:otp, unlike pkg:hex, names exactly one ecosystem.
 	"otp":           "erlang",
 	"hackage":       "haskell",
