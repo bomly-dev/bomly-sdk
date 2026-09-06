@@ -161,6 +161,196 @@ func TestMergeDocumentAssertions(t *testing.T) {
 	}
 }
 
+// A merged SPDX export names its sources through externalDocumentRefs, and
+// SPDX 2.3 requires a checksum on every one -- so without a checksum on the
+// carrier the export could not link its sources at all. The digest is
+// captured at ingest while the bytes are in hand; the version rides beside
+// it because a BOM-Link needs it and SPDX records it.
+func TestDocumentVersionAndChecksumAreGatedAndFillGaps(t *testing.T) {
+	good := DocumentAssertions{
+		Identity: "https://example.test/spdxdocs/app",
+		Version:  2,
+		Checksum: &Digest{Algorithm: "SHA-256", Value: "  d1e8a70b5ccab1dc2f56bbf7e99f064a660c08e361a35751b9c483c88943d082  "},
+	}
+	normalized, ok := good.Normalized()
+	if !ok {
+		t.Fatal("a document with a version and checksum was rejected")
+	}
+	if normalized.Version != 2 {
+		t.Errorf("Version = %d, want 2", normalized.Version)
+	}
+	if normalized.Checksum == nil || normalized.Checksum.Algorithm != DigestAlgorithmSHA256 ||
+		normalized.Checksum.Value != "d1e8a70b5ccab1dc2f56bbf7e99f064a660c08e361a35751b9c483c88943d082" {
+		t.Errorf("Checksum = %+v, want the digest gate's canonical form", normalized.Checksum)
+	}
+
+	// The gates: a non-positive version is not one a document stated, and
+	// an unpublishable digest is dropped whole rather than carried as a zero
+	// record. Each field is independent of the others, as the rest are.
+	for name, bad := range map[string]DocumentAssertions{
+		"zero version":      {Identity: good.Identity, Version: 0},
+		"negative version":  {Identity: good.Identity, Version: -1},
+		"unknown algorithm": {Identity: good.Identity, Checksum: &Digest{Algorithm: "CRC32", Value: "abcd"}},
+		"empty value":       {Identity: good.Identity, Checksum: &Digest{Algorithm: "SHA-256", Value: "   "}},
+		"value with space":  {Identity: good.Identity, Checksum: &Digest{Algorithm: "SHA-256", Value: "ab cd"}},
+		// A valid digest of the wrong object: a source-tree or metadata hash
+		// is not a hash of the document's bytes, and the SPDX reference has
+		// no slot to say which it was.
+		"source-tree subject": {Identity: good.Identity, Checksum: &Digest{Algorithm: "SHA-256", Value: good.Checksum.Value, Subject: DigestSubjectSourceTree}},
+		"metadata subject":    {Identity: good.Identity, Checksum: &Digest{Algorithm: "SHA-256", Value: good.Checksum.Value, Subject: DigestSubjectMetadata}},
+	} {
+		got, ok := bad.Normalized()
+		if !ok || got.Identity != good.Identity {
+			t.Errorf("%s: the identity was lost with the bad field: ok=%v %+v", name, ok, got)
+		}
+		if got.Version != 0 || got.Checksum != nil {
+			t.Errorf("%s: an ungated value survived: version=%d checksum=%+v", name, got.Version, got.Checksum)
+		}
+	}
+
+	// A BOM-Link identity names its version in the tail, and a stated
+	// version that disagrees with it is a self-contradiction: the identity
+	// wins and the version is dropped. An agreeing one is kept, and an SPDX
+	// namespace carries no version to disagree with.
+	bomLink := "urn:cdx:3e671687-395b-41f5-a30f-a58921a69b79/1"
+	for name, tc := range map[string]struct {
+		in   DocumentAssertions
+		want int
+	}{
+		"bom-link agrees":    {DocumentAssertions{Identity: bomLink, Version: 1}, 1},
+		"bom-link disagrees": {DocumentAssertions{Identity: bomLink, Version: 2}, 0},
+		"bom-link unstated":  {DocumentAssertions{Identity: bomLink}, 0},
+		"spdx namespace":     {DocumentAssertions{Identity: good.Identity, Version: 2}, 2},
+	} {
+		got, _ := tc.in.Normalized()
+		if got.Version != tc.want || got.Identity != tc.in.Identity {
+			t.Errorf("%s: version = %d, identity = %q; want %d and the identity kept", name, got.Version, got.Identity, tc.want)
+		}
+	}
+
+	// A checksum alone is a publishable record: it is the field the SPDX
+	// link cannot do without.
+	if _, ok := (DocumentAssertions{Checksum: good.Checksum}).Normalized(); !ok {
+		t.Error("a document carrying only a checksum was reported empty")
+	}
+
+	// Merge class: fill-gaps, as one provenance tuple with the identity. A
+	// stated tuple stands...
+	other := DocumentAssertions{
+		Identity: good.Identity,
+		Version:  7,
+		Checksum: &Digest{Algorithm: "SHA-1", Value: "da39a3ee5e6b4b0d3255bfef95601890afd80709"},
+	}
+	merged := MergeDocumentAssertions(good, other)
+	if merged.Version != 2 || merged.Checksum == nil || merged.Checksum.Algorithm != DigestAlgorithmSHA256 {
+		t.Errorf("a stated version or checksum was overwritten: %+v %+v", merged.Version, merged.Checksum)
+	}
+	// ... the same document seen twice fills its own gaps...
+	filled := MergeDocumentAssertions(DocumentAssertions{Identity: good.Identity}, other)
+	if filled.Version != 7 || filled.Checksum == nil || filled.Checksum.Algorithm != DigestAlgorithmSHA1 {
+		t.Errorf("a gap was not filled for the same document: %+v %+v", filled.Version, filled.Checksum)
+	}
+	// ... a side with no link at all takes the other's whole tuple...
+	whole := MergeDocumentAssertions(DocumentAssertions{Name: "unlinked"}, other)
+	if whole.Identity != good.Identity || whole.Version != 7 || whole.Checksum == nil || whole.Name != "unlinked" {
+		t.Errorf("a record with no link did not take the tuple whole: %+v", whole)
+	}
+	// ... and two different documents never mix: A's identity must not be
+	// paired with B's version or checksum, or an SPDX external-document
+	// reference would claim A's bytes have B's checksum.
+	documentB := DocumentAssertions{
+		Identity: "https://example.test/spdxdocs/other",
+		Version:  3,
+		Checksum: &Digest{Algorithm: "SHA-1", Value: "da39a3ee5e6b4b0d3255bfef95601890afd80709"},
+	}
+	mixed := MergeDocumentAssertions(DocumentAssertions{Identity: good.Identity}, documentB)
+	if mixed.Identity != good.Identity || mixed.Version != 0 || mixed.Checksum != nil {
+		t.Errorf("document B's link fields were attached to document A: %+v", mixed)
+	}
+	// The same identity at two stated versions is two documents too: version
+	// 1 must not take version 2's hash.
+	conflict := MergeDocumentAssertions(
+		DocumentAssertions{Identity: good.Identity, Version: 1},
+		DocumentAssertions{Identity: good.Identity, Version: 2, Checksum: documentB.Checksum},
+	)
+	if conflict.Version != 1 || conflict.Checksum != nil {
+		t.Errorf("a version conflict let the other version's checksum through: %+v", conflict)
+	}
+	// The merge does not alias its inputs.
+	filled.Checksum.Value = "changed"
+	if other.Checksum.Value == "changed" {
+		t.Error("the merged checksum aliases the source digest")
+	}
+
+	// Clone is deep for the pointer too.
+	clone := normalized.Clone()
+	clone.Checksum.Value = "changed"
+	if normalized.Checksum.Value == "changed" {
+		t.Error("Clone aliased the checksum")
+	}
+}
+
+// The gates run in the codec on both directions, so no call site can bypass
+// them: a payload from a plugin, or a hand-built value marshaled without
+// Normalized, is held to the same rules. Before the hooks existed a negative
+// version and an invalid identity decoded unchanged, and a checksum the digest
+// codec had zeroed re-encoded as "checksum":{} -- a non-nil record an exporter
+// would read as a checksum being present.
+func TestDocumentAssertionsCodecAppliesTheGates(t *testing.T) {
+	payload := `{"identity":"not an iri","name":"x\ny","created":"2024-01-01T00:00:00Z",` +
+		`"version":-3,"checksum":{"algorithm":"CRC32","value":"abcd"}}`
+	var decoded DocumentAssertions
+	if err := json.Unmarshal([]byte(payload), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Identity != "" || decoded.Name != "" || decoded.Version != 0 || decoded.Checksum != nil {
+		t.Fatalf("ungated values survived decode: %+v", decoded)
+	}
+	if decoded.Created != "2024-01-01T00:00:00Z" {
+		t.Fatalf("a good field was lost alongside the bad ones: %+v", decoded)
+	}
+
+	// The same on the way out, for a value that never passed Normalized.
+	dirty := DocumentAssertions{
+		Identity: "https://example.test/spdxdocs/app",
+		Version:  -1,
+		Checksum: &Digest{Algorithm: "CRC32", Value: "abcd"},
+	}
+	data, err := json.Marshal(dirty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(data, &keys); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"version", "checksum"} {
+		if _, present := keys[field]; present {
+			t.Errorf("an ungated %q was written: %s", field, data)
+		}
+	}
+	if _, present := keys["identity"]; !present {
+		t.Errorf("the good identity was lost: %s", data)
+	}
+
+	// A gated record round-trips exactly.
+	good, _ := DocumentAssertions{
+		Identity: "https://example.test/spdxdocs/app", Version: 2,
+		Checksum: &Digest{Algorithm: "SHA-256", Value: "d1e8a70b5ccab1dc2f56bbf7e99f064a660c08e361a35751b9c483c88943d082"},
+	}.Normalized()
+	data, err = json.Marshal(good)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var again DocumentAssertions
+	if err := json.Unmarshal(data, &again); err != nil {
+		t.Fatal(err)
+	}
+	if again.Version != 2 || again.Checksum == nil || *again.Checksum != *good.Checksum || again.Identity != good.Identity {
+		t.Fatalf("round trip changed the record: %+v -> %+v", good, again)
+	}
+}
+
 // TestMergeIsOrderIndependentForLists pins that two entries merged in either
 // order credit the same creators and tools, so a merged document does not
 // depend on which source was read first.
@@ -187,6 +377,23 @@ func TestGraphEntryDocumentIsOmitEmpty(t *testing.T) {
 	}
 	if _, present := decoded["document"]; present {
 		t.Error("an entry with no document wrote the field")
+	}
+
+	// The additive fields on the document itself vanish when unstated, so a
+	// document that never stated a version or checksum writes the exact
+	// bytes it wrote before the fields existed -- which is also why an
+	// unstated version is zero here and not the format default of one.
+	data, err = json.Marshal(DocumentAssertions{Identity: "https://example.test/spdxdocs/app"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, field := range []string{"version", "checksum"} {
+		if _, present := decoded[field]; present {
+			t.Errorf("an unstated %q was written to the wire", field)
+		}
 	}
 }
 

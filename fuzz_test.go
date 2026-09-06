@@ -869,6 +869,11 @@ func FuzzDocumentAssertions(f *testing.F) {
 			Comment:     raw,
 			Creators:    []Contact{{Kind: ContactKindOrganization, Name: raw}},
 			Tools:       []DocumentTool{{Vendor: raw, Name: raw, Version: raw}},
+			// A signed version derived from the input, so both sides of the
+			// positive gate are reached; the checksum takes the raw value
+			// as both algorithm and digest.
+			Version:  len(raw) - 8,
+			Checksum: &Digest{Algorithm: DigestAlgorithm(raw), Value: raw},
 		}
 		normalized, ok := assertions.Normalized()
 		if !ok && !normalized.IsEmpty() {
@@ -884,8 +889,47 @@ func FuzzDocumentAssertions(f *testing.F) {
 		if again.Identity != normalized.Identity || again.Name != normalized.Name ||
 			again.DataLicense != normalized.DataLicense || again.Created != normalized.Created ||
 			again.Comment != normalized.Comment || len(again.Creators) != len(normalized.Creators) ||
-			len(again.Tools) != len(normalized.Tools) {
+			len(again.Tools) != len(normalized.Tools) || again.Version != normalized.Version ||
+			(again.Checksum == nil) != (normalized.Checksum == nil) ||
+			(again.Checksum != nil && *again.Checksum != *normalized.Checksum) {
 			t.Fatalf("normalizing is not a fixed point:\n%+v\n%+v", normalized, again)
+		}
+		if normalized.Version < 0 {
+			t.Fatalf("a non-positive version survived the gate: %d", normalized.Version)
+		}
+		// A stated version never contradicts the version a BOM-Link identity
+		// names in its tail.
+		if normalized.Version != 0 && cdx.IsBOMLink(normalized.Identity) {
+			if link, err := cdx.ParseBOMLink(normalized.Identity); err == nil && link.Version() != normalized.Version {
+				t.Fatalf("version %d contradicts BOM-Link %q", normalized.Version, normalized.Identity)
+			}
+		}
+		if normalized.Checksum != nil {
+			if err := normalized.Checksum.Validate(); err != nil {
+				t.Fatalf("an unpublishable checksum survived the gate: %+v: %v", normalized.Checksum, err)
+			}
+		}
+		// The codec applies the same gates, so the ungated value and its
+		// normalized form encode to the same bytes, and decoding gives the
+		// normalized form back.
+		fromRaw, err := json.Marshal(assertions)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		fromNormalized, err := json.Marshal(normalized)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if string(fromRaw) != string(fromNormalized) {
+			t.Fatalf("the codec let an ungated value through:\n%s\n%s", fromRaw, fromNormalized)
+		}
+		var decoded DocumentAssertions
+		if err := json.Unmarshal(fromRaw, &decoded); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if decoded.Version != normalized.Version || (decoded.Checksum == nil) != (normalized.Checksum == nil) ||
+			decoded.Identity != normalized.Identity || decoded.Name != normalized.Name {
+			t.Fatalf("decode is not the normalized form:\n%+v\n%+v", normalized, decoded)
 		}
 		// Nothing published carries a control character, which would corrupt
 		// SPDX's line-oriented tag form.

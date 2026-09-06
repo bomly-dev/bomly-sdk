@@ -1,8 +1,12 @@
 package sdk
 
 import (
+	"encoding/json"
 	"sort"
 	"strings"
+	"unicode/utf8"
+
+	cdx "github.com/CycloneDX/cyclonedx-go"
 )
 
 // Both formats carry claims about the document itself, distinct from claims
@@ -44,7 +48,7 @@ func (t DocumentTool) Normalized() (DocumentTool, bool) {
 		Version: strings.TrimSpace(t.Version),
 	}
 	for _, field := range []string{normalized.Vendor, normalized.Name, normalized.Version} {
-		if len(field) > maxDocumentFieldLength || containsControlChar(field) {
+		if !documentFieldPublishable(field) {
 			return DocumentTool{}, false
 		}
 	}
@@ -81,6 +85,31 @@ type DocumentAssertions struct {
 	Tools []DocumentTool `json:"tools,omitempty"`
 	// Comment is the document-level comment.
 	Comment string `json:"comment,omitempty"`
+	// Version is the document's own version number: CycloneDX's top-level
+	// version, which a BOM-Link's "/<n>" tail repeats, and which SPDX 2.x
+	// leaves implicit at 1. Zero means the source stated none; the default is
+	// the exporting format's to apply, not this carrier's, so an entry that
+	// never stated a version keeps writing the bytes it wrote before the
+	// field existed.
+	//
+	// Gate: a positive integer, else absent. Merge class: fill-gaps, as one
+	// provenance tuple with Identity and Checksum -- see
+	// MergeDocumentAssertions.
+	Version int `json:"version,omitempty"`
+	// Checksum is a digest over the source document's original bytes,
+	// computed at ingest while those bytes are in hand: it cannot be
+	// recovered from the parsed model later, and an SPDX externalDocumentRef
+	// is invalid without one, so a merged export that lacks it cannot name
+	// its sources at all.
+	//
+	// Gate: Digest.Normalized, the same one a package digest passes, plus
+	// the artifact subject: a digest over a source tree or a metadata record
+	// is not a hash of the document's bytes, and the SPDX reference has no
+	// slot to say so. Merge class: fill-gaps, as one provenance tuple with
+	// Identity and Version --
+	// a checksum is a claim about one document's bytes and never attaches
+	// to another document's identity. See MergeDocumentAssertions.
+	Checksum *Digest `json:"checksum,omitempty"`
 }
 
 // Normalized returns the assertions with every field held to its gate, and
@@ -105,16 +134,14 @@ func (d DocumentAssertions) Normalized() (DocumentAssertions, bool) {
 	// so a line break in it corrupts the tag form outright. That rules out
 	// NormalizeDescription, which deliberately keeps line breaks because a
 	// description is genuinely multi-line -- the fuzzer caught the reuse.
-	if name := strings.TrimSpace(d.Name); name != "" &&
-		len(name) <= maxDocumentFieldLength && !containsControlChar(name) {
+	if name := strings.TrimSpace(d.Name); name != "" && documentFieldPublishable(name) {
 		normalized.Name = name
 	}
 	// No extracted text: a document's data license is a spec-listed
 	// identifier ("CC0-1.0"), never a minted LicenseRef whose text lives
 	// elsewhere, and passing "" is what makes the shared rule refuse one.
 	normalized.DataLicense = normalizedSPDXExpression(d.DataLicense, "")
-	if created := strings.TrimSpace(d.Created); created != "" &&
-		len(created) <= maxDocumentFieldLength && !containsControlChar(created) {
+	if created := strings.TrimSpace(d.Created); created != "" && documentFieldPublishable(created) {
 		normalized.Created = created
 	}
 	// A comment is multi-line in both formats -- SPDX wraps it in <text> --
@@ -122,6 +149,39 @@ func (d DocumentAssertions) Normalized() (DocumentAssertions, bool) {
 	normalized.Comment = NormalizeDescription(d.Comment)
 	if len(normalized.Comment) > maxDocumentFieldLength {
 		normalized.Comment = ""
+	}
+	// A version is a count, and both formats count from one. Anything else
+	// is not a version a document stated.
+	if d.Version > 0 {
+		normalized.Version = d.Version
+	}
+	// A BOM-Link identity carries the document version in its tail, and the
+	// two are one claim. A payload stating urn:cdx:<serial>/1 beside
+	// Version 2 is contradicting itself, and carrying both would let an
+	// export identify version 1 while asserting version 2. The stated
+	// version is the one dropped: the identity is the link a merged export
+	// needs, and it still says which version it names. The grammar is
+	// cyclonedx-go's -- ParseBOMLink reads the tail; nothing is parsed here.
+	// An SPDX namespace carries no version, so any stated one stands there.
+	// A missing version is not filled from the link: that would write a
+	// version onto every existing BOM-Link payload that never stated one.
+	if normalized.Version != 0 && cdx.IsBOMLink(normalized.Identity) {
+		if link, err := cdx.ParseBOMLink(normalized.Identity); err == nil && link.Version() != normalized.Version {
+			normalized.Version = 0
+		}
+	}
+	// The checksum takes the digest gate as a whole: an unpublishable digest
+	// is dropped rather than carried as a zero record, which is what Digest's
+	// own codec does with one. It must also hash the bytes themselves. The
+	// digest vocabulary lets a package record say its hash covers a source
+	// tree or a metadata record instead; this field promises the original
+	// document bytes, and the SPDX external-document checksum has no subject
+	// slot to carry the distinction, so a digest of anything else would be
+	// published as a checksum for the wrong object.
+	if d.Checksum != nil {
+		if checksum, ok := d.Checksum.Normalized(); ok && checksum.Subject == DigestSubjectArtifact {
+			normalized.Checksum = &checksum
+		}
 	}
 
 	for _, creator := range d.Creators {
@@ -146,10 +206,51 @@ func (d DocumentAssertions) Normalized() (DocumentAssertions, bool) {
 	return normalized, !normalized.IsEmpty()
 }
 
+// documentFieldPublishable is the gate a single-line document field passes:
+// bounded, valid UTF-8, no control characters. Invalid UTF-8 is refused rather
+// than carried for the reason Digest.Validate gives: encoding/json rewrites
+// such bytes to U+FFFD, so a value that passed the gate would serialize as a
+// different value than the one checked -- and the codec round trip the fuzz
+// target asserts would not be a fixed point. The fuzzer found exactly that on
+// the document name once the codec hooks made the round trip observable.
+func documentFieldPublishable(field string) bool {
+	return len(field) <= maxDocumentFieldLength && utf8.ValidString(field) && !containsControlChar(field)
+}
+
+// documentAssertionsWire carries DocumentAssertions' fields without its
+// methods, so the codec hooks below can encode and decode without recursing.
+type documentAssertionsWire DocumentAssertions
+
+// MarshalJSON applies every field's gate on the way out, so a hand-built
+// value that bypassed Normalized is still held to it at the wire. Without
+// this a negative version reached a reader unchanged, and a checksum the
+// digest codec had zeroed still encoded as "checksum":{} -- a non-nil record
+// an exporter would read as a checksum being present.
+func (d DocumentAssertions) MarshalJSON() ([]byte, error) {
+	normalized, _ := d.Normalized()
+	return json.Marshal(documentAssertionsWire(normalized))
+}
+
+// UnmarshalJSON applies the same gates on the way in, so a payload from a
+// plugin or an older producer is held to them whether or not the caller
+// remembers to call Normalized. A record that gates to nothing decodes to
+// the zero value rather than failing the payload: the entry it belongs to is
+// still a graph, and a document with no publishable claims is merely absent.
+func (d *DocumentAssertions) UnmarshalJSON(data []byte) error {
+	var wire documentAssertionsWire
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	normalized, _ := DocumentAssertions(wire).Normalized()
+	*d = normalized
+	return nil
+}
+
 // IsEmpty reports whether the assertions carry nothing.
 func (d DocumentAssertions) IsEmpty() bool {
 	return d.Identity == "" && d.Name == "" && d.DataLicense == "" &&
-		d.Created == "" && d.Comment == "" && len(d.Creators) == 0 && len(d.Tools) == 0
+		d.Created == "" && d.Comment == "" && len(d.Creators) == 0 && len(d.Tools) == 0 &&
+		d.Version == 0 && d.Checksum == nil
 }
 
 // Clone returns a deep copy.
@@ -160,6 +261,10 @@ func (d DocumentAssertions) Clone() DocumentAssertions {
 	}
 	if len(d.Tools) > 0 {
 		clone.Tools = append([]DocumentTool(nil), d.Tools...)
+	}
+	if d.Checksum != nil {
+		checksum := *d.Checksum
+		clone.Checksum = &checksum
 	}
 	return clone
 }
@@ -183,11 +288,38 @@ func MergeDocumentAssertions(dst, src DocumentAssertions) DocumentAssertions {
 	// it rather than this one copy. Both sides were gated above, so the
 	// per-item publishability tests here are nil.
 	merged := left
-	merged.Identity = MergeFillGap(left.Identity, right.Identity, nil)
 	merged.Name = MergeFillGap(left.Name, right.Name, nil)
 	merged.DataLicense = MergeFillGap(left.DataLicense, right.DataLicense, nil)
 	merged.Created = MergeFillGap(left.Created, right.Created, nil)
 	merged.Comment = MergeFillGap(left.Comment, right.Comment, nil)
+	// Identity, Version, and Checksum are one provenance tuple: the link
+	// forms pair them, and a checksum is a claim about one document's bytes.
+	// Filling each independently let a record identifying document A take
+	// document B's version and digest, so an SPDX external-document
+	// reference could claim A's bytes have B's checksum. The tuple fills as
+	// a unit: a side that states no link at all takes the other's whole
+	// tuple; the same document seen twice fills its own gaps; two different
+	// documents keep the first one's tuple, and the second's version and
+	// checksum go nowhere rather than onto the wrong identity.
+	//
+	// "The same document" is the same identity at a compatible version: two
+	// stated versions that differ are two documents sharing a namespace,
+	// and filling across them would pair version 1 with version 2's hash.
+	leftHasLink := left.Identity != "" || left.Version != 0 || left.Checksum != nil
+	sameIdentity := left.Identity != "" && left.Identity == right.Identity
+	versionsAgree := left.Version == 0 || right.Version == 0 || left.Version == right.Version
+	switch {
+	case !leftHasLink:
+		merged.Identity, merged.Version, merged.Checksum = right.Identity, right.Version, right.Checksum
+	case sameIdentity && versionsAgree:
+		merged.Version = MergeFillGap(left.Version, right.Version, nil)
+		merged.Checksum = MergeFillGap(left.Checksum, right.Checksum, nil)
+	}
+	// Cloned, so the merged record does not alias either input.
+	if merged.Checksum != nil {
+		checksum := *merged.Checksum
+		merged.Checksum = &checksum
+	}
 	merged.Creators = MergeUnion(left.Creators, right.Creators, creatorKey, nil)
 	merged.Tools = MergeUnion(left.Tools, right.Tools, toolKey, nil)
 	return merged
