@@ -354,61 +354,77 @@ func TestDocumentAssertionsCodecAppliesTheGates(t *testing.T) {
 
 // A merged export writes one link per source document, and until this field
 // existed those links were write-only: ingest had nowhere to put them, so a
-// merged inventory lost every trace of its inputs after one round trip.
+// merged inventory lost every trace of its inputs after one round trip. A
+// source is the link tuple, not a bare identity, because an SPDX
+// externalDocumentRef requires a checksum on every entry and the wire is
+// frozen once shipped.
 func TestDocumentSourcesAreGatedAndUnion(t *testing.T) {
 	self := "https://example.test/spdxdocs/merged"
 	a := "urn:cdx:3e671687-395b-41f5-a30f-a58921a69b79/1"
 	b := "https://example.test/spdxdocs/b"
+	sha := &Digest{Algorithm: "SHA-256", Value: "d1e8a70b5ccab1dc2f56bbf7e99f064a660c08e361a35751b9c483c88943d082"}
 	doc := DocumentAssertions{
 		Identity: self,
-		Sources: []string{
-			b, " " + a + " ", b, // unsorted, padded, duplicated
-			self,          // a document is not built from itself
-			"not an iri",  // fails the identity gate
-			"file:///etc", // a local path is not a link a document can publish
+		Sources: []DocumentSource{
+			{Identity: b},                           // unsorted relative to a
+			{Identity: " " + a + " ", Version: 1},   // padded, agrees with its BOM-Link
+			{Identity: b, Checksum: sha},            // same document again: fills the checksum gap
+			{Identity: a, Version: 2},               // contradicts its BOM-Link: version dropped, folds into a
+			{Identity: self},                        // a document is not built from itself
+			{Identity: "not an iri", Checksum: sha}, // fails the identity gate, checksum cannot save it
+			{Identity: "file:///etc"},               // a local path is not a link a document can publish
+			{Identity: b, Checksum: &Digest{Algorithm: "SHA-256", Value: sha.Value, Subject: DigestSubjectSourceTree}}, // wrong object
 		},
 	}
 	got, ok := doc.Normalized()
 	if !ok {
 		t.Fatal("a document with sources was rejected")
 	}
-	if want := []string{b, a}; !equalStrings(got.Sources, want) {
-		t.Fatalf("Sources = %v, want %v: gated, deduplicated, self dropped, sorted", got.Sources, want)
+	want := []DocumentSource{
+		{Identity: b, Checksum: &Digest{Algorithm: DigestAlgorithmSHA256, Value: sha.Value}},
+		{Identity: a, Version: 1},
 	}
-	// The bound is a count on the gated list.
-	many := make([]string, 0, maxDocumentSources+10)
+	assertSources(t, "normalized", got.Sources, want)
+
+	// The bound is applied to the input, before any gate runs: entries past
+	// it are not read at all, even when the ones before it are junk.
+	many := make([]DocumentSource, 0, maxDocumentSources+10)
 	for i := 0; i < maxDocumentSources+10; i++ {
-		many = append(many, "https://example.test/spdxdocs/src-"+strconv.Itoa(i))
+		many = append(many, DocumentSource{Identity: "https://example.test/spdxdocs/src-" + strconv.Itoa(i)})
 	}
 	bounded, _ := DocumentAssertions{Sources: many}.Normalized()
 	if len(bounded.Sources) != maxDocumentSources {
 		t.Fatalf("len(Sources) = %d, want the bound %d", len(bounded.Sources), maxDocumentSources)
 	}
+	junkThenGood := append(make([]DocumentSource, maxDocumentSources), DocumentSource{Identity: a})
+	if cut, _ := (DocumentAssertions{Sources: junkThenGood}).Normalized(); len(cut.Sources) != 0 {
+		t.Fatalf("an entry past the input bound was read: %+v", cut.Sources)
+	}
 	// Sources alone are a publishable record.
-	if _, ok := (DocumentAssertions{Sources: []string{a}}).Normalized(); !ok {
+	if _, ok := (DocumentAssertions{Sources: []DocumentSource{{Identity: a}}}).Normalized(); !ok {
 		t.Error("a document carrying only sources was reported empty")
 	}
+	// Two stated versions of one namespace are two documents.
+	twoVersions, _ := DocumentAssertions{Sources: []DocumentSource{{Identity: b, Version: 1}, {Identity: b, Version: 2}}}.Normalized()
+	assertSources(t, "two versions", twoVersions.Sources, []DocumentSource{{Identity: b, Version: 1}, {Identity: b, Version: 2}})
 
-	// Merge class: set, unioned by value, and the merged record's own
-	// identity never lands among its sources. Each side is gated first, so
-	// a side's own identity is already out of its list; which identity the
+	// Merge class: set, unioned by document, and the merged record's own
+	// identity never lands among its sources. Each side is gated first, so a
+	// side's own identity is already out of its list; which identity the
 	// merged record keeps decides what drops from the union.
-	left := DocumentAssertions{Identity: self, Sources: []string{a}}
-	right := DocumentAssertions{Identity: b, Sources: []string{b, self}}
+	left := DocumentAssertions{Identity: self, Sources: []DocumentSource{{Identity: a, Version: 1}}}
+	right := DocumentAssertions{Identity: b, Sources: []DocumentSource{{Identity: b}, {Identity: self}, {Identity: a, Checksum: sha}}}
 	one := MergeDocumentAssertions(left, right)
-	if !equalStrings(one.Sources, []string{a}) {
-		// Keeps self as identity, so self drops from the union; b was
-		// right's identity, never a source.
-		t.Errorf("merged sources = %v, want %v", one.Sources, []string{a})
-	}
+	assertSources(t, "merged", one.Sources, []DocumentSource{{Identity: a, Version: 1, Checksum: want[0].Checksum}})
 	two := MergeDocumentAssertions(right, left)
-	if !equalStrings(two.Sources, []string{self, a}) {
-		// Keeps b as identity, so self is a legitimate source here.
-		t.Errorf("merged (other order) sources = %v, want %v", two.Sources, []string{self, a})
-	}
+	assertSources(t, "merged (other order)", two.Sources, []DocumentSource{
+		{Identity: self},
+		{Identity: a, Version: 1, Checksum: want[0].Checksum},
+	})
 
-	// Through the codec, gated on both directions.
-	data, err := json.Marshal(DocumentAssertions{Identity: self, Sources: []string{self, "not an iri", a}})
+	// Through the codec, gated on both directions, and the element's own
+	// codec holds a hand-built source to the gate too.
+	data, err := json.Marshal(DocumentAssertions{Identity: self, Sources: []DocumentSource{{Identity: self}, {Identity: "not an iri"}, {Identity: a, Version: 2}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -416,27 +432,34 @@ func TestDocumentSourcesAreGatedAndUnion(t *testing.T) {
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if !equalStrings(decoded.Sources, []string{a}) {
-		t.Errorf("sources after the codec = %v, want only the publishable link", decoded.Sources)
+	assertSources(t, "codec", decoded.Sources, []DocumentSource{{Identity: a}})
+	element, err := json.Marshal(DocumentSource{Identity: a, Version: 2, Checksum: &Digest{Algorithm: "CRC32", Value: "x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(element) != `{"identity":"`+a+`"}` {
+		t.Errorf("a hand-built source was written ungated: %s", element)
 	}
 	// Clone does not alias.
 	clone := got.Clone()
-	clone.Sources[0] = "changed"
-	if got.Sources[0] == "changed" {
-		t.Error("Clone aliased the sources")
+	clone.Sources[0].Checksum.Value = "changed"
+	if got.Sources[0].Checksum.Value == "changed" {
+		t.Error("Clone aliased a source checksum")
 	}
 }
 
-func equalStrings(got, want []string) bool {
+func assertSources(t *testing.T, label string, got, want []DocumentSource) {
+	t.Helper()
 	if len(got) != len(want) {
-		return false
+		t.Fatalf("%s: sources = %+v, want %+v", label, got, want)
 	}
 	for i := range got {
-		if got[i] != want[i] {
-			return false
+		if got[i].Identity != want[i].Identity || got[i].Version != want[i].Version ||
+			(got[i].Checksum == nil) != (want[i].Checksum == nil) ||
+			(got[i].Checksum != nil && *got[i].Checksum != *want[i].Checksum) {
+			t.Fatalf("%s: sources[%d] = %+v (checksum %+v), want %+v (checksum %+v)", label, i, got[i], got[i].Checksum, want[i], want[i].Checksum)
 		}
 	}
-	return true
 }
 
 // TestMergeIsOrderIndependentForLists pins that two entries merged in either

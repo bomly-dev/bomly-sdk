@@ -874,9 +874,13 @@ func FuzzDocumentAssertions(f *testing.F) {
 			// as both algorithm and digest.
 			Version:  len(raw) - 8,
 			Checksum: &Digest{Algorithm: DigestAlgorithm(raw), Value: raw},
-			// Twice, so deduplication is exercised, and the identity itself,
-			// so the self-reference rule is.
-			Sources: []string{raw, raw, "https://example.test/spdxdocs/app", raw},
+			// Twice, so folding is exercised; the identity itself, so the
+			// self-reference rule is; and a stated version and checksum,
+			// so the shared tuple gates run on a source too.
+			Sources: []DocumentSource{
+				{Identity: raw}, {Identity: raw, Version: len(raw) - 8, Checksum: &Digest{Algorithm: DigestAlgorithm(raw), Value: raw}},
+				{Identity: "https://example.test/spdxdocs/app"}, {Identity: raw},
+			},
 		}
 		normalized, ok := assertions.Normalized()
 		if !ok && !normalized.IsEmpty() {
@@ -913,17 +917,23 @@ func FuzzDocumentAssertions(f *testing.F) {
 				t.Fatalf("an unpublishable checksum survived the gate: %+v: %v", normalized.Checksum, err)
 			}
 		}
-		// Sources are sorted, deduplicated, bounded, and never the document
-		// itself.
+		// Sources are sorted, folded by document, bounded, never the document
+		// itself, and each passes the tuple gates the document itself passes.
 		if len(normalized.Sources) > maxDocumentSources {
 			t.Fatalf("%d sources survived a bound of %d", len(normalized.Sources), maxDocumentSources)
 		}
 		for i, source := range normalized.Sources {
-			if source == normalized.Identity {
-				t.Fatalf("a document lists itself as a source: %q", source)
+			if source.Identity == "" || source.Identity == normalized.Identity {
+				t.Fatalf("a source names nothing or the document itself: %+v", source)
 			}
-			if i > 0 && normalized.Sources[i-1] >= source {
-				t.Fatalf("sources are not sorted and deduplicated: %v", normalized.Sources)
+			if source.Version < 0 || (source.Checksum != nil && (source.Checksum.Validate() != nil || source.Checksum.Subject != DigestSubjectArtifact)) {
+				t.Fatalf("an ungated source survived: %+v", source)
+			}
+			if i > 0 {
+				prev := normalized.Sources[i-1]
+				if prev.Identity > source.Identity || (prev.Identity == source.Identity && prev.Version >= source.Version) {
+					t.Fatalf("sources are not sorted and folded: %+v", normalized.Sources)
+				}
 			}
 		}
 		// The codec applies the same gates, so the ungated value and its
