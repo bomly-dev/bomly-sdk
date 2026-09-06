@@ -92,8 +92,9 @@ type DocumentSource struct {
 	// of the set key.
 	Identity string `json:"identity,omitempty"`
 	// Version is the source document's version, when the reference stated
-	// it. Merge class: part of the set key -- an unstated version is its own
-	// key, distinct from every stated one.
+	// it or a BOM-Link identity's tail carries it. Merge class: part of the
+	// set key -- an unstated version is its own key, distinct from every
+	// stated one, which for a BOM-Link cannot arise since the tail fills it.
 	Version int `json:"version,omitempty"`
 	// Checksum is a digest over the source document's original bytes, when
 	// the reference carried one -- SPDX always does. Merge class: scalar,
@@ -110,7 +111,12 @@ func (s DocumentSource) Normalized() (DocumentSource, bool) {
 		return DocumentSource{}, false
 	}
 	normalized := DocumentSource{Identity: identity}
-	normalized.Version = documentVersionFor(identity, s.Version)
+	// Gated like the document's own version, then filled from a BOM-Link
+	// tail when unstated: the tail proves the version, so a source stating
+	// urn:cdx:<serial>/1 with and without the redundant field is one key,
+	// not two. The document's own Version is not filled the same way, to
+	// keep existing payloads' bytes; a source is a new record with none.
+	normalized.Version = documentEffectiveVersion(identity, documentVersionFor(identity, s.Version))
 	normalized.Checksum = documentChecksumFor(s.Checksum)
 	return normalized, true
 }
@@ -171,6 +177,21 @@ func documentVersionFor(identity string, version int) int {
 	return version
 }
 
+// documentEffectiveVersion is the version a link tuple names: the stated
+// one, or for a BOM-Link identity the version its tail carries when none is
+// stated. An SPDX namespace carries none, so an unstated version stays
+// unstated there. cyclonedx-go reads the tail; nothing is parsed here.
+func documentEffectiveVersion(identity string, version int) int {
+	if version != 0 || !cdx.IsBOMLink(identity) {
+		return version
+	}
+	link, err := cdx.ParseBOMLink(identity)
+	if err != nil {
+		return 0
+	}
+	return link.Version()
+}
+
 // documentChecksumFor is the checksum gate shared by a document and its
 // sources: the digest gate as a whole, so an unpublishable digest is dropped
 // rather than carried as a zero record, plus the artifact subject. The digest
@@ -229,11 +250,16 @@ func foldDocumentSources(gated []DocumentSource) []DocumentSource {
 }
 
 // isSelfSource reports whether a source names the document that lists it,
-// by exact key: the same identity and the same stated version (or none
-// stated on both). It is deliberately not sameDocumentLink's compatible-
-// version test -- see the caller.
+// by exact key: the same identity and the same effective version -- the
+// stated one, or the one a BOM-Link tail proves. A BOM-Link document that
+// states Version 1 and a source repeating urn:cdx:<serial>/1 without the
+// field name the same document, and the tail says so; an SPDX namespace has
+// no tail, and there an unstated version stays its own key. It is
+// deliberately not sameDocumentLink's compatible-version test -- see the
+// caller.
 func isSelfSource(identity string, version int, source DocumentSource) bool {
-	return identity != "" && source.Identity == identity && source.Version == version
+	return identity != "" && source.Identity == identity &&
+		documentEffectiveVersion(identity, version) == documentEffectiveVersion(source.Identity, source.Version)
 }
 
 // sameDocumentLink reports whether two link tuples name the same document:
@@ -486,7 +512,7 @@ func (s *boundedDocumentSources) UnmarshalJSON(data []byte) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	opening, err := decoder.Token()
 	if err != nil {
-		return err
+		return fmt.Errorf("document sources: %w", err)
 	}
 	if opening == nil {
 		*s = nil
@@ -499,7 +525,7 @@ func (s *boundedDocumentSources) UnmarshalJSON(data []byte) error {
 	for decoder.More() && len(out) < maxDocumentSources {
 		var source DocumentSource
 		if err := decoder.Decode(&source); err != nil {
-			return err
+			return fmt.Errorf("document sources[%d]: %w", len(out), err)
 		}
 		out = append(out, source)
 	}

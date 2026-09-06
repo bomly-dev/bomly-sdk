@@ -369,7 +369,7 @@ func TestDocumentSourcesAreGatedAndUnion(t *testing.T) {
 			{Identity: b},                           // unsorted relative to a
 			{Identity: " " + a + " ", Version: 1},   // padded, agrees with its BOM-Link
 			{Identity: b, Checksum: sha},            // same key again: fills the checksum gap
-			{Identity: a, Version: 2},               // contradicts its BOM-Link: version dropped, so its own unversioned key
+			{Identity: a, Version: 2},               // contradicts its BOM-Link: version dropped, then the tail fills it, so it folds into a/1
 			{Identity: self},                        // a document is not built from itself
 			{Identity: "not an iri", Checksum: sha}, // fails the identity gate, checksum cannot save it
 			{Identity: "file:///etc"},               // a local path is not a link a document can publish
@@ -382,10 +382,27 @@ func TestDocumentSourcesAreGatedAndUnion(t *testing.T) {
 	}
 	want := []DocumentSource{
 		{Identity: b, Checksum: &Digest{Algorithm: DigestAlgorithmSHA256, Value: sha.Value}},
-		{Identity: a},
 		{Identity: a, Version: 1},
 	}
 	assertSources(t, "normalized", got.Sources, want)
+
+	// A BOM-Link's tail proves its version, so a source stating it with or
+	// without the redundant field is one key, and a document that is that
+	// BOM-Link drops it as itself whether or not either side spelled the
+	// field out. An SPDX namespace has no tail, so there an unstated
+	// version stays its own key.
+	for name, in := range map[string]DocumentAssertions{
+		"document states, source omits": {Identity: a, Version: 1, Sources: []DocumentSource{{Identity: a}}},
+		"document omits, source states": {Identity: a, Sources: []DocumentSource{{Identity: a, Version: 1}}},
+		"both omit":                     {Identity: a, Sources: []DocumentSource{{Identity: a}}},
+	} {
+		got, _ := in.Normalized()
+		if len(got.Sources) != 0 {
+			t.Errorf("%s: a BOM-Link document kept itself as a source: %+v", name, got.Sources)
+		}
+	}
+	tailFilled, _ := DocumentAssertions{Identity: self, Sources: []DocumentSource{{Identity: a}, {Identity: a, Version: 1, Checksum: sha}}}.Normalized()
+	assertSources(t, "tail fills the key", tailFilled.Sources, []DocumentSource{{Identity: a, Version: 1, Checksum: want[0].Checksum}})
 
 	// A prior version of the same namespace is provenance, not a cycle:
 	// version 2 built from version 1 keeps that source. Only the exact key
@@ -521,13 +538,19 @@ func TestDocumentSourcesAreGatedAndUnion(t *testing.T) {
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	assertSources(t, "codec", decoded.Sources, []DocumentSource{{Identity: a}})
+	assertSources(t, "codec", decoded.Sources, []DocumentSource{{Identity: a, Version: 1}})
 	element, err := json.Marshal(DocumentSource{Identity: a, Version: 2, Checksum: &Digest{Algorithm: "CRC32", Value: "x"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(element) != `{"identity":"`+a+`"}` {
+	if string(element) != `{"identity":"`+a+`","version":1}` {
 		t.Errorf("a hand-built source was written ungated: %s", element)
+	}
+	// A malformed element fails with the boundary named, so a caller can
+	// tell which nested record refused the payload.
+	var malformed DocumentAssertions
+	if err := json.Unmarshal([]byte(`{"sources":[{"identity":"https://a.test"},{"identity":5}]}`), &malformed); err == nil || !strings.Contains(err.Error(), "document sources[1]") {
+		t.Errorf("malformed source error = %v, want the sources boundary and index named", err)
 	}
 	// Clone does not alias.
 	clone := got.Clone()
