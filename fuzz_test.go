@@ -874,6 +874,9 @@ func FuzzDocumentAssertions(f *testing.F) {
 			// as both algorithm and digest.
 			Version:  len(raw) - 8,
 			Checksum: &Digest{Algorithm: DigestAlgorithm(raw), Value: raw},
+			// Twice, so deduplication is exercised, and the identity itself,
+			// so the self-reference rule is.
+			Sources: []string{raw, raw, "https://example.test/spdxdocs/app", raw},
 		}
 		normalized, ok := assertions.Normalized()
 		if !ok && !normalized.IsEmpty() {
@@ -890,6 +893,7 @@ func FuzzDocumentAssertions(f *testing.F) {
 			again.DataLicense != normalized.DataLicense || again.Created != normalized.Created ||
 			again.Comment != normalized.Comment || len(again.Creators) != len(normalized.Creators) ||
 			len(again.Tools) != len(normalized.Tools) || again.Version != normalized.Version ||
+			len(again.Sources) != len(normalized.Sources) ||
 			(again.Checksum == nil) != (normalized.Checksum == nil) ||
 			(again.Checksum != nil && *again.Checksum != *normalized.Checksum) {
 			t.Fatalf("normalizing is not a fixed point:\n%+v\n%+v", normalized, again)
@@ -907,6 +911,19 @@ func FuzzDocumentAssertions(f *testing.F) {
 		if normalized.Checksum != nil {
 			if err := normalized.Checksum.Validate(); err != nil {
 				t.Fatalf("an unpublishable checksum survived the gate: %+v: %v", normalized.Checksum, err)
+			}
+		}
+		// Sources are sorted, deduplicated, bounded, and never the document
+		// itself.
+		if len(normalized.Sources) > maxDocumentSources {
+			t.Fatalf("%d sources survived a bound of %d", len(normalized.Sources), maxDocumentSources)
+		}
+		for i, source := range normalized.Sources {
+			if source == normalized.Identity {
+				t.Fatalf("a document lists itself as a source: %q", source)
+			}
+			if i > 0 && normalized.Sources[i-1] >= source {
+				t.Fatalf("sources are not sorted and deduplicated: %v", normalized.Sources)
 			}
 		}
 		// The codec applies the same gates, so the ungated value and its

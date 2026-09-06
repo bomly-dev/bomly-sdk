@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -351,6 +352,93 @@ func TestDocumentAssertionsCodecAppliesTheGates(t *testing.T) {
 	}
 }
 
+// A merged export writes one link per source document, and until this field
+// existed those links were write-only: ingest had nowhere to put them, so a
+// merged inventory lost every trace of its inputs after one round trip.
+func TestDocumentSourcesAreGatedAndUnion(t *testing.T) {
+	self := "https://example.test/spdxdocs/merged"
+	a := "urn:cdx:3e671687-395b-41f5-a30f-a58921a69b79/1"
+	b := "https://example.test/spdxdocs/b"
+	doc := DocumentAssertions{
+		Identity: self,
+		Sources: []string{
+			b, " " + a + " ", b, // unsorted, padded, duplicated
+			self,          // a document is not built from itself
+			"not an iri",  // fails the identity gate
+			"file:///etc", // a local path is not a link a document can publish
+		},
+	}
+	got, ok := doc.Normalized()
+	if !ok {
+		t.Fatal("a document with sources was rejected")
+	}
+	if want := []string{b, a}; !equalStrings(got.Sources, want) {
+		t.Fatalf("Sources = %v, want %v: gated, deduplicated, self dropped, sorted", got.Sources, want)
+	}
+	// The bound is a count on the gated list.
+	many := make([]string, 0, maxDocumentSources+10)
+	for i := 0; i < maxDocumentSources+10; i++ {
+		many = append(many, "https://example.test/spdxdocs/src-"+strconv.Itoa(i))
+	}
+	bounded, _ := DocumentAssertions{Sources: many}.Normalized()
+	if len(bounded.Sources) != maxDocumentSources {
+		t.Fatalf("len(Sources) = %d, want the bound %d", len(bounded.Sources), maxDocumentSources)
+	}
+	// Sources alone are a publishable record.
+	if _, ok := (DocumentAssertions{Sources: []string{a}}).Normalized(); !ok {
+		t.Error("a document carrying only sources was reported empty")
+	}
+
+	// Merge class: set, unioned by value, and the merged record's own
+	// identity never lands among its sources. Each side is gated first, so
+	// a side's own identity is already out of its list; which identity the
+	// merged record keeps decides what drops from the union.
+	left := DocumentAssertions{Identity: self, Sources: []string{a}}
+	right := DocumentAssertions{Identity: b, Sources: []string{b, self}}
+	one := MergeDocumentAssertions(left, right)
+	if !equalStrings(one.Sources, []string{a}) {
+		// Keeps self as identity, so self drops from the union; b was
+		// right's identity, never a source.
+		t.Errorf("merged sources = %v, want %v", one.Sources, []string{a})
+	}
+	two := MergeDocumentAssertions(right, left)
+	if !equalStrings(two.Sources, []string{self, a}) {
+		// Keeps b as identity, so self is a legitimate source here.
+		t.Errorf("merged (other order) sources = %v, want %v", two.Sources, []string{self, a})
+	}
+
+	// Through the codec, gated on both directions.
+	data, err := json.Marshal(DocumentAssertions{Identity: self, Sources: []string{self, "not an iri", a}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded DocumentAssertions
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !equalStrings(decoded.Sources, []string{a}) {
+		t.Errorf("sources after the codec = %v, want only the publishable link", decoded.Sources)
+	}
+	// Clone does not alias.
+	clone := got.Clone()
+	clone.Sources[0] = "changed"
+	if got.Sources[0] == "changed" {
+		t.Error("Clone aliased the sources")
+	}
+}
+
+func equalStrings(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // TestMergeIsOrderIndependentForLists pins that two entries merged in either
 // order credit the same creators and tools, so a merged document does not
 // depend on which source was read first.
@@ -390,7 +478,7 @@ func TestGraphEntryDocumentIsOmitEmpty(t *testing.T) {
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	for _, field := range []string{"version", "checksum"} {
+	for _, field := range []string{"version", "checksum", "sources"} {
 		if _, present := decoded[field]; present {
 			t.Errorf("an unstated %q was written to the wire", field)
 		}

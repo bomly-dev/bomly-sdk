@@ -24,6 +24,12 @@ import (
 // an untrusted SBOM and are written back into a document.
 const maxDocumentFieldLength = 4096
 
+// maxDocumentSources bounds the documents one document may claim to be built
+// from. A merged export names a handful; the allowance leaves room for a deep
+// merge history without letting an ingested document mint thousands of
+// external references on the next export. A count, kept dumb.
+const maxDocumentSources = 256
+
 // DocumentTool is one tool that produced a document.
 //
 // Both formats record this, and neither models it the same way -- SPDX writes
@@ -110,6 +116,20 @@ type DocumentAssertions struct {
 	// a checksum is a claim about one document's bytes and never attaches
 	// to another document's identity. See MergeDocumentAssertions.
 	Checksum *Digest `json:"checksum,omitempty"`
+	// Sources are the identities of the documents this one was built from,
+	// when it said so: SPDX externalDocumentRefs, or CycloneDX external
+	// references of type "bom". A merged export writes one link per source
+	// (ADR-0037); without somewhere to read them back into, a single ingest
+	// of that export lost every trace of its inputs.
+	//
+	// Gate: each entry is held to the IRI rule Identity is held to,
+	// deduplicated, sorted for byte-stable output, and bounded by
+	// maxDocumentSources. An entry equal to the document's own Identity is
+	// dropped: a document is not built from itself, and recording it would
+	// write a cycle. Merge class: set, unioned by value -- a document built
+	// from a merged document inherits that document's sources beside its
+	// own identity, so provenance survives more than one hop.
+	Sources []string `json:"sources,omitempty"`
 }
 
 // Normalized returns the assertions with every field held to its gate, and
@@ -184,6 +204,28 @@ func (d DocumentAssertions) Normalized() (DocumentAssertions, bool) {
 		}
 	}
 
+	// Sources take the identity gate one by one: a link a merged export
+	// cannot write is not worth carrying, and one entry failing must not
+	// lose the others. Deduplicated and sorted so two runs that read the
+	// same references in a different order produce the same bytes, and
+	// bounded because an ingested document controls how many it claims.
+	seenSources := make(map[string]struct{}, len(d.Sources))
+	for _, source := range d.Sources {
+		locator, ok := normalizeLocator(strings.TrimSpace(source), LocatorKindIRI)
+		if !ok || locator == normalized.Identity {
+			continue
+		}
+		if _, duplicate := seenSources[locator]; duplicate {
+			continue
+		}
+		seenSources[locator] = struct{}{}
+		normalized.Sources = append(normalized.Sources, locator)
+	}
+	sort.Strings(normalized.Sources)
+	if len(normalized.Sources) > maxDocumentSources {
+		normalized.Sources = normalized.Sources[:maxDocumentSources]
+	}
+
 	for _, creator := range d.Creators {
 		if contact, ok := creator.Normalized(); ok {
 			normalized.Creators = append(normalized.Creators, contact)
@@ -250,7 +292,7 @@ func (d *DocumentAssertions) UnmarshalJSON(data []byte) error {
 func (d DocumentAssertions) IsEmpty() bool {
 	return d.Identity == "" && d.Name == "" && d.DataLicense == "" &&
 		d.Created == "" && d.Comment == "" && len(d.Creators) == 0 && len(d.Tools) == 0 &&
-		d.Version == 0 && d.Checksum == nil
+		d.Version == 0 && d.Checksum == nil && len(d.Sources) == 0
 }
 
 // Clone returns a deep copy.
@@ -265,6 +307,9 @@ func (d DocumentAssertions) Clone() DocumentAssertions {
 	if d.Checksum != nil {
 		checksum := *d.Checksum
 		clone.Checksum = &checksum
+	}
+	if len(d.Sources) > 0 {
+		clone.Sources = append([]string(nil), d.Sources...)
 	}
 	return clone
 }
@@ -322,6 +367,12 @@ func MergeDocumentAssertions(dst, src DocumentAssertions) DocumentAssertions {
 	}
 	merged.Creators = MergeUnion(left.Creators, right.Creators, creatorKey, nil)
 	merged.Tools = MergeUnion(left.Tools, right.Tools, toolKey, nil)
+	// Sources union by value, then pass the gate again as a set: the union
+	// of two bounded lists can exceed the bound, and the merged record's own
+	// identity may now appear among the other side's sources. Sorted by the
+	// gate, so merge order does not change the bytes.
+	merged.Sources = MergeUnion(left.Sources, right.Sources, func(s string) string { return s }, nil)
+	merged, _ = merged.Normalized()
 	return merged
 }
 
