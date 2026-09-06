@@ -285,3 +285,32 @@ func TestUsageFieldsAreOmitEmpty(t *testing.T) {
 		}
 	}
 }
+
+// TestSelectUsagesAppliesTheAbsenceRule pins that the usage filter answers an
+// unasserted scope the same way the graph filter does, because both route
+// through ScopeSetMatches. A site that carries no scopes is what a producer
+// which has not migrated to per-site attribution leaves behind, so this is
+// the common shape rather than an unusual one, and a runtime question about
+// it must not answer "no usage" when nothing said the site is outside what
+// ships.
+func TestSelectUsagesAppliesTheAbsenceRule(t *testing.T) {
+	node := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "left-pad", Version: "1.3.0"})
+	node.Locations = []PackageLocation{
+		{RealPath: "package.json", ModuleRoot: "apps/web"},
+		{RealPath: "apps/api/package.json", ModuleRoot: "apps/api", Scopes: ScopesOf(ScopeDevelopment)},
+	}
+
+	// A runtime question keeps the unscoped site and drops the one that said
+	// development.
+	runtimeUsages := SelectUsages(node, nil, UsageFilter{Scope: ScopeRuntime})
+	if len(runtimeUsages) != 1 || runtimeUsages[0].ModuleRoot != "apps/web" {
+		t.Errorf("runtime usages = %+v, want only the unscoped apps/web site", runtimeUsages)
+	}
+
+	// A development question still requires the assertion, so the unscoped
+	// site does not appear in the view a user reads as safe to deprioritize.
+	developmentUsages := SelectUsages(node, nil, UsageFilter{Scope: ScopeDevelopment})
+	if len(developmentUsages) != 1 || developmentUsages[0].ModuleRoot != "apps/api" {
+		t.Errorf("development usages = %+v, want only the site that asserted development", developmentUsages)
+	}
+}
