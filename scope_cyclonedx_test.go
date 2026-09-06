@@ -146,6 +146,88 @@ func TestCarrierDecodingIsStrict(t *testing.T) {
 	}
 }
 
+// ADR-0037: unknown tokens in a carrier are dropped with a warning, not the
+// whole value. The strict reading made a carrier saying "runtime,future" yield
+// no scopes at all, so a component the document scoped runtime became
+// unscoped and a runtime filter dropped it -- total on SPDX, which has no
+// scalar to fall back to. The scopes an old build can read are still true.
+func TestCarrierDecodingIsLenientAboutUnknownTokens(t *testing.T) {
+	decoded, err := DecodeScopeSetLenient("runtime,future,development,future")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := ScopesOf(ScopeDevelopment, ScopeRuntime); EncodeScopeSet(decoded.Scopes) != EncodeScopeSet(want) {
+		t.Errorf("Scopes = %v, want the known scopes kept, sorted", decoded.Scopes)
+	}
+	if len(decoded.Unknown) != 1 || decoded.Unknown[0] != "future" {
+		t.Errorf("Unknown = %v, want the one unread token, once", decoded.Unknown)
+	}
+	// Every token read: nothing to warn about.
+	if decoded, err := DecodeScopeSetLenient("runtime"); err != nil || len(decoded.Unknown) != 0 {
+		t.Errorf("DecodeScopeSetLenient(\"runtime\") = %+v, %v; want no unknown tokens", decoded, err)
+	}
+	// Structure a carrier would never have is still an error, not a warning:
+	// the value did not come from where the caller thinks it did. That
+	// includes an entry that is not shaped like a scope token -- a future
+	// scope looks like "runtime", not like "bad token" -- so a malformed
+	// carrier cannot override a valid scalar or surface garbage as a warning.
+	for _, value := range []string{
+		"runtime,", ",", strings.Repeat("runtime,", 40) + "runtime",
+		"runtime,bad token", "runtime,\x01", "runtime,bad\xffutf8", "runtime,dev/opt",
+		"runtime," + strings.Repeat("f", maxVocabularyTokenLength+1),
+		// The Kelvin sign lowercases to ASCII "k": the shape is checked on
+		// the spelling as written, so folding cannot launder a malformed
+		// entry into a well-shaped one.
+		"development,\u212a", "runtime,\u212aelvin",
+		// A control character at a field's edge is refused before trimming
+		// could shed it: a carrier is a single-line value, and a line break
+		// in it is corruption, not padding -- around a known token as much
+		// as an unknown one.
+		"runtime,\nfuture", "runtime,\tfuture", "runtime,\ndevelopment", "\nruntime",
+		// Trimming is Unicode-aware, so the rule is the class -- printable
+		// ASCII -- not a list of characters: a C1 next-line control, a
+		// no-break space, and an em space were all shed by TrimSpace before
+		// the shape check saw the field.
+		"development,\u0085future", "runtime,\u00a0future", "runtime,\u2003development", "\u00a0runtime",
+	} {
+		if decoded, err := DecodeScopeSetLenient(value); err == nil {
+			t.Errorf("DecodeScopeSetLenient(%q) accepted, giving %+v", value, decoded)
+		}
+	}
+	// A well-shaped unknown token is reported the way ParseScope would have
+	// read it, whatever case it was written in.
+	if decoded, err := DecodeScopeSetLenient("runtime,Future-Scope"); err != nil || len(decoded.Unknown) != 1 || decoded.Unknown[0] != "future-scope" {
+		t.Errorf("DecodeScopeSetLenient(\"runtime,Future-Scope\") = %+v, %v; want the token reported lowercased", decoded, err)
+	}
+	// An empty value is absence.
+	if decoded, err := DecodeScopeSetLenient(""); err != nil || decoded.Scopes != nil || decoded.Unknown != nil {
+		t.Errorf(`DecodeScopeSetLenient("") = %+v, %v; want nothing`, decoded, err)
+	}
+	// The strict reading is the lenient one with one more rule, so the two
+	// agree on every value that has no unknown token.
+	strict, err := DecodeScopeSet("development,runtime")
+	if err != nil || EncodeScopeSet(strict) != "development,runtime" {
+		t.Errorf("DecodeScopeSet = %v, %v", strict, err)
+	}
+
+	// Ingest keeps the known scopes rather than falling back to the scalar
+	// when a carrier carries a token this build does not know...
+	got := ScopesFromCycloneDXComponent(string(cdx.ScopeExcluded), "runtime,future")
+	if len(got) != 1 || got[0] != ScopeRuntime {
+		t.Errorf("got %v, want the carrier's runtime kept over the scalar", got)
+	}
+	// ... and only falls back when the carrier names nothing it knows...
+	got = ScopesFromCycloneDXComponent(string(cdx.ScopeExcluded), "future")
+	if len(got) != 1 || got[0] != ScopeDevelopment {
+		t.Errorf("got %v, want the scalar when the carrier names nothing known", got)
+	}
+	// ... or is malformed, however much of it happens to be readable.
+	got = ScopesFromCycloneDXComponent(string(cdx.ScopeExcluded), "runtime,bad token")
+	if len(got) != 1 || got[0] != ScopeDevelopment {
+		t.Errorf("got %v, want the scalar when the carrier is malformed", got)
+	}
+}
+
 // TestIngestPrefersTheCarrier pins the precedence rule and its one exception.
 func TestIngestPrefersTheCarrier(t *testing.T) {
 	// The carrier wins even when it contradicts the scalar, because it is the
