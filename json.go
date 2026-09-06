@@ -26,6 +26,7 @@ type nodeWire struct {
 	Relationship          DependencyRelationship `json:"relationship,omitempty"`
 	Source                DependencySource       `json:"source,omitempty"`
 	Scopes                []Scope                `json:"scopes,omitempty"`
+	SourceScope           string                 `json:"source_scope,omitempty"`
 	Locations             []PackageLocation      `json:"locations,omitempty"`
 	CPEs                  []string               `json:"cpes,omitempty"`
 	Digests               []Digest               `json:"digests,omitempty"`
@@ -151,6 +152,7 @@ func (w *nodeWire) decodeDependencyNode() (*DependencyNode, error) {
 	node.Relationship = w.Relationship
 	node.Source = w.Source
 	node.Scopes = w.Scopes
+	node.SourceScope = NormalizeSourceScope(w.SourceScope)
 	node.Locations = w.Locations
 	node.CPEs = w.CPEs
 	// Routed through the set merge so a digest the codec rejected does not
@@ -246,6 +248,7 @@ func encodeNodeWire(node GraphNode) nodeWire {
 			Relationship:   n.Relationship,
 			Source:         n.Source,
 			Scopes:         n.Scopes,
+			SourceScope:    NormalizeSourceScope(n.SourceScope),
 			Locations:      n.Locations,
 			CPEs:           n.CPEs,
 			Digests:        mergeDigestSet(nil, n.Digests),

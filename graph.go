@@ -294,6 +294,12 @@ func foldNodes(surviving, witness GraphNode) {
 		if survivor.Originator == nil {
 			survivor.Originator = normalizedContact(incoming.Originator)
 		}
+		// The source's own scope word fills a gap like the other document
+		// assertions, gated on both sides first for the same reason.
+		survivor.SourceScope = NormalizeSourceScope(survivor.SourceScope)
+		if survivor.SourceScope == "" {
+			survivor.SourceScope = NormalizeSourceScope(incoming.SourceScope)
+		}
 		if survivor.Copyright == "" {
 			survivor.Copyright = incoming.Copyright
 		}

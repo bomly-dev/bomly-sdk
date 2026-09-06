@@ -985,3 +985,42 @@ func FuzzNormalizeDescription(f *testing.F) {
 		}
 	})
 }
+
+// The source-scope gate is a fixed point, and the export helper only ever
+// writes a CycloneDX spelling or nothing -- whatever word the source used.
+func FuzzSourceScope(f *testing.F) {
+	for _, seed := range []string{"optional", "Excluded", "required", "compile", "", " ", "a b", "\x00", strings.Repeat("s", 65)} {
+		f.Add(seed, uint8(0))
+		f.Add(seed, uint8(1))
+		f.Add(seed, uint8(3))
+	}
+	f.Fuzz(func(t *testing.T, raw string, scopeBits uint8) {
+		if len(raw) > maxFuzzInputSize {
+			t.Skip("input exceeds fuzz bound")
+		}
+		once := NormalizeSourceScope(raw)
+		if twice := NormalizeSourceScope(once); twice != once {
+			t.Fatalf("not a fixed point: %q -> %q -> %q", raw, once, twice)
+		}
+		if once != "" && (len(once) > maxVocabularyTokenLength || containsControlChar(once) || strings.ContainsAny(once, " \t\n")) {
+			t.Fatalf("an unpublishable source scope survived: %q", once)
+		}
+		var scopes []Scope
+		if scopeBits&1 != 0 {
+			scopes = append(scopes, ScopeRuntime)
+		}
+		if scopeBits&2 != 0 {
+			scopes = append(scopes, ScopeDevelopment)
+		}
+		switch got := CycloneDXScopeForExport(scopes, raw); cdx.Scope(got) {
+		case "", cdx.ScopeRequired, cdx.ScopeOptional, cdx.ScopeExcluded:
+		default:
+			t.Fatalf("export wrote %q, which is not a CycloneDX scope", got)
+		}
+		// Whatever the source said, an empty set writes no scope: the word is
+		// only re-emitted when the set still means what it meant.
+		if got := CycloneDXScopeForExport(nil, raw); got != "" {
+			t.Fatalf("export for an empty set = %q", got)
+		}
+	})
+}

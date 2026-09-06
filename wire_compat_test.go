@@ -395,7 +395,7 @@ func TestWireV1NodeFieldsAreOmitEmpty(t *testing.T) {
 	// kind, so an unset one must not appear either: a reader on an older
 	// build would see a key it does not know, and an explicit null supplier
 	// is not the same statement as an absent one.
-	assertions := []string{"licenses", "description", "homepage", "supplier", "originator", "external_references"}
+	assertions := []string{"licenses", "description", "homepage", "supplier", "originator", "external_references", "source_scope"}
 	forbidden := map[NodeKind][]string{
 		NodeKindManifest:   append([]string{"manifest_kind", "declaring_manifest_path", "origins", "origin", "purl", "scopes", "package_ref"}, assertions...),
 		NodeKindModule:     append([]string{"manifest_kind", "origins", "origin", "scopes", "package_ref"}, assertions...),
