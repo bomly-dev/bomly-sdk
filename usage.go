@@ -461,7 +461,11 @@ func tierPrecision(tier ReachabilityTier) int {
 //
 // The zero value matches every usage. A condition left empty is not asked.
 type UsageFilter struct {
-	// Scope, when set, requires the usage's site to carry it.
+	// Scope, when set, requires the usage's site to match it under
+	// ScopeSetMatches -- so a runtime filter also keeps a site that asserted
+	// no scope, since absence is not a statement that the site is outside
+	// what ships. A site that has not migrated to per-site attribution
+	// carries no scopes at all, which is exactly that case.
 	Scope Scope
 	// Relationship, when set, requires the site to have it.
 	Relationship DependencyRelationship
@@ -522,7 +526,7 @@ func SelectUsages(node *DependencyNode, evidence []ReachabilityEvidence, filter 
 				found = scoped
 			}
 		}
-		if filter.Scope != ScopeUnknown && !containsScope(location.Scopes, filter.Scope) {
+		if !ScopeSetMatches(location.Scopes, filter.Scope) {
 			continue
 		}
 		if filter.Relationship != "" && location.Relationship != filter.Relationship {

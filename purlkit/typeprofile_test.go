@@ -10,6 +10,12 @@ func TestValidateTypeProfiles(t *testing.T) {
 		// Profile-satisfying purls for table rows.
 		"pkg:maven/org.apache.commons/commons-text@1.10.0",
 		"pkg:golang/github.com/google/uuid@v1.6.0",
+		// A Go module path need not contain a slash. go4.org is published
+		// and single-segment; the specification's namespace-required rule
+		// would degrade it to pkg:generic and lose OSV matching, so
+		// specDeviations drops that row. See issue #67.
+		"pkg:golang/go4.org@v1.0.0",
+		"pkg:golang/go.opencensus.io@v0.24.0",
 		"pkg:apk/alpine/curl@7.83.0-r0?arch=x86",
 		"pkg:deb/debian/curl@7.50.3-1?arch=i386&distro=jessie",
 		"pkg:npm/%40scope/name@1.0.0",
@@ -31,7 +37,6 @@ func TestValidateTypeProfiles(t *testing.T) {
 	invalid := []string{
 		// Profile rules the library does not enforce.
 		"pkg:maven/commons-text@1.10.0", // namespace (group ID) required
-		"pkg:golang/text@v0.3.5",        // namespace required
 		"pkg:apk/curl@7.83.0-r0",        // vendor namespace required
 		"pkg:cargo/rust-lang/serde@1.0", // namespace prohibited
 		"pkg:pypi/python/django@4.2",    // namespace prohibited

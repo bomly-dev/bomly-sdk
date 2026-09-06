@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -270,28 +271,33 @@ func TestIdentityFallsBackToGenericWithAWarning(t *testing.T) {
 		t.Fatalf("no generic-identity warning; warnings = %+v", node.NodeWarnings())
 	}
 
-	// A bare Go module fails the same way -- the golang type requires a
-	// namespace too -- and must not land on the same identity. Two
-	// ecosystems folding into one node is worse than the loose type this
-	// fallback accepts, so the failed type leads the namespace.
-	goPackage, err := NewDependencyNode(Coordinates{
-		Ecosystem: EcosystemGo, Name: "internal-tools", Version: "2.0.0",
+	// A group-less Maven coordinate fails the same way -- the maven type
+	// requires a group ID as its namespace -- and must not land on the same
+	// identity. Two ecosystems folding into one node is worse than the loose
+	// type this fallback accepts, so the failed type discriminates.
+	mavenPackage, err := NewDependencyNode(Coordinates{
+		Ecosystem: EcosystemMaven, Name: "internal-tools", Version: "2.0.0",
 	})
 	if err != nil {
-		t.Fatalf("NewDependencyNode(go) error = %v, want a generic identity instead", err)
+		t.Fatalf("NewDependencyNode(maven) error = %v, want a generic identity instead", err)
 	}
-	if goPackage.NodeID() != "pkg:generic/internal-tools@2.0.0?bomly_source_type=golang" {
-		t.Fatalf("go identity = %q, want the failed type as the discriminator", goPackage.NodeID())
+	if mavenPackage.NodeID() != "pkg:generic/internal-tools@2.0.0?bomly_source_type=maven" {
+		t.Fatalf("maven identity = %q, want the failed type as the discriminator", mavenPackage.NodeID())
 	}
-	if goPackage.NodeID() == node.NodeID() {
+	if mavenPackage.NodeID() == node.NodeID() {
 		t.Fatalf("two ecosystems folded onto one generic identity: %q", node.NodeID())
 	}
+
+	// Go is deliberately not on this list. A Go module path need not
+	// contain a slash, so requiring a namespace for the golang type sent
+	// every single-segment module here and cost it OSV matching -- see
+	// TestSingleSegmentGoModuleMintsAsGolang and issue #67.
 
 	// A stated package URL is an assertion, not a hint: it is refused, never
 	// replaced by a looser one the caller did not write.
 	if _, err := NewDependencyNode(Coordinates{
-		Ecosystem: EcosystemGo, Name: "internal-tools", Version: "2.0.0",
-		PURL: "pkg:golang/internal-tools@2.0.0",
+		Ecosystem: EcosystemMaven, Name: "internal-tools", Version: "2.0.0",
+		PURL: "pkg:maven/internal-tools@2.0.0",
 	}); err == nil {
 		t.Fatal("a stated but invalid package URL was silently replaced with a generic one")
 	}
@@ -330,6 +336,57 @@ func TestIdentityFallsBackToGenericWithAWarning(t *testing.T) {
 		if warning.Code == NodeWarningGenericIdentity {
 			t.Fatal("a satisfiable identity was reported as generic")
 		}
+	}
+}
+
+// A Go module path is the whole identity, and it need not contain a slash.
+// go4.org is a real published module -- it is in bomly-cli's own go.sum --
+// and the purl specification's namespace-required rule for the golang type
+// made it unrepresentable: it minted as pkg:generic, and since OSV is
+// queried by package URL, a pkg:generic identity does not match a
+// pkg:golang advisory. A vulnerable single-segment module was silently
+// unreported, which is the failure mode this tool exists to prevent. See
+// issue #67 and the specDeviations entry in purlkit.
+func TestSingleSegmentGoModuleMintsAsGolang(t *testing.T) {
+	for _, module := range []string{"go4.org", "go.opencensus.io"} {
+		node, err := NewDependencyNode(Coordinates{
+			Ecosystem: EcosystemGo, Name: module, Version: "v1.0.0",
+		})
+		if err != nil {
+			t.Fatalf("NewDependencyNode(%q) error = %v", module, err)
+		}
+		want := "pkg:golang/" + module + "@v1.0.0"
+		if node.NodeID() != want {
+			t.Errorf("identity = %q, want %q", node.NodeID(), want)
+		}
+		if strings.Contains(node.NodeID(), GenericFallbackTypeQualifier) {
+			t.Errorf("identity = %q, want no generic fallback qualifier", node.NodeID())
+		}
+		for _, warning := range node.NodeWarnings() {
+			if warning.Code == NodeWarningGenericIdentity {
+				t.Errorf("%q was reported as a generic identity", module)
+			}
+		}
+		// The coordinates project from the identity, so an empty namespace
+		// must not become an organization the manifest never declared.
+		if node.Org != "" {
+			t.Errorf("Org = %q, want empty for a single-segment module path", node.Org)
+		}
+		if node.EcosystemName() != module {
+			t.Errorf("EcosystemName() = %q, want %q", node.EcosystemName(), module)
+		}
+	}
+
+	// Multi-segment module paths keep splitting the way they always did:
+	// the last element is the name and everything before it the namespace.
+	multi, err := NewDependencyNode(Coordinates{
+		Ecosystem: EcosystemGo, Name: "github.com/google/uuid", Version: "v1.6.0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if multi.NodeID() != "pkg:golang/github.com/google/uuid@v1.6.0" {
+		t.Errorf("identity = %q, want the namespace split preserved", multi.NodeID())
 	}
 }
 
@@ -373,7 +430,10 @@ func TestGenericFallbackIdentityKeepsItsEcosystemWhenReconstructed(t *testing.T)
 	}
 
 	// The failed type resolves through the same tables as any purl type, so
-	// a Go module comes back as Go, not as a Swift look-alike.
+	// a Go module comes back as Go, not as a Swift look-alike. Nothing mints
+	// this identity any more -- a single-segment Go module is a golang purl
+	// since issue #67 -- but documents an older build wrote still carry it,
+	// and decoding one must still land on Go.
 	goRound, err := NewDependencyNodeFromPURL("pkg:generic/internal-tools@2.0.0?bomly_source_type=golang")
 	if err != nil {
 		t.Fatal(err)

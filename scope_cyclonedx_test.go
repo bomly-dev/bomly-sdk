@@ -247,26 +247,79 @@ func TestIngestPrefersTheCarrier(t *testing.T) {
 	if len(got) != 1 || got[0] != ScopeDevelopment {
 		t.Errorf("got %v, want excluded to read as development", got)
 	}
-	// With neither, nothing is invented.
-	if got = ScopesFromCycloneDXComponent("", ""); got != nil {
-		t.Errorf("got %v, want no scope invented from an empty component", got)
+	// With neither, CycloneDX's default for an unspecified scope applies.
+	got = ScopesFromCycloneDXComponent("", "")
+	if len(got) != 1 || got[0] != ScopeRuntime {
+		t.Errorf("got %v, want an unscoped component to take the required default", got)
+	}
+	// A carrier that reads as nothing does not suppress that default either:
+	// the component still stated no scope, and the specification says what an
+	// unspecified scope means.
+	got = ScopesFromCycloneDXComponent("", "not-a-scope")
+	if len(got) != 1 || got[0] != ScopeRuntime {
+		t.Errorf("got %v, want the default to survive an unreadable carrier", got)
 	}
 }
 
-// TestOptionalReadsAsRuntime pins the one ingest mapping that is a judgment
-// call: an optional component provides additional functionality at runtime,
-// so it is not a development-only dependency.
-func TestOptionalReadsAsRuntime(t *testing.T) {
+// TestOptionalReadsAsDevelopment pins the mapping the specification settles:
+// a CycloneDX "optional" component is one "not capable of being called due to
+// [it] not being installed or otherwise accessible by any means", and one that
+// is installed but prohibited from being called "must be scoped as
+// 'required'". An optional component is therefore absent from what runs, which
+// is what Bomly's development scope means to a filter.
+//
+// This is the resolution of bomly-dev/bomly-sdk#63, which the SDK previously
+// read the other way on a pre-1.6 gloss of "optional". The test is here so
+// that reading cannot come back by accident.
+func TestOptionalReadsAsDevelopment(t *testing.T) {
 	got := ScopesFromCycloneDX(string(cdx.ScopeOptional))
-	if len(got) != 1 || got[0] != ScopeRuntime {
-		t.Errorf("optional read as %v, want runtime", got)
+	if len(got) != 1 || got[0] != ScopeDevelopment {
+		t.Errorf("optional read as %v, want development", got)
+	}
+	// Only "required" reads as runtime, and it is the sole such value.
+	for _, value := range []cdx.Scope{cdx.ScopeOptional, cdx.ScopeExcluded} {
+		if got := ScopesFromCycloneDX(string(value)); len(got) != 1 || got[0] != ScopeDevelopment {
+			t.Errorf("%q read as %v, want development", value, got)
+		}
+	}
+	if got := ScopesFromCycloneDX(string(cdx.ScopeRequired)); len(got) != 1 || got[0] != ScopeRuntime {
+		t.Errorf("required read as %v, want runtime", got)
+	}
+}
+
+// TestAnAbsentScopeTakesTheSpecifiedDefault pins the other half of the
+// specification's reading: scope is an optional attribute, and CycloneDX says
+// "required" scope "SHOULD be assumed by the consumer of the BOM" when it is
+// not specified -- the schema restates it as a "required" default. An absent
+// attribute decodes to the empty string, so that is what "not specified"
+// looks like at this boundary.
+//
+// Before this, an unscoped component came back with no scope at all and was
+// dropped by a runtime filter. Most documents Bomly did not write omit the
+// attribute entirely, so that was a false negative on the common case rather
+// than on an edge one.
+func TestAnAbsentScopeTakesTheSpecifiedDefault(t *testing.T) {
+	// Absent, and the shapes an absent attribute takes after decoding.
+	for _, value := range []string{"", " ", "   ", "\t"} {
+		got := ScopesFromCycloneDX(value)
+		if len(got) != 1 || got[0] != ScopeRuntime {
+			t.Errorf("ScopesFromCycloneDX(%q) = %v, want the required default", value, got)
+		}
+	}
+	// The default is for an unspecified scope only. A value that is present
+	// but unreadable has an unknown meaning rather than a defaulted one, so
+	// it still yields nothing -- see TestUnreadableScopesInventNothing.
+	if got := ScopesFromCycloneDX("compile"); got != nil {
+		t.Errorf("ScopesFromCycloneDX(\"compile\") = %v, want no scope rather than the default", got)
 	}
 }
 
 // TestUnreadableScopesInventNothing pins that a value Bomly cannot read gives
 // no scope, rather than a default that would put an unmade claim in a graph.
+// An absent value is a different case with a different answer, which is
+// TestAnAbsentScopeTakesTheSpecifiedDefault's.
 func TestUnreadableScopesInventNothing(t *testing.T) {
-	for _, value := range []string{"", "  ", "unknown", "provided", "runtime", "REQUIRED-ish"} {
+	for _, value := range []string{"unknown", "provided", "runtime", "REQUIRED-ish"} {
 		if got := ScopesFromCycloneDX(value); got != nil {
 			if value == "runtime" {
 				continue // Bomly's own token is not a CycloneDX scope; see below.
