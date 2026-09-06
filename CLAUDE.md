@@ -92,6 +92,27 @@ such copies in one release before these existed.
 nil is not an untyped one, so `node != nil` is true for a
 `(*DependencyNode)(nil)` and the next field read panics.
 
+### Narrowing by scope
+
+Never compare a scope by hand. `ScopeSetMatches` and `MatchesScopeFilter` are
+the answer, because the hard case is not comparison but a dependency that
+asserted no scope at all — and that case has a policy, stated in
+`scope_filter.go`: a filter selects on assertions, absence is not an
+assertion, so a runtime view keeps everything not affirmatively development
+while every other view requires an affirmative match. One rule, applied
+twice: an unasserted scope resolves toward "may be in production", the only
+direction that cannot hide a finding.
+
+Getting it wrong is quiet and expensive. `Scopes` is a union across
+declaration sites, so `containsScope(node.Scopes, ScopeDevelopment)` puts a
+package that also ships into the list a user reads as safe to deprioritize;
+and matching the effective scope exactly drops every package in a third-party
+SPDX document from a runtime view, because SPDX has no scope concept and each
+package arrives unscoped. Both readings were shipped. A filter that keeps
+nodes on absence should also report how many, the way
+`FilterGraphByScopeWithReport` does — a runtime view that narrowed nothing
+must not look narrowed.
+
 ## Compatibility contract
 
 Two axes, with different rules (see `README.md` for the full policy):
