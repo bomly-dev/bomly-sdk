@@ -53,6 +53,18 @@ such copies in one release before these existed.
 nil is not an untyped one, so `node != nil` is true for a
 `(*DependencyNode)(nil)` and the next field read panics.
 
+### Attributing evidence to a module root
+
+`ReachabilityEvidence` is keyed by module root, so an analyzer must decide
+whether a dependency node's sites tie it to the root it is emitting for --
+the module root is the mandatory floor of that claim and `DependencyRefs`
+the optional ceiling. `RootAttribution` and `NewRootAttributor` in `usage.go`
+own the decision, including the self-calibration that keeps a
+producer/analyzer path-vocabulary mismatch from silently dropping a node's
+evidence. This landed as four identical copies across the reachability
+analyzer repositories first; an analyzer that writes its own gets the easy
+half right and the calibration wrong.
+
 ## Compatibility contract
 
 Two axes, with different rules (see `README.md` for the full policy):
