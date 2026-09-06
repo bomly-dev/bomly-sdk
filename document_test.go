@@ -268,6 +268,28 @@ func TestDocumentVersionAndChecksumAreGatedAndFillGaps(t *testing.T) {
 	if mixed.Identity != good.Identity || mixed.Version != 0 || mixed.Checksum != nil {
 		t.Errorf("document B's link fields were attached to document A: %+v", mixed)
 	}
+	// A version or checksum with no identity is a link to nothing yet: two
+	// identity-less records fill each other's gaps in either order, and an
+	// identity-less record yields the whole tuple to one with an identity in
+	// either order -- so the merge does not depend on which came first.
+	orphanVersion := DocumentAssertions{Version: 4}
+	orphanChecksum := DocumentAssertions{Checksum: documentB.Checksum}
+	for name, merged := range map[string]DocumentAssertions{
+		"orphans, version first":  MergeDocumentAssertions(orphanVersion, orphanChecksum),
+		"orphans, checksum first": MergeDocumentAssertions(orphanChecksum, orphanVersion),
+	} {
+		if merged.Identity != "" || merged.Version != 4 || merged.Checksum == nil || merged.Checksum.Algorithm != DigestAlgorithmSHA1 {
+			t.Errorf("%s: identity-less fields did not fill each other's gaps: %+v %+v", name, merged, merged.Checksum)
+		}
+	}
+	for name, merged := range map[string]DocumentAssertions{
+		"orphan then identified": MergeDocumentAssertions(orphanChecksum, good),
+		"identified then orphan": MergeDocumentAssertions(good, orphanChecksum),
+	} {
+		if merged.Identity != good.Identity || merged.Version != 2 || merged.Checksum == nil || merged.Checksum.Algorithm != DigestAlgorithmSHA256 {
+			t.Errorf("%s: the identified tuple did not win whole: %+v %+v", name, merged, merged.Checksum)
+		}
+	}
 	// The same identity at two stated versions is two documents too: version
 	// 1 must not take version 2's hash.
 	conflict := MergeDocumentAssertions(
@@ -659,6 +681,9 @@ func TestGraphEntryDocumentIsOmitEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
+	// A fresh map: Unmarshal merges into a non-nil one, and the check must
+	// see this record's keys alone.
+	decoded = nil
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}

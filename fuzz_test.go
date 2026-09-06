@@ -897,7 +897,7 @@ func FuzzDocumentAssertions(f *testing.F) {
 			again.DataLicense != normalized.DataLicense || again.Created != normalized.Created ||
 			again.Comment != normalized.Comment || len(again.Creators) != len(normalized.Creators) ||
 			len(again.Tools) != len(normalized.Tools) || again.Version != normalized.Version ||
-			len(again.Sources) != len(normalized.Sources) ||
+			!sameDocumentSources(again.Sources, normalized.Sources) ||
 			(again.Checksum == nil) != (normalized.Checksum == nil) ||
 			(again.Checksum != nil && *again.Checksum != *normalized.Checksum) {
 			t.Fatalf("normalizing is not a fixed point:\n%+v\n%+v", normalized, again)
@@ -977,6 +977,23 @@ func FuzzDocumentAssertions(f *testing.F) {
 			t.Fatalf("a merge admitted a control character: %q", merged.Name)
 		}
 	})
+}
+
+// sameDocumentSources compares two source lists element by element,
+// checksum contents included, so a pass that changed an element while
+// keeping the count is caught.
+func sameDocumentSources(a, b []DocumentSource) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Identity != b[i].Identity || a[i].Version != b[i].Version ||
+			(a[i].Checksum == nil) != (b[i].Checksum == nil) ||
+			(a[i].Checksum != nil && *a[i].Checksum != *b[i].Checksum) {
+			return false
+		}
+	}
+	return true
 }
 
 // The sources array is read by a streaming decoder written here, so it is a
