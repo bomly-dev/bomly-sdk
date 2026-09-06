@@ -110,44 +110,91 @@ func EncodeScopeSet(scopes []Scope) string {
 	return strings.Join(tokens, ",")
 }
 
-// DecodeScopeSet parses a carrier value written by EncodeScopeSet. It is
-// strict: an unrecognized token is an error rather than a silently dropped
-// scope, because this value is Bomly's own and a token it cannot read means
-// the value did not come from where the caller thinks it did.
+// ScopeSetDecoding is what a carrier value said, read leniently: the scopes
+// it named that this build knows, and the tokens it named that it does not.
 //
-// The result is deduplicated and sorted, so decoding and re-encoding gives the
-// same bytes.
-func DecodeScopeSet(value string) ([]Scope, error) {
+// Unknown is the warning channel. The SDK does not log, and a token it cannot
+// read is worth telling a user about -- it is most likely a scope a newer
+// Bomly wrote -- so the caller gets the tokens and decides how to say so.
+type ScopeSetDecoding struct {
+	// Scopes are the recognized scopes, deduplicated and sorted, so
+	// re-encoding them gives stable bytes.
+	Scopes []Scope
+	// Unknown are the tokens this build does not recognize, in the order
+	// written, deduplicated. Empty when every token was read.
+	Unknown []string
+}
+
+// DecodeScopeSetLenient reads a carrier value the way ADR-0037 states: the
+// scopes it names that this build knows are kept, and the tokens it does not
+// know are dropped and reported rather than failing the whole value.
+//
+// The strict reading used to be the only one, and it was a forward
+// compatibility trap: a newer Bomly writing one scope token an older one
+// does not know made the older one lose the whole assertion, so a component
+// the document scoped "runtime,future" became unscoped and a runtime filter
+// dropped it. CycloneDX ingest could fall back to the scalar scope; SPDX has
+// no scalar, so the loss there was total. The token an old build cannot read
+// is still evidence -- it comes back in Unknown -- but the tokens it can read
+// are still true, and those are kept.
+//
+// What is still an error is a value that is not a carrier at all: over the
+// byte bound, or with an empty entry, which means a separator with nothing
+// after it. A carrier is Bomly's own, and structure it would never write
+// means the value did not come from where the caller thinks it did.
+func DecodeScopeSetLenient(value string) (ScopeSetDecoding, error) {
 	if len(value) > maxScopeSetCarrierLength {
-		return nil, fmt.Errorf("scope set is %d bytes, over the %d byte limit", len(value), maxScopeSetCarrierLength)
+		return ScopeSetDecoding{}, fmt.Errorf("scope set is %d bytes, over the %d byte limit", len(value), maxScopeSetCarrierLength)
 	}
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
-		return nil, nil
+		return ScopeSetDecoding{}, nil
 	}
-	var scopes []Scope
+	var decoded ScopeSetDecoding
 	for _, field := range strings.Split(trimmed, ",") {
 		// An empty field is malformed, not absent. ParseScope reads "" as
 		// ScopeUnknown with no error -- correct for a detector that has
 		// nothing to say, wrong here, where a separator with nothing after it
 		// means the value is not what it claims to be. Skipping it would make
 		// "runtime," decode as "runtime" and re-encode to different bytes.
-		if strings.TrimSpace(field) == "" {
-			return nil, fmt.Errorf("scope set %q has an empty entry", value)
+		token := strings.TrimSpace(field)
+		if token == "" {
+			return ScopeSetDecoding{}, fmt.Errorf("scope set %q has an empty entry", value)
 		}
-		scope, err := ParseScope(field)
-		if err != nil {
-			return nil, fmt.Errorf("scope set %q: %w", value, err)
+		scope, err := ParseScope(token)
+		if err != nil || scope == ScopeUnknown {
+			if !containsString(decoded.Unknown, token) {
+				decoded.Unknown = append(decoded.Unknown, token)
+			}
+			continue
 		}
-		if scope == ScopeUnknown {
-			return nil, fmt.Errorf("scope set %q names an unknown scope", value)
-		}
-		if !containsScope(scopes, scope) {
-			scopes = append(scopes, scope)
+		if !containsScope(decoded.Scopes, scope) {
+			decoded.Scopes = append(decoded.Scopes, scope)
 		}
 	}
-	sort.Slice(scopes, func(i, j int) bool { return scopes[i] < scopes[j] })
-	return scopes, nil
+	sort.Slice(decoded.Scopes, func(i, j int) bool { return decoded.Scopes[i] < decoded.Scopes[j] })
+	return decoded, nil
+}
+
+// DecodeScopeSet parses a carrier value written by EncodeScopeSet, strictly:
+// an unrecognized token is an error, and nothing is returned beside it. It is
+// the lenient reading with one more rule, for a caller that must know the
+// value was written by a build that knows every token in it -- verifying a
+// document Bomly itself wrote, for one. Ingest of a document from anywhere
+// uses DecodeScopeSetLenient, because there the tokens an old build can read
+// are still true and dropping them loses a scope the document stated.
+//
+// The result is deduplicated and sorted, so decoding and re-encoding gives the
+// same bytes.
+func DecodeScopeSet(value string) ([]Scope, error) {
+	decoded, err := DecodeScopeSetLenient(value)
+	if err != nil {
+		return nil, err
+	}
+	if len(decoded.Unknown) > 0 {
+		return nil, fmt.Errorf("scope set %q names an unknown scope %q", value, decoded.Unknown[0])
+	}
+	return decoded.Scopes, nil
 }
 
 // NormalizeSourceScope is the gate for DependencyNode.SourceScope: the scope
@@ -207,13 +254,18 @@ func CycloneDXScopeForExport(scopes []Scope, sourceScope string) string {
 //
 // The precedence is the point of the pair. The carrier holds what Bomly
 // recorded; the scalar holds a projection of it that cannot express a set. On
-// a document Bomly wrote, both are present and only the carrier is exact. A
-// carrier that fails to parse is treated as absent -- the scalar is still a
-// true statement about the component, and dropping the scope entirely because
-// the richer field was malformed would lose more than it protects.
+// a document Bomly wrote, both are present and only the carrier is exact. The
+// carrier is read leniently: the scopes this build knows are kept even when
+// a token beside them is not, since a newer Bomly's token is not a reason to
+// discard the scopes an older one can still read. A carrier that is malformed
+// outright, or names nothing this build knows, is treated as absent -- the
+// scalar is still a true statement about the component, and dropping the
+// scope entirely because the richer field was unreadable would lose more
+// than it protects. A caller that wants to surface the unknown tokens reads
+// the carrier with DecodeScopeSetLenient itself.
 func ScopesFromCycloneDXComponent(scope, carrier string) []Scope {
-	if decoded, err := DecodeScopeSet(carrier); err == nil && len(decoded) > 0 {
-		return decoded
+	if decoded, err := DecodeScopeSetLenient(carrier); err == nil && len(decoded.Scopes) > 0 {
+		return decoded.Scopes
 	}
 	return ScopesFromCycloneDX(scope)
 }

@@ -762,6 +762,27 @@ func FuzzDecodeScopeSet(f *testing.F) {
 		if (err == nil) != (err2 == nil) || len(scopes) != len(again) {
 			t.Fatalf("decoding %q twice disagreed: %v/%v and %v/%v", raw, scopes, err, again, err2)
 		}
+		// The strict reading is the lenient one plus a rule: they agree
+		// exactly when no token is unknown, and the lenient reading never
+		// fails where the strict one succeeds. Unknown tokens are reported,
+		// never silently dropped, and never re-encoded as a scope.
+		lenient, lerr := DecodeScopeSetLenient(raw)
+		if err == nil && (lerr != nil || len(lenient.Unknown) != 0 || EncodeScopeSet(lenient.Scopes) != EncodeScopeSet(scopes)) {
+			t.Fatalf("lenient and strict disagree on %q: %+v/%v vs %v", raw, lenient, lerr, scopes)
+		}
+		if lerr == nil && err != nil && len(lenient.Unknown) == 0 {
+			t.Fatalf("strict failed on %q without an unknown token: %v", raw, err)
+		}
+		for _, token := range lenient.Unknown {
+			if scope, perr := ParseScope(token); perr == nil && scope != ScopeUnknown {
+				t.Fatalf("a known scope %q was reported unknown for %q", token, raw)
+			}
+		}
+		for i := 1; i < len(lenient.Scopes); i++ {
+			if lenient.Scopes[i-1] >= lenient.Scopes[i] {
+				t.Fatalf("lenient scopes for %q are not sorted and deduplicated: %v", raw, lenient.Scopes)
+			}
+		}
 		if err != nil {
 			if scopes != nil {
 				t.Fatalf("DecodeScopeSet(%q) failed but returned %v", raw, scopes)

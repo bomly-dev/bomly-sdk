@@ -146,6 +146,57 @@ func TestCarrierDecodingIsStrict(t *testing.T) {
 	}
 }
 
+// ADR-0037: unknown tokens in a carrier are dropped with a warning, not the
+// whole value. The strict reading made a carrier saying "runtime,future" yield
+// no scopes at all, so a component the document scoped runtime became
+// unscoped and a runtime filter dropped it -- total on SPDX, which has no
+// scalar to fall back to. The scopes an old build can read are still true.
+func TestCarrierDecodingIsLenientAboutUnknownTokens(t *testing.T) {
+	decoded, err := DecodeScopeSetLenient("runtime,future,development,future")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := ScopesOf(ScopeDevelopment, ScopeRuntime); EncodeScopeSet(decoded.Scopes) != EncodeScopeSet(want) {
+		t.Errorf("Scopes = %v, want the known scopes kept, sorted", decoded.Scopes)
+	}
+	if len(decoded.Unknown) != 1 || decoded.Unknown[0] != "future" {
+		t.Errorf("Unknown = %v, want the one unread token, once", decoded.Unknown)
+	}
+	// Every token read: nothing to warn about.
+	if decoded, err := DecodeScopeSetLenient("runtime"); err != nil || len(decoded.Unknown) != 0 {
+		t.Errorf("DecodeScopeSetLenient(\"runtime\") = %+v, %v; want no unknown tokens", decoded, err)
+	}
+	// Structure a carrier would never have is still an error, not a warning:
+	// the value did not come from where the caller thinks it did.
+	for _, value := range []string{"runtime,", ",", strings.Repeat("runtime,", 40) + "runtime"} {
+		if decoded, err := DecodeScopeSetLenient(value); err == nil {
+			t.Errorf("DecodeScopeSetLenient(%q) accepted, giving %+v", value, decoded)
+		}
+	}
+	// An empty value is absence.
+	if decoded, err := DecodeScopeSetLenient(""); err != nil || decoded.Scopes != nil || decoded.Unknown != nil {
+		t.Errorf(`DecodeScopeSetLenient("") = %+v, %v; want nothing`, decoded, err)
+	}
+	// The strict reading is the lenient one with one more rule, so the two
+	// agree on every value that has no unknown token.
+	strict, err := DecodeScopeSet("development,runtime")
+	if err != nil || EncodeScopeSet(strict) != "development,runtime" {
+		t.Errorf("DecodeScopeSet = %v, %v", strict, err)
+	}
+
+	// Ingest keeps the known scopes rather than falling back to the scalar
+	// when a carrier carries a token this build does not know...
+	got := ScopesFromCycloneDXComponent(string(cdx.ScopeExcluded), "runtime,future")
+	if len(got) != 1 || got[0] != ScopeRuntime {
+		t.Errorf("got %v, want the carrier's runtime kept over the scalar", got)
+	}
+	// ... and only falls back when the carrier names nothing it knows.
+	got = ScopesFromCycloneDXComponent(string(cdx.ScopeExcluded), "future")
+	if len(got) != 1 || got[0] != ScopeDevelopment {
+		t.Errorf("got %v, want the scalar when the carrier names nothing known", got)
+	}
+}
+
 // TestIngestPrefersTheCarrier pins the precedence rule and its one exception.
 func TestIngestPrefersTheCarrier(t *testing.T) {
 	// The carrier wins even when it contradicts the scalar, because it is the
