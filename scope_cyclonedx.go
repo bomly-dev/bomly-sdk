@@ -183,6 +183,16 @@ func DecodeScopeSetLenient(value string) (ScopeSetDecoding, error) {
 	if len(value) > maxScopeSetCarrierLength {
 		return ScopeSetDecoding{}, fmt.Errorf("scope set is %d bytes, over the %d byte limit", len(value), maxScopeSetCarrierLength)
 	}
+	// A carrier is a single-line property value, and Bomly writes nothing
+	// into one but tokens and commas. A control character anywhere in it --
+	// a line break, a tab -- is corruption, not padding, and is refused on
+	// the raw value before anything is trimmed: trimming first let a field
+	// such as "\nfuture" shed the control character and pass the shape
+	// check as a well-formed unknown token, so a malformed carrier could
+	// still take precedence over a valid scalar scope.
+	if containsControlChar(value) {
+		return ScopeSetDecoding{}, fmt.Errorf("scope set %q contains a control character", value)
+	}
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
 		return ScopeSetDecoding{}, nil

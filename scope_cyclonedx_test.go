@@ -179,6 +179,11 @@ func TestCarrierDecodingIsLenientAboutUnknownTokens(t *testing.T) {
 		// the spelling as written, so folding cannot launder a malformed
 		// entry into a well-shaped one.
 		"development,\u212a", "runtime,\u212aelvin",
+		// A control character at a field's edge is refused before trimming
+		// could shed it: a carrier is a single-line value, and a line break
+		// in it is corruption, not padding -- around a known token as much
+		// as an unknown one.
+		"runtime,\nfuture", "runtime,\tfuture", "runtime,\ndevelopment", "\nruntime",
 	} {
 		if decoded, err := DecodeScopeSetLenient(value); err == nil {
 			t.Errorf("DecodeScopeSetLenient(%q) accepted, giving %+v", value, decoded)
