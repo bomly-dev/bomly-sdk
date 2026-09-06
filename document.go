@@ -1,8 +1,10 @@
 package sdk
 
 import (
+	"encoding/json"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // Both formats carry claims about the document itself, distinct from claims
@@ -44,7 +46,7 @@ func (t DocumentTool) Normalized() (DocumentTool, bool) {
 		Version: strings.TrimSpace(t.Version),
 	}
 	for _, field := range []string{normalized.Vendor, normalized.Name, normalized.Version} {
-		if len(field) > maxDocumentFieldLength || containsControlChar(field) {
+		if !documentFieldPublishable(field) {
 			return DocumentTool{}, false
 		}
 	}
@@ -125,16 +127,14 @@ func (d DocumentAssertions) Normalized() (DocumentAssertions, bool) {
 	// so a line break in it corrupts the tag form outright. That rules out
 	// NormalizeDescription, which deliberately keeps line breaks because a
 	// description is genuinely multi-line -- the fuzzer caught the reuse.
-	if name := strings.TrimSpace(d.Name); name != "" &&
-		len(name) <= maxDocumentFieldLength && !containsControlChar(name) {
+	if name := strings.TrimSpace(d.Name); name != "" && documentFieldPublishable(name) {
 		normalized.Name = name
 	}
 	// No extracted text: a document's data license is a spec-listed
 	// identifier ("CC0-1.0"), never a minted LicenseRef whose text lives
 	// elsewhere, and passing "" is what makes the shared rule refuse one.
 	normalized.DataLicense = normalizedSPDXExpression(d.DataLicense, "")
-	if created := strings.TrimSpace(d.Created); created != "" &&
-		len(created) <= maxDocumentFieldLength && !containsControlChar(created) {
+	if created := strings.TrimSpace(d.Created); created != "" && documentFieldPublishable(created) {
 		normalized.Created = created
 	}
 	// A comment is multi-line in both formats -- SPDX wraps it in <text> --
@@ -177,6 +177,46 @@ func (d DocumentAssertions) Normalized() (DocumentAssertions, bool) {
 	})
 
 	return normalized, !normalized.IsEmpty()
+}
+
+// documentFieldPublishable is the gate a single-line document field passes:
+// bounded, valid UTF-8, no control characters. Invalid UTF-8 is refused rather
+// than carried for the reason Digest.Validate gives: encoding/json rewrites
+// such bytes to U+FFFD, so a value that passed the gate would serialize as a
+// different value than the one checked -- and the codec round trip the fuzz
+// target asserts would not be a fixed point. The fuzzer found exactly that on
+// the document name once the codec hooks made the round trip observable.
+func documentFieldPublishable(field string) bool {
+	return len(field) <= maxDocumentFieldLength && utf8.ValidString(field) && !containsControlChar(field)
+}
+
+// documentAssertionsWire carries DocumentAssertions' fields without its
+// methods, so the codec hooks below can encode and decode without recursing.
+type documentAssertionsWire DocumentAssertions
+
+// MarshalJSON applies every field's gate on the way out, so a hand-built
+// value that bypassed Normalized is still held to it at the wire. Without
+// this a negative version reached a reader unchanged, and a checksum the
+// digest codec had zeroed still encoded as "checksum":{} -- a non-nil record
+// an exporter would read as a checksum being present.
+func (d DocumentAssertions) MarshalJSON() ([]byte, error) {
+	normalized, _ := d.Normalized()
+	return json.Marshal(documentAssertionsWire(normalized))
+}
+
+// UnmarshalJSON applies the same gates on the way in, so a payload from a
+// plugin or an older producer is held to them whether or not the caller
+// remembers to call Normalized. A record that gates to nothing decodes to
+// the zero value rather than failing the payload: the entry it belongs to is
+// still a graph, and a document with no publishable claims is merely absent.
+func (d *DocumentAssertions) UnmarshalJSON(data []byte) error {
+	var wire documentAssertionsWire
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	normalized, _ := DocumentAssertions(wire).Normalized()
+	*d = normalized
+	return nil
 }
 
 // IsEmpty reports whether the assertions carry nothing.

@@ -902,6 +902,28 @@ func FuzzDocumentAssertions(f *testing.F) {
 				t.Fatalf("an unpublishable checksum survived the gate: %+v: %v", normalized.Checksum, err)
 			}
 		}
+		// The codec applies the same gates, so the ungated value and its
+		// normalized form encode to the same bytes, and decoding gives the
+		// normalized form back.
+		fromRaw, err := json.Marshal(assertions)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		fromNormalized, err := json.Marshal(normalized)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if string(fromRaw) != string(fromNormalized) {
+			t.Fatalf("the codec let an ungated value through:\n%s\n%s", fromRaw, fromNormalized)
+		}
+		var decoded DocumentAssertions
+		if err := json.Unmarshal(fromRaw, &decoded); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if decoded.Version != normalized.Version || (decoded.Checksum == nil) != (normalized.Checksum == nil) ||
+			decoded.Identity != normalized.Identity || decoded.Name != normalized.Name {
+			t.Fatalf("decode is not the normalized form:\n%+v\n%+v", normalized, decoded)
+		}
 		// Nothing published carries a control character, which would corrupt
 		// SPDX's line-oriented tag form.
 		// The comment is exempt: both formats carry a multi-line comment in a

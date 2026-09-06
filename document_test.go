@@ -238,6 +238,67 @@ func TestDocumentVersionAndChecksumAreGatedAndFillGaps(t *testing.T) {
 	}
 }
 
+// The gates run in the codec on both directions, so no call site can bypass
+// them: a payload from a plugin, or a hand-built value marshaled without
+// Normalized, is held to the same rules. Before the hooks existed a negative
+// version and an invalid identity decoded unchanged, and a checksum the digest
+// codec had zeroed re-encoded as "checksum":{} -- a non-nil record an exporter
+// would read as a checksum being present.
+func TestDocumentAssertionsCodecAppliesTheGates(t *testing.T) {
+	payload := `{"identity":"not an iri","name":"x\ny","created":"2024-01-01T00:00:00Z",` +
+		`"version":-3,"checksum":{"algorithm":"CRC32","value":"abcd"}}`
+	var decoded DocumentAssertions
+	if err := json.Unmarshal([]byte(payload), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Identity != "" || decoded.Name != "" || decoded.Version != 0 || decoded.Checksum != nil {
+		t.Fatalf("ungated values survived decode: %+v", decoded)
+	}
+	if decoded.Created != "2024-01-01T00:00:00Z" {
+		t.Fatalf("a good field was lost alongside the bad ones: %+v", decoded)
+	}
+
+	// The same on the way out, for a value that never passed Normalized.
+	dirty := DocumentAssertions{
+		Identity: "https://example.test/spdxdocs/app",
+		Version:  -1,
+		Checksum: &Digest{Algorithm: "CRC32", Value: "abcd"},
+	}
+	data, err := json.Marshal(dirty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(data, &keys); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"version", "checksum"} {
+		if _, present := keys[field]; present {
+			t.Errorf("an ungated %q was written: %s", field, data)
+		}
+	}
+	if _, present := keys["identity"]; !present {
+		t.Errorf("the good identity was lost: %s", data)
+	}
+
+	// A gated record round-trips exactly.
+	good, _ := DocumentAssertions{
+		Identity: "https://example.test/spdxdocs/app", Version: 2,
+		Checksum: &Digest{Algorithm: "SHA-256", Value: "d1e8a70b5ccab1dc2f56bbf7e99f064a660c08e361a35751b9c483c88943d082"},
+	}.Normalized()
+	data, err = json.Marshal(good)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var again DocumentAssertions
+	if err := json.Unmarshal(data, &again); err != nil {
+		t.Fatal(err)
+	}
+	if again.Version != 2 || again.Checksum == nil || *again.Checksum != *good.Checksum || again.Identity != good.Identity {
+		t.Fatalf("round trip changed the record: %+v -> %+v", good, again)
+	}
+}
+
 // TestMergeIsOrderIndependentForLists pins that two entries merged in either
 // order credit the same creators and tools, so a merged document does not
 // depend on which source was read first.
