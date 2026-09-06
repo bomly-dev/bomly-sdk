@@ -923,7 +923,7 @@ func FuzzDocumentAssertions(f *testing.F) {
 			t.Fatalf("%d sources survived a bound of %d", len(normalized.Sources), maxDocumentSources)
 		}
 		for i, source := range normalized.Sources {
-			if source.Identity == "" || source.Identity == normalized.Identity {
+			if source.Identity == "" || isSelfSource(normalized.Identity, normalized.Version, source) {
 				t.Fatalf("a source names nothing or the document itself: %+v", source)
 			}
 			if source.Version < 0 || (source.Checksum != nil && (source.Checksum.Validate() != nil || source.Checksum.Subject != DigestSubjectArtifact)) {

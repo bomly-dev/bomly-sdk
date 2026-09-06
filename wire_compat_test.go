@@ -125,6 +125,7 @@ func TestWireV1NewFieldsAreOmitEmpty(t *testing.T) {
 		"Package":            &Package{},
 		"Graph":              New(),
 		"DocumentAssertions": &DocumentAssertions{Identity: "https://example.test/spdxdocs/app"},
+		"DocumentSource":     &DocumentSource{Identity: "https://example.test/spdxdocs/src"},
 	} {
 		data, err := json.Marshal(value)
 		if err != nil {

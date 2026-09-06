@@ -228,6 +228,14 @@ func foldDocumentSources(gated []DocumentSource) []DocumentSource {
 	return folded
 }
 
+// isSelfSource reports whether a source names the document that lists it,
+// by exact key: the same identity and the same stated version (or none
+// stated on both). It is deliberately not sameDocumentLink's compatible-
+// version test -- see the caller.
+func isSelfSource(identity string, version int, source DocumentSource) bool {
+	return identity != "" && source.Identity == identity && source.Version == version
+}
+
 // sameDocumentLink reports whether two link tuples name the same document:
 // the same identity at a compatible version. Two stated versions that differ
 // are two documents sharing a namespace, and filling across them would pair
@@ -299,10 +307,11 @@ type DocumentAssertions struct {
 	// same (Identity, Version) key fold, the checksum filling a gap; the
 	// list is sorted for byte-stable output and bounded by
 	// maxDocumentSources, applied to the input before any work is done on
-	// it. An entry naming this document itself -- the same identity at a
-	// compatible version, per sameDocumentLink -- is dropped: a document is
-	// not built from itself, and recording it would write a cycle. A prior
-	// version of the same namespace is a different document and is kept.
+	// it. An entry naming this document itself -- the same identity and
+	// stated version exactly -- is dropped: a document is not built from
+	// itself, and recording it would write a cycle. Any other key of the
+	// same namespace, a prior version included, is a different document and
+	// is kept.
 	// Merge class: set, keyed by (Identity, Version) -- a document built
 	// from a merged document inherits that document's sources beside its
 	// own identity, so provenance survives more than one hop.
@@ -376,10 +385,14 @@ func (d DocumentAssertions) Normalized() (DocumentAssertions, bool) {
 		if !ok {
 			continue
 		}
-		// Itself, at a compatible version, is a cycle. A different stated
-		// version of the same namespace is a different document -- version
-		// 2 built from version 1 is real provenance -- and is kept.
-		if sameDocumentLink(normalized.Identity, normalized.Version, cleaned.Identity, cleaned.Version) {
+		// Itself -- the same key exactly -- is a cycle. A different key of
+		// the same namespace is a different document: version 2 built from
+		// version 1 is real provenance and is kept. The match is exact, not
+		// compatible-version, for the same reason the set key is: with an
+		// unstated document version acting as a wildcard, whether a stated
+		// source version survived depended on whether the document's own
+		// version had been filled yet, so the merge was not associative.
+		if isSelfSource(normalized.Identity, normalized.Version, cleaned) {
 			continue
 		}
 		gated = append(gated, cleaned)
@@ -585,7 +598,7 @@ func MergeDocumentAssertions(dst, src DocumentAssertions) DocumentAssertions {
 	// identity still drops from among the other side's sources.
 	union := make([]DocumentSource, 0, len(left.Sources)+len(right.Sources))
 	for _, source := range append(append([]DocumentSource(nil), left.Sources...), right.Sources...) {
-		if sameDocumentLink(merged.Identity, merged.Version, source.Identity, source.Version) {
+		if isSelfSource(merged.Identity, merged.Version, source) {
 			continue
 		}
 		union = append(union, source)

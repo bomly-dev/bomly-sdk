@@ -388,13 +388,23 @@ func TestDocumentSourcesAreGatedAndUnion(t *testing.T) {
 	assertSources(t, "normalized", got.Sources, want)
 
 	// A prior version of the same namespace is provenance, not a cycle:
-	// version 2 built from version 1 keeps that source. Itself at a
-	// compatible version -- the same stated version, or none stated -- is
-	// the cycle that is dropped.
+	// version 2 built from version 1 keeps that source. Only the exact key
+	// -- the same identity and stated version -- is the cycle that drops;
+	// an unversioned entry of the same namespace is a different key and
+	// stays, as it would in the set.
 	versioned, _ := DocumentAssertions{Identity: b, Version: 2, Sources: []DocumentSource{
 		{Identity: b, Version: 1}, {Identity: b, Version: 2}, {Identity: b},
 	}}.Normalized()
-	assertSources(t, "prior version", versioned.Sources, []DocumentSource{{Identity: b, Version: 1}})
+	assertSources(t, "prior version", versioned.Sources, []DocumentSource{{Identity: b}, {Identity: b, Version: 1}})
+	// And the drop is exact rather than compatible-version so that a
+	// document whose own version is filled by a later merge does not lose
+	// a source it would have kept had the version arrived first.
+	docX := DocumentAssertions{Identity: b}
+	docXv1 := DocumentAssertions{Identity: b, Version: 1}
+	fromXv2 := DocumentAssertions{Sources: []DocumentSource{{Identity: b, Version: 2}}}
+	wantKept := []DocumentSource{{Identity: b, Version: 2}}
+	assertSources(t, "(X+Xv1)+src", MergeDocumentAssertions(MergeDocumentAssertions(docX, docXv1), fromXv2).Sources, wantKept)
+	assertSources(t, "(X+src)+Xv1", MergeDocumentAssertions(MergeDocumentAssertions(docX, fromXv2), docXv1).Sources, wantKept)
 
 	// The bound is applied to the input, before any gate runs: entries past
 	// it are not read at all, even when the ones before it are junk.
@@ -584,6 +594,24 @@ func TestGraphEntryDocumentIsOmitEmpty(t *testing.T) {
 		if _, present := decoded[field]; present {
 			t.Errorf("an unstated %q was written to the wire", field)
 		}
+	}
+	// The nested source record is new v1 wire surface too, so its own
+	// optional fields are pinned here and its checksum key in the shared
+	// guard; the top-level check above never marshals one.
+	data, err = json.Marshal(DocumentSource{Identity: "https://example.test/spdxdocs/src"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, field := range []string{"version", "checksum"} {
+		if _, present := decoded[field]; present {
+			t.Errorf("an unstated source %q was written to the wire", field)
+		}
+	}
+	if _, present := decoded["identity"]; !present {
+		t.Error("a source's identity was not written")
 	}
 }
 
