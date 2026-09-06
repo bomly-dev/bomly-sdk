@@ -779,8 +779,15 @@ func FuzzDecodeScopeSet(f *testing.F) {
 			}
 			// Only something shaped like a scope token is reported as a
 			// possible future scope; anything else fails the whole value.
-			if !isScopeTokenShaped(token) {
+			// Reported tokens are ASCII by construction, so folding cannot
+			// have laundered a non-ASCII spelling into one.
+			if !isScopeTokenShaped(token) || strings.ToLower(token) != token {
 				t.Fatalf("a malformed entry %q was reported as an unknown scope for %q", token, raw)
+			}
+			for _, r := range token {
+				if r > 0x7f {
+					t.Fatalf("a non-ASCII token %q was reported as an unknown scope for %q", token, raw)
+				}
 			}
 		}
 		for i := 1; i < len(lenient.Scopes); i++ {

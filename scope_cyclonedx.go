@@ -133,18 +133,24 @@ type ScopeSetDecoding struct {
 // has the shape of a scope token, so that it can be one a newer build wrote,
 // rather than structure a carrier would never contain. The shape is the one
 // Bomly's own vocabulary tokens have -- "runtime", "development", and every
-// token in the model's other closed vocabularies: lowercase ASCII letters,
-// digits, hyphen, underscore, within the vocabulary token bound. This is
-// Bomly's own vocabulary, so no library owns the shape; a token that fails
-// it -- a space, a control character, invalid UTF-8, a run past the bound --
-// is not a future scope but a value that did not come from a carrier.
+// token in the model's other closed vocabularies: ASCII letters, digits,
+// hyphen, underscore, within the vocabulary token bound. This is Bomly's own
+// vocabulary, so no library owns the shape; a token that fails it -- a space,
+// a control character, invalid UTF-8, a run past the bound -- is not a future
+// scope but a value that did not come from a carrier.
+//
+// Checked on the token as written, case-insensitively, and never on a
+// case-folded copy: Unicode lowercasing maps some non-ASCII letters onto
+// ASCII (the Kelvin sign becomes "k"), so a folded copy of a malformed token
+// can pass a check its original spelling would fail. Folding is for
+// reporting, after the shape is settled.
 func isScopeTokenShaped(token string) bool {
 	if token == "" || len(token) > maxVocabularyTokenLength {
 		return false
 	}
 	for _, r := range token {
 		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_':
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
 		default:
 			return false
 		}
@@ -194,10 +200,10 @@ func DecodeScopeSetLenient(value string) (ScopeSetDecoding, error) {
 		}
 		scope, err := ParseScope(token)
 		if err != nil || scope == ScopeUnknown {
-			lowered := strings.ToLower(token)
-			if !isScopeTokenShaped(lowered) {
+			if !isScopeTokenShaped(token) {
 				return ScopeSetDecoding{}, fmt.Errorf("scope set %q has a malformed entry %q", value, token)
 			}
+			lowered := strings.ToLower(token)
 			if !containsString(decoded.Unknown, lowered) {
 				decoded.Unknown = append(decoded.Unknown, lowered)
 			}

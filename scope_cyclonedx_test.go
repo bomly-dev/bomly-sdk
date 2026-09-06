@@ -175,6 +175,10 @@ func TestCarrierDecodingIsLenientAboutUnknownTokens(t *testing.T) {
 		"runtime,", ",", strings.Repeat("runtime,", 40) + "runtime",
 		"runtime,bad token", "runtime,\x01", "runtime,bad\xffutf8", "runtime,dev/opt",
 		"runtime," + strings.Repeat("f", maxVocabularyTokenLength+1),
+		// The Kelvin sign lowercases to ASCII "k": the shape is checked on
+		// the spelling as written, so folding cannot launder a malformed
+		// entry into a well-shaped one.
+		"development,\u212a", "runtime,\u212aelvin",
 	} {
 		if decoded, err := DecodeScopeSetLenient(value); err == nil {
 			t.Errorf("DecodeScopeSetLenient(%q) accepted, giving %+v", value, decoded)
