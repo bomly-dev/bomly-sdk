@@ -32,6 +32,16 @@ const maxDocumentFieldLength = 4096
 // external references on the next export. A count, kept dumb.
 const maxDocumentSources = 256
 
+// maxDocumentSourcesBytes bounds the encoded sources array before any element
+// of it is decoded. It is derived from what a source that passes its gates
+// can encode to -- a locator within maxLocatorLength, a digest value within
+// maxDigestValueLength, and a few hundred bytes of keys, algorithm, version,
+// and framing -- times the count bound, so every list that passes its gates
+// fits and the two bounds cannot drift apart. What it refuses is a single
+// element carrying megabytes that the decoder would parse and materialize
+// before the field gates ever saw them. Bytes, kept dumb.
+const maxDocumentSourcesBytes = maxDocumentSources * (maxLocatorLength + maxDigestValueLength + 512)
+
 // DocumentTool is one tool that produced a document.
 //
 // Both formats record this, and neither models it the same way -- SPDX writes
@@ -531,13 +541,21 @@ type boundedDocumentSources struct {
 	decoded bool
 }
 
-// UnmarshalJSON reads at most maxDocumentSources elements, once. A null
-// array is no sources.
+// UnmarshalJSON reads at most maxDocumentSources elements, once, from an
+// array of at most maxDocumentSourcesBytes. A null array is no sources.
 func (s *boundedDocumentSources) UnmarshalJSON(data []byte) error {
 	if s.decoded {
 		return fmt.Errorf("document assertions: \"sources\" key repeated")
 	}
 	s.decoded = true
+	// The byte bound comes before the decoder exists. The count bound keeps
+	// the entries past it from being decoded, but says nothing about the
+	// size of the ones before it: one element carrying a multi-megabyte
+	// identity would be parsed and its strings materialized before
+	// normalizeLocator's far smaller limit rejected it.
+	if len(data) > maxDocumentSourcesBytes {
+		return fmt.Errorf("document sources: %d bytes, over the %d byte limit", len(data), maxDocumentSourcesBytes)
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	opening, err := decoder.Token()
 	if err != nil {

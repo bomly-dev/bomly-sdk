@@ -1010,6 +1010,7 @@ func FuzzDocumentAssertionsJSON(f *testing.F) {
 		`{"sources":[1,"two",null,[],{"identity":3}]}`, `{"sources":{"identity":"x"}}`, `{"sources":[{"identity":"a"`,
 		`{"sources":[{"identity":"https://a.test","identity":"https://b.test"}]}`, `{"sources":"x"}`, `[]`, ``, `{"sources":[`,
 		`{"sources":[],"sources":[]}`, `{"a":{"sources":[]},"sources":[{"identity":"https://a.test"}]}`, `{"sources":[{"identity":"https://a.test"}],"comment":"{\"sources\":[]}"}`,
+		`{"sources":[{"identity":"https://a.test/` + strings.Repeat("x", maxDocumentSourcesBytes) + `"}]}`,
 	} {
 		f.Add([]byte(seed))
 	}

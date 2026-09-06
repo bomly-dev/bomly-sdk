@@ -602,6 +602,14 @@ func TestDocumentSourcesAreGatedAndUnion(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"sources":[{"identity":"https://a.test","checksum":{"sources":1}}],"comment":"{\"sources\":[]}"}`), &nested); err != nil {
 		t.Errorf("a nested or quoted sources key was mistaken for a top-level repeat: %v", err)
 	}
+	// The encoded array is byte-bounded before any element is decoded, so
+	// one element cannot carry megabytes the decoder would materialize
+	// before the field gates saw them. A list within the count bound but
+	// past the byte bound is refused whole.
+	var oversized DocumentAssertions
+	if err := json.Unmarshal([]byte(`{"sources":[{"identity":"https://a.test/`+strings.Repeat("x", maxDocumentSourcesBytes)+`"}]}`), &oversized); err == nil || !strings.Contains(err.Error(), "over the") {
+		t.Errorf("oversized sources array: err = %v, want it refused before decoding", err)
+	}
 	// A malformed element fails with the boundary named, so a caller can
 	// tell which nested record refused the payload.
 	var malformed DocumentAssertions
