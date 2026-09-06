@@ -100,8 +100,11 @@ type DocumentAssertions struct {
 	// is invalid without one, so a merged export that lacks it cannot name
 	// its sources at all.
 	//
-	// Gate: Digest.Normalized, the same one a package digest passes. Merge
-	// class: fill-gaps, as one provenance tuple with Identity and Version --
+	// Gate: Digest.Normalized, the same one a package digest passes, plus
+	// the artifact subject: a digest over a source tree or a metadata record
+	// is not a hash of the document's bytes, and the SPDX reference has no
+	// slot to say so. Merge class: fill-gaps, as one provenance tuple with
+	// Identity and Version --
 	// a checksum is a claim about one document's bytes and never attaches
 	// to another document's identity. See MergeDocumentAssertions.
 	Checksum *Digest `json:"checksum,omitempty"`
@@ -152,9 +155,14 @@ func (d DocumentAssertions) Normalized() (DocumentAssertions, bool) {
 	}
 	// The checksum takes the digest gate as a whole: an unpublishable digest
 	// is dropped rather than carried as a zero record, which is what Digest's
-	// own codec does with one.
+	// own codec does with one. It must also hash the bytes themselves. The
+	// digest vocabulary lets a package record say its hash covers a source
+	// tree or a metadata record instead; this field promises the original
+	// document bytes, and the SPDX external-document checksum has no subject
+	// slot to carry the distinction, so a digest of anything else would be
+	// published as a checksum for the wrong object.
 	if d.Checksum != nil {
-		if checksum, ok := d.Checksum.Normalized(); ok {
+		if checksum, ok := d.Checksum.Normalized(); ok && checksum.Subject == DigestSubjectArtifact {
 			normalized.Checksum = &checksum
 		}
 	}
@@ -276,11 +284,17 @@ func MergeDocumentAssertions(dst, src DocumentAssertions) DocumentAssertions {
 	// tuple; the same document seen twice fills its own gaps; two different
 	// documents keep the first one's tuple, and the second's version and
 	// checksum go nowhere rather than onto the wrong identity.
+	//
+	// "The same document" is the same identity at a compatible version: two
+	// stated versions that differ are two documents sharing a namespace,
+	// and filling across them would pair version 1 with version 2's hash.
 	leftHasLink := left.Identity != "" || left.Version != 0 || left.Checksum != nil
+	sameIdentity := left.Identity != "" && left.Identity == right.Identity
+	versionsAgree := left.Version == 0 || right.Version == 0 || left.Version == right.Version
 	switch {
 	case !leftHasLink:
 		merged.Identity, merged.Version, merged.Checksum = right.Identity, right.Version, right.Checksum
-	case left.Identity != "" && left.Identity == right.Identity:
+	case sameIdentity && versionsAgree:
 		merged.Version = MergeFillGap(left.Version, right.Version, nil)
 		merged.Checksum = MergeFillGap(left.Checksum, right.Checksum, nil)
 	}

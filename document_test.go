@@ -193,6 +193,11 @@ func TestDocumentVersionAndChecksumAreGatedAndFillGaps(t *testing.T) {
 		"unknown algorithm": {Identity: good.Identity, Checksum: &Digest{Algorithm: "CRC32", Value: "abcd"}},
 		"empty value":       {Identity: good.Identity, Checksum: &Digest{Algorithm: "SHA-256", Value: "   "}},
 		"value with space":  {Identity: good.Identity, Checksum: &Digest{Algorithm: "SHA-256", Value: "ab cd"}},
+		// A valid digest of the wrong object: a source-tree or metadata hash
+		// is not a hash of the document's bytes, and the SPDX reference has
+		// no slot to say which it was.
+		"source-tree subject": {Identity: good.Identity, Checksum: &Digest{Algorithm: "SHA-256", Value: good.Checksum.Value, Subject: DigestSubjectSourceTree}},
+		"metadata subject":    {Identity: good.Identity, Checksum: &Digest{Algorithm: "SHA-256", Value: good.Checksum.Value, Subject: DigestSubjectMetadata}},
 	} {
 		got, ok := bad.Normalized()
 		if !ok || got.Identity != good.Identity {
@@ -241,6 +246,15 @@ func TestDocumentVersionAndChecksumAreGatedAndFillGaps(t *testing.T) {
 	mixed := MergeDocumentAssertions(DocumentAssertions{Identity: good.Identity}, documentB)
 	if mixed.Identity != good.Identity || mixed.Version != 0 || mixed.Checksum != nil {
 		t.Errorf("document B's link fields were attached to document A: %+v", mixed)
+	}
+	// The same identity at two stated versions is two documents too: version
+	// 1 must not take version 2's hash.
+	conflict := MergeDocumentAssertions(
+		DocumentAssertions{Identity: good.Identity, Version: 1},
+		DocumentAssertions{Identity: good.Identity, Version: 2, Checksum: documentB.Checksum},
+	)
+	if conflict.Version != 1 || conflict.Checksum != nil {
+		t.Errorf("a version conflict let the other version's checksum through: %+v", conflict)
 	}
 	// The merge does not alias its inputs.
 	filled.Checksum.Value = "changed"
