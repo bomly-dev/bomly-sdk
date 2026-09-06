@@ -157,6 +157,13 @@ func TestScopeSetMatchesIsTheOneRule(t *testing.T) {
 		{"runtime view keeps an empty set", nil, ScopeRuntime, true},
 		{"runtime view keeps an unreadable scope", []Scope{"future"}, ScopeRuntime, true},
 		{"runtime view keeps an explicit unknown", []Scope{ScopeUnknown}, ScopeRuntime, true},
+		// Two tokens this build cannot read, neither of them development.
+		// MergeScope folds any two non-runtime scopes to development, so this
+		// set's PrimaryScope is ScopeDevelopment -- which is exactly why the
+		// runtime arm is membership and not a test on the effective scope.
+		// Written as the latter, this node would vanish from a runtime view
+		// though nothing ever said it was development.
+		{"runtime view keeps two unreadable scopes", []Scope{"a", "b"}, ScopeRuntime, true},
 		{"runtime view drops development", ScopesOf(ScopeDevelopment), ScopeRuntime, false},
 		{"development view needs the assertion", nil, ScopeDevelopment, false},
 		{"development view drops an unreadable scope", []Scope{"future"}, ScopeDevelopment, false},
@@ -169,6 +176,23 @@ func TestScopeSetMatchesIsTheOneRule(t *testing.T) {
 				t.Errorf("ScopeSetMatches(%v, %q) = %v, want %v", testCase.scopes, testCase.want, got, testCase.matches)
 			}
 		})
+	}
+}
+
+// TestTheRuntimeArmIsNotAnEffectiveScopeTest pins the distinction the rule
+// depends on, so the two readings cannot be swapped for one another during a
+// later tidy-up. They agree on every set but this one.
+func TestTheRuntimeArmIsNotAnEffectiveScopeTest(t *testing.T) {
+	unreadable := &DependencyNode{Scopes: []Scope{"a", "b"}}
+	if unreadable.PrimaryScope() != ScopeDevelopment {
+		t.Fatalf("PrimaryScope = %q; MergeScope no longer folds two unreadable scopes to development, "+
+			"so this test no longer shows why the runtime arm is membership", unreadable.PrimaryScope())
+	}
+	if !unreadable.MatchesScopeFilter(ScopeRuntime) {
+		t.Error("a dependency nobody scoped development was dropped from a runtime view")
+	}
+	if unreadable.MatchesScopeFilter(ScopeDevelopment) {
+		t.Error("a dependency nobody scoped development entered a development view")
 	}
 }
 

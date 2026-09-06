@@ -98,7 +98,8 @@ Never compare a scope by hand. `ScopeSetMatches` and `MatchesScopeFilter` are
 the answer, because the hard case is not comparison but a dependency that
 asserted no scope at all — and that case has a policy, stated in
 `scope_filter.go`: a filter selects on assertions, absence is not an
-assertion, so a runtime view keeps everything not affirmatively development
+assertion, so a runtime view keeps everything not affirmatively
+development-only — a set naming both scopes names runtime, so it stays —
 while every other view requires an affirmative match. One rule, applied
 twice: an unasserted scope resolves toward "may be in production", the only
 direction that cannot hide a finding.

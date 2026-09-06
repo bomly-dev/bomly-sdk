@@ -13,8 +13,9 @@ import (
 // than delegated.
 //
 // The policy is that a filter selects on assertions, and absence is not an
-// assertion. A runtime view keeps everything not affirmatively development;
-// every other view requires an affirmative match. That is one rule applied
+// assertion. A runtime view keeps everything not affirmatively
+// development-only -- a set naming both scopes names runtime, so it stays --
+// and every other view requires an affirmative match. That is one rule applied
 // twice, not two rules: an unasserted scope resolves toward "may be in
 // production", the only direction that cannot hide a finding. Dropping an
 // unscoped dependency from a runtime view costs a missed vulnerability;
@@ -44,6 +45,13 @@ import (
 // membership only, because a package that might ship must not appear in the
 // list a user reads as the one they can deprioritize.
 //
+// The runtime arm is written as membership rather than as a test on the
+// effective scope, and the two are not interchangeable: MergeScope folds any
+// two non-runtime scopes to development, so a set holding two tokens this
+// build cannot read -- neither of them development -- has a PrimaryScope of
+// ScopeDevelopment, and an effective-scope test would drop it from a runtime
+// view. That is this function's own failure mode arriving by another door.
+//
 // A want of ScopeUnknown is not a filter and matches everything, which is how
 // a caller spells "no scope was requested".
 func ScopeSetMatches(scopes []Scope, want Scope) bool {
@@ -61,11 +69,19 @@ func ScopeSetMatches(scopes []Scope, want Scope) bool {
 // narrowed to want.
 //
 // A runtime view is ScopeSetMatches: the absence rule is the same wherever a
-// scope set is matched. Every other view compares the node's effective scope
-// rather than asking whether the set merely contains want, because Scopes is
-// a union across declaration sites: a package reachable from a development
-// root and from a runtime root ships, PrimaryScope says so, and listing it in
-// a development view would present a shipping package as one to deprioritize.
+// scope set is matched. Every other view additionally requires that the set
+// not name runtime, because Scopes is a union across declaration sites: a
+// package reached from a development root and from a runtime root ships, and
+// listing it in a development view would present a shipping package as one to
+// deprioritize. That is the one place this differs from matching a single
+// site's scopes, where naming a scope is the whole question.
+//
+// The extra condition is spelled out rather than delegated to PrimaryScope,
+// which cannot answer it: MergeScope's fall-through returns ScopeDevelopment
+// for any two non-runtime scopes, so a set of two tokens this build cannot
+// read has an effective scope of development and a comparison against it
+// would put a dependency nobody scoped development into the very view that
+// must be affirmative. Membership is what "affirmative" means here.
 func (n *DependencyNode) MatchesScopeFilter(want Scope) bool {
 	if n == nil {
 		return false
@@ -76,7 +92,7 @@ func (n *DependencyNode) MatchesScopeFilter(want Scope) bool {
 	if want == ScopeRuntime {
 		return ScopeSetMatches(n.Scopes, want)
 	}
-	return n.PrimaryScope() == want
+	return containsScope(n.Scopes, want) && !containsScope(n.Scopes, ScopeRuntime)
 }
 
 // keptOnAbsence reports whether a runtime view kept this dependency only
