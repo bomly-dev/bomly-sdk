@@ -1150,3 +1150,64 @@ func FuzzSourceScope(f *testing.F) {
 		}
 	})
 }
+
+// Root attribution decides whether an analyzer's evidence names a node at
+// all, and every string it reads -- a declared module root, a site path --
+// arrives from a decoded document. The invariants it must hold whatever
+// those strings are: it never panics, an unset root never excludes a node
+// (a whole-scan claim covers every site), a site-established answer does not
+// depend on the run's calibration, and the answer is one of the three
+// documented ones.
+func FuzzRootAttributor(f *testing.F) {
+	for _, seed := range [][4]string{
+		{"/ws/api", "/ws/api", "/ws/api/package.json", "/ws/web"},
+		{"/ws/api", "apps/api", "apps/api/package.json", "/ws/api"},
+		{"", "", "", ""},
+		{".", "..", "../../etc/passwd", "/"},
+		{"/ws/api", "", "/ws/api/..data/node_modules/left-pad/index.js", "/ws/api"},
+		{"/ws/api", "/ws/apifoo", "/ws/apifoo/node_modules/left-pad/index.js", "/ws/apifoo"},
+		{" /ws/api ", "\x00", strings.Repeat("a/", 512), "\n"},
+	} {
+		f.Add(seed[0], seed[1], seed[2], seed[3])
+	}
+
+	f.Fuzz(func(t *testing.T, root, declaredRoot, realPath, analyzedRoot string) {
+		for _, raw := range []string{root, declaredRoot, realPath, analyzedRoot} {
+			if len(raw) > maxFuzzInputSize {
+				t.Skip("input exceeds fuzz bound")
+			}
+		}
+		node, err := NewDependencyNode(Coordinates{Name: "left-pad", Version: "1.3.0", Ecosystem: EcosystemNPM})
+		if err != nil {
+			t.Fatalf("NewDependencyNode: %v", err)
+		}
+		node.Locations = []PackageLocation{{ModuleRoot: declaredRoot, RealPath: realPath}}
+		graph := New()
+		if err := graph.AddNode(node); err != nil {
+			t.Fatalf("AddNode: %v", err)
+		}
+
+		attributor := NewRootAttributor([]string{analyzedRoot}, graph)
+		got := attributor.Attribute(node, root)
+		switch got {
+		case AttributedElsewhere, AttributedToRootOnly, AttributedToSite:
+		default:
+			t.Fatalf("Attribute returned %v, which is not a documented attribution", got)
+		}
+		if again := attributor.Attribute(node, root); again != got {
+			t.Fatalf("Attribute is not deterministic: %v then %v", got, again)
+		}
+		if strings.TrimSpace(root) == "" && got == AttributedElsewhere {
+			t.Fatalf("an unset root excluded a node; a whole-scan claim covers every site")
+		}
+		// Calibration only ever licenses exclusion. A site that establishes
+		// the occurrence does so on its own, so an uncalibrated attributor
+		// must agree.
+		if got == AttributedToSite {
+			var uncalibrated RootAttributor
+			if bare := uncalibrated.Attribute(node, root); bare != AttributedToSite {
+				t.Fatalf("site attribution depends on calibration: calibrated %v, uncalibrated %v", got, bare)
+			}
+		}
+	})
+}

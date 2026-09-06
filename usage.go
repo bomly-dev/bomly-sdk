@@ -1,7 +1,9 @@
 package sdk
 
 import (
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -126,6 +128,202 @@ func (e ReachabilityEvidence) Clone() ReachabilityEvidence {
 		clone.Hops = &hops
 	}
 	return clone
+}
+
+// RootAttribution is how firmly a dependency node's declaration sites tie it
+// to one module root.
+//
+// Every reachability analyzer has to answer this before it emits evidence,
+// because evidence is keyed by module root: a finding about a root the
+// package is absent from is noise at best and, when it reads "unreachable",
+// a claim about code that was never in that build -- one that survives into
+// the summary, since DeriveReachability counts unreachable evidence.
+//
+// The module root is the mandatory floor of an attribution and
+// ReachabilityEvidence.DependencyRefs the optional ceiling. Naming whichever
+// occurrence node an annotation loop happens to be visiting states a
+// precision the analysis does not have: it pins an occurrence to a root
+// nothing tied it to, which is a false claim rather than a vague one.
+//
+// The rule reads SDK types (PackageLocation.ModuleRoot, PackageLocation.RealPath,
+// DependencyNode.Locations) to produce inputs to another SDK type, so it lives
+// here rather than once per analyzer. It arrived as four identical copies in
+// the govulncheck, jsreach, pyreach and jvmreach analyzer repositories.
+type RootAttribution int
+
+const (
+	// AttributedElsewhere: every site this node records names some other
+	// module root. The node is not part of the root under analysis and
+	// contributes no evidence to it.
+	AttributedElsewhere RootAttribution = iota
+	// AttributedToRootOnly: nothing ties the node to a particular root. The
+	// analysis still covers it -- the analyzer ran over this root's build --
+	// so the evidence carries the module root, but no node reference,
+	// because the occurrence was not established.
+	AttributedToRootOnly
+	// AttributedToSite: a site names this root, or lies under it. The
+	// occurrence is established and the evidence may name the node.
+	AttributedToSite
+)
+
+// String names the attribution, so a diagnostic reads as a claim rather than
+// as an integer.
+func (a RootAttribution) String() string {
+	switch a {
+	case AttributedElsewhere:
+		return "attributed-elsewhere"
+	case AttributedToRootOnly:
+		return "attributed-to-root-only"
+	case AttributedToSite:
+		return "attributed-to-site"
+	default:
+		return "root-attribution(" + strconv.Itoa(int(a)) + ")"
+	}
+}
+
+// RootAttributor answers the question above for one analysis pass over one
+// set of module roots.
+//
+// It is built per pass rather than per node because the honest answer depends
+// on the whole run: a node whose sites declare module roots may only be
+// judged "not in this root" when the producer's roots and the analyzer's
+// roots are the same vocabulary. Detectors record the root they resolved
+// from; an analyzer typically derives roots from the filesystem. When those
+// two disagree -- a relative workspace path against an absolute module
+// directory, say -- a non-match means the two are speaking past each other,
+// not that the package is absent, and dropping the node's evidence on that
+// basis would lose the finding entirely. So a non-match only means "not ours"
+// once at least one declared root in the graph is a root this run analyzes.
+//
+// The zero value knows no roots and trusts no declared one: it reports
+// AttributedToSite for a node with a site under the root in hand and
+// AttributedToRootOnly for everything else. That is the degraded answer, and
+// it is the safe one -- it keeps evidence rather than dropping it.
+type RootAttributor struct {
+	// analyzed is every root this run covers, cleaned. A site that lies under
+	// one of these but not under the root in hand is positive evidence of
+	// absence: the package is installed in a tree this run knows about, and
+	// that tree is not this one.
+	analyzed map[string]struct{}
+	// trustDeclaredRoots is set when producer-recorded roots and analyzed
+	// roots overlap, which is what licenses reading a non-match as absence.
+	trustDeclaredRoots bool
+}
+
+// NewRootAttributor calibrates attribution against the roots this run will
+// analyze and the sites the graph actually records. A nil graph, or one whose
+// sites declare no root this run analyzes, yields an attributor that will not
+// read a declared-root mismatch as absence.
+func NewRootAttributor(roots []string, graph *Graph) RootAttributor {
+	analyzed := make(map[string]struct{}, len(roots))
+	for _, root := range roots {
+		if cleaned := cleanModuleRoot(root); cleaned != "" {
+			analyzed[cleaned] = struct{}{}
+		}
+	}
+	attributor := RootAttributor{analyzed: analyzed}
+	if graph == nil || len(analyzed) == 0 {
+		return attributor
+	}
+	graph.WalkDependencyNodes(func(node *DependencyNode) bool {
+		if node == nil {
+			return true
+		}
+		for _, location := range node.Locations {
+			declared := cleanModuleRoot(location.ModuleRoot)
+			if declared == "" {
+				continue
+			}
+			if _, ok := analyzed[declared]; ok {
+				attributor.trustDeclaredRoots = true
+				return false
+			}
+		}
+		return true
+	})
+	return attributor
+}
+
+// Attribute reports how firmly node's sites tie it to root.
+//
+// An empty root is the whole-scan claim -- ReachabilityEvidence with no
+// module root applies to every location -- so no site can contradict it and
+// it never answers AttributedElsewhere.
+func (a RootAttributor) Attribute(node *DependencyNode, root string) RootAttribution {
+	if node == nil {
+		return AttributedElsewhere
+	}
+	target := cleanModuleRoot(root)
+	if target == "" {
+		return AttributedToRootOnly
+	}
+	declaredAnyRoot, sitedInAnotherRoot := false, false
+	for _, location := range node.Locations {
+		if declared := cleanModuleRoot(location.ModuleRoot); declared != "" {
+			declaredAnyRoot = true
+			if declared == target {
+				return AttributedToSite
+			}
+		}
+		if location.RealPath == "" {
+			continue
+		}
+		if pathWithinRoot(location.RealPath, target) {
+			return AttributedToSite
+		}
+		if a.sitedInAnalyzedRoot(location.RealPath) {
+			sitedInAnotherRoot = true
+		}
+	}
+	// Two ways to know the node is not ours, and both need the run's own
+	// roots to say so. A site under another root this run analyzes is
+	// positive evidence of absence: the package is installed in a tree we
+	// know about and it is not this one. A site whose path is under no
+	// analyzed root at all -- a module cache, a global store -- says nothing
+	// either way and must not be read as absence.
+	if sitedInAnotherRoot || (declaredAnyRoot && a.trustDeclaredRoots) {
+		return AttributedElsewhere
+	}
+	return AttributedToRootOnly
+}
+
+// sitedInAnalyzedRoot reports whether path lies under any root this run covers.
+func (a RootAttributor) sitedInAnalyzedRoot(path string) bool {
+	for root := range a.analyzed {
+		if pathWithinRoot(path, root) {
+			return true
+		}
+	}
+	return false
+}
+
+// cleanModuleRoot normalizes a module root for comparison. Empty in, empty out
+// -- an unset root is not a root that matches everything.
+func cleanModuleRoot(root string) string {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return ""
+	}
+	return filepath.Clean(root)
+}
+
+// pathWithinRoot reports whether path is root or lies under it.
+//
+// path/filepath owns what a path means on this platform, so the containment
+// question is asked of filepath.Rel rather than by comparing prefixes: a
+// string prefix makes "/ws/apifoo" a child of "/ws/api". The escape test is a
+// whole leading element, not a ".." prefix -- a directory may legitimately be
+// named "..data", as a Kubernetes secret mount's is, and reading that as an
+// escape would put a site outside the root that contains it.
+func pathWithinRoot(path, root string) bool {
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
+	if err != nil {
+		// Rel fails when the two cannot be compared at all -- one relative
+		// and one absolute. That is the vocabulary mismatch above, not
+		// containment, and must not read as either.
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // DeriveReachability summarizes per-module-root evidence into the single
