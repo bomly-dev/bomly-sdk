@@ -120,9 +120,36 @@ type ScopeSetDecoding struct {
 	// Scopes are the recognized scopes, deduplicated and sorted, so
 	// re-encoding them gives stable bytes.
 	Scopes []Scope
-	// Unknown are the tokens this build does not recognize, in the order
-	// written, deduplicated. Empty when every token was read.
+	// Unknown are the tokens this build does not recognize, lowercased the
+	// way ParseScope reads a token, in the order written, deduplicated.
+	// Empty when every token was read. Each has the shape of a scope token
+	// -- see isScopeTokenShaped -- because anything else is not a scope a
+	// newer build might have written; it is a malformed carrier, and that
+	// is an error rather than an entry here.
 	Unknown []string
+}
+
+// isScopeTokenShaped reports whether a token this build does not know still
+// has the shape of a scope token, so that it can be one a newer build wrote,
+// rather than structure a carrier would never contain. The shape is the one
+// Bomly's own vocabulary tokens have -- "runtime", "development", and every
+// token in the model's other closed vocabularies: lowercase ASCII letters,
+// digits, hyphen, underscore, within the vocabulary token bound. This is
+// Bomly's own vocabulary, so no library owns the shape; a token that fails
+// it -- a space, a control character, invalid UTF-8, a run past the bound --
+// is not a future scope but a value that did not come from a carrier.
+func isScopeTokenShaped(token string) bool {
+	if token == "" || len(token) > maxVocabularyTokenLength {
+		return false
+	}
+	for _, r := range token {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // DecodeScopeSetLenient reads a carrier value the way ADR-0037 states: the
@@ -139,9 +166,13 @@ type ScopeSetDecoding struct {
 // are still true, and those are kept.
 //
 // What is still an error is a value that is not a carrier at all: over the
-// byte bound, or with an empty entry, which means a separator with nothing
-// after it. A carrier is Bomly's own, and structure it would never write
-// means the value did not come from where the caller thinks it did.
+// byte bound, with an empty entry (a separator with nothing after it), or
+// with an entry that is not shaped like a scope token at all -- a space, a
+// control character, invalid UTF-8. A carrier is Bomly's own, and structure
+// it would never write means the value did not come from where the caller
+// thinks it did; treating such an entry as a future scope would let a
+// malformed carrier override a valid scalar scope and surface garbage
+// through the warning channel.
 func DecodeScopeSetLenient(value string) (ScopeSetDecoding, error) {
 	if len(value) > maxScopeSetCarrierLength {
 		return ScopeSetDecoding{}, fmt.Errorf("scope set is %d bytes, over the %d byte limit", len(value), maxScopeSetCarrierLength)
@@ -163,8 +194,12 @@ func DecodeScopeSetLenient(value string) (ScopeSetDecoding, error) {
 		}
 		scope, err := ParseScope(token)
 		if err != nil || scope == ScopeUnknown {
-			if !containsString(decoded.Unknown, token) {
-				decoded.Unknown = append(decoded.Unknown, token)
+			lowered := strings.ToLower(token)
+			if !isScopeTokenShaped(lowered) {
+				return ScopeSetDecoding{}, fmt.Errorf("scope set %q has a malformed entry %q", value, token)
+			}
+			if !containsString(decoded.Unknown, lowered) {
+				decoded.Unknown = append(decoded.Unknown, lowered)
 			}
 			continue
 		}

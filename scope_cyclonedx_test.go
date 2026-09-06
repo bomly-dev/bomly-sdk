@@ -167,11 +167,23 @@ func TestCarrierDecodingIsLenientAboutUnknownTokens(t *testing.T) {
 		t.Errorf("DecodeScopeSetLenient(\"runtime\") = %+v, %v; want no unknown tokens", decoded, err)
 	}
 	// Structure a carrier would never have is still an error, not a warning:
-	// the value did not come from where the caller thinks it did.
-	for _, value := range []string{"runtime,", ",", strings.Repeat("runtime,", 40) + "runtime"} {
+	// the value did not come from where the caller thinks it did. That
+	// includes an entry that is not shaped like a scope token -- a future
+	// scope looks like "runtime", not like "bad token" -- so a malformed
+	// carrier cannot override a valid scalar or surface garbage as a warning.
+	for _, value := range []string{
+		"runtime,", ",", strings.Repeat("runtime,", 40) + "runtime",
+		"runtime,bad token", "runtime,\x01", "runtime,bad\xffutf8", "runtime,dev/opt",
+		"runtime," + strings.Repeat("f", maxVocabularyTokenLength+1),
+	} {
 		if decoded, err := DecodeScopeSetLenient(value); err == nil {
 			t.Errorf("DecodeScopeSetLenient(%q) accepted, giving %+v", value, decoded)
 		}
+	}
+	// A well-shaped unknown token is reported the way ParseScope would have
+	// read it, whatever case it was written in.
+	if decoded, err := DecodeScopeSetLenient("runtime,Future-Scope"); err != nil || len(decoded.Unknown) != 1 || decoded.Unknown[0] != "future-scope" {
+		t.Errorf("DecodeScopeSetLenient(\"runtime,Future-Scope\") = %+v, %v; want the token reported lowercased", decoded, err)
 	}
 	// An empty value is absence.
 	if decoded, err := DecodeScopeSetLenient(""); err != nil || decoded.Scopes != nil || decoded.Unknown != nil {
@@ -190,10 +202,15 @@ func TestCarrierDecodingIsLenientAboutUnknownTokens(t *testing.T) {
 	if len(got) != 1 || got[0] != ScopeRuntime {
 		t.Errorf("got %v, want the carrier's runtime kept over the scalar", got)
 	}
-	// ... and only falls back when the carrier names nothing it knows.
+	// ... and only falls back when the carrier names nothing it knows...
 	got = ScopesFromCycloneDXComponent(string(cdx.ScopeExcluded), "future")
 	if len(got) != 1 || got[0] != ScopeDevelopment {
 		t.Errorf("got %v, want the scalar when the carrier names nothing known", got)
+	}
+	// ... or is malformed, however much of it happens to be readable.
+	got = ScopesFromCycloneDXComponent(string(cdx.ScopeExcluded), "runtime,bad token")
+	if len(got) != 1 || got[0] != ScopeDevelopment {
+		t.Errorf("got %v, want the scalar when the carrier is malformed", got)
 	}
 }
 

@@ -777,6 +777,11 @@ func FuzzDecodeScopeSet(f *testing.F) {
 			if scope, perr := ParseScope(token); perr == nil && scope != ScopeUnknown {
 				t.Fatalf("a known scope %q was reported unknown for %q", token, raw)
 			}
+			// Only something shaped like a scope token is reported as a
+			// possible future scope; anything else fails the whole value.
+			if !isScopeTokenShaped(token) {
+				t.Fatalf("a malformed entry %q was reported as an unknown scope for %q", token, raw)
+			}
 		}
 		for i := 1; i < len(lenient.Scopes); i++ {
 			if lenient.Scopes[i-1] >= lenient.Scopes[i] {
