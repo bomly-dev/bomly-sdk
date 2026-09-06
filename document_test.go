@@ -368,8 +368,8 @@ func TestDocumentSourcesAreGatedAndUnion(t *testing.T) {
 		Sources: []DocumentSource{
 			{Identity: b},                           // unsorted relative to a
 			{Identity: " " + a + " ", Version: 1},   // padded, agrees with its BOM-Link
-			{Identity: b, Checksum: sha},            // same document again: fills the checksum gap
-			{Identity: a, Version: 2},               // contradicts its BOM-Link: version dropped, folds into a
+			{Identity: b, Checksum: sha},            // same key again: fills the checksum gap
+			{Identity: a, Version: 2},               // contradicts its BOM-Link: version dropped, so its own unversioned key
 			{Identity: self},                        // a document is not built from itself
 			{Identity: "not an iri", Checksum: sha}, // fails the identity gate, checksum cannot save it
 			{Identity: "file:///etc"},               // a local path is not a link a document can publish
@@ -382,9 +382,19 @@ func TestDocumentSourcesAreGatedAndUnion(t *testing.T) {
 	}
 	want := []DocumentSource{
 		{Identity: b, Checksum: &Digest{Algorithm: DigestAlgorithmSHA256, Value: sha.Value}},
+		{Identity: a},
 		{Identity: a, Version: 1},
 	}
 	assertSources(t, "normalized", got.Sources, want)
+
+	// A prior version of the same namespace is provenance, not a cycle:
+	// version 2 built from version 1 keeps that source. Itself at a
+	// compatible version -- the same stated version, or none stated -- is
+	// the cycle that is dropped.
+	versioned, _ := DocumentAssertions{Identity: b, Version: 2, Sources: []DocumentSource{
+		{Identity: b, Version: 1}, {Identity: b, Version: 2}, {Identity: b},
+	}}.Normalized()
+	assertSources(t, "prior version", versioned.Sources, []DocumentSource{{Identity: b, Version: 1}})
 
 	// The bound is applied to the input, before any gate runs: entries past
 	// it are not read at all, even when the ones before it are junk.
@@ -407,17 +417,18 @@ func TestDocumentSourcesAreGatedAndUnion(t *testing.T) {
 	// Two stated versions of one namespace are two documents.
 	twoVersions, _ := DocumentAssertions{Sources: []DocumentSource{{Identity: b, Version: 1}, {Identity: b, Version: 2}}}.Normalized()
 	assertSources(t, "two versions", twoVersions.Sources, []DocumentSource{{Identity: b, Version: 1}, {Identity: b, Version: 2}})
-	// An unversioned entry joins the one stated version its identity has,
-	// in either order. With two stated versions it cannot know which it
-	// belongs to, so it stays separate rather than attaching its checksum
-	// to whichever came first -- the result must not depend on input order.
+	// An unversioned entry is its own key and is never folded into a stated
+	// version, however many or few there are: which one it belonged to is
+	// unknowable, and folding into "the one seen so far" made the answer
+	// depend on the order pairwise merges arrived in. The set is keyed
+	// exactly, so every arrangement of the same inputs gives the same set.
 	shaDigest := Digest{Algorithm: DigestAlgorithmSHA256, Value: sha.Value}
 	for name, in := range map[string][]DocumentSource{
 		"unversioned first": {{Identity: b, Checksum: sha}, {Identity: b, Version: 1}},
 		"unversioned last":  {{Identity: b, Version: 1}, {Identity: b, Checksum: sha}},
 	} {
 		got, _ := DocumentAssertions{Sources: in}.Normalized()
-		assertSources(t, name, got.Sources, []DocumentSource{{Identity: b, Version: 1, Checksum: &shaDigest}})
+		assertSources(t, name, got.Sources, []DocumentSource{{Identity: b, Checksum: &shaDigest}, {Identity: b, Version: 1}})
 	}
 	for name, in := range map[string][]DocumentSource{
 		"ambiguous, unversioned first":  {{Identity: b, Checksum: sha}, {Identity: b, Version: 1}, {Identity: b, Version: 2}},
@@ -429,6 +440,16 @@ func TestDocumentSourcesAreGatedAndUnion(t *testing.T) {
 			{Identity: b, Checksum: &shaDigest}, {Identity: b, Version: 1}, {Identity: b, Version: 2},
 		})
 	}
+	// Associative under pairwise merges: three records contributing the
+	// unversioned checksum, version 1, and version 2 give the same set
+	// whichever two merge first.
+	u := DocumentAssertions{Sources: []DocumentSource{{Identity: b, Checksum: sha}}}
+	v1 := DocumentAssertions{Sources: []DocumentSource{{Identity: b, Version: 1}}}
+	v2 := DocumentAssertions{Sources: []DocumentSource{{Identity: b, Version: 2}}}
+	wantAll := []DocumentSource{{Identity: b, Checksum: &shaDigest}, {Identity: b, Version: 1}, {Identity: b, Version: 2}}
+	assertSources(t, "(u+v1)+v2", MergeDocumentAssertions(MergeDocumentAssertions(u, v1), v2).Sources, wantAll)
+	assertSources(t, "(u+v2)+v1", MergeDocumentAssertions(MergeDocumentAssertions(u, v2), v1).Sources, wantAll)
+	assertSources(t, "(v1+v2)+u", MergeDocumentAssertions(MergeDocumentAssertions(v1, v2), u).Sources, wantAll)
 
 	// The bound holds at decode too: entries past it are not decoded, so a
 	// payload of many sources costs at most the bound in element decodes.
@@ -454,7 +475,7 @@ func TestDocumentSourcesAreGatedAndUnion(t *testing.T) {
 	// side's own identity is already out of its list; which identity the
 	// merged record keeps decides what drops from the union.
 	left := DocumentAssertions{Identity: self, Sources: []DocumentSource{{Identity: a, Version: 1}}}
-	right := DocumentAssertions{Identity: b, Sources: []DocumentSource{{Identity: b}, {Identity: self}, {Identity: a, Checksum: sha}}}
+	right := DocumentAssertions{Identity: b, Sources: []DocumentSource{{Identity: b}, {Identity: self}, {Identity: a, Version: 1, Checksum: sha}}}
 	one := MergeDocumentAssertions(left, right)
 	assertSources(t, "merged", one.Sources, []DocumentSource{{Identity: a, Version: 1, Checksum: want[0].Checksum}})
 	two := MergeDocumentAssertions(right, left)

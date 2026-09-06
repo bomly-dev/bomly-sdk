@@ -78,13 +78,26 @@ func (t DocumentTool) Normalized() (DocumentTool, bool) {
 // Version is a positive integer that agrees with a BOM-Link identity's tail;
 // Checksum passes the digest gate with the artifact subject. Each is the rule
 // the document's own field follows, stated once in the shared helpers.
+//
+// Merge class, as an element of DocumentAssertions.Sources: a set keyed by
+// (Identity, Version) exactly. Two entries with the same key are one source
+// and fill each other's gaps; an entry with no stated version is a distinct
+// key from every stated version of the same identity, never folded into one.
+// That is what keeps the set commutative and associative under pairwise
+// merges: folding an unversioned entry into "the one stated version so far"
+// gave a different answer depending on which version a later merge brought,
+// and once folded the ambiguity could not be restored.
 type DocumentSource struct {
-	// Identity is the source document's own identifier.
+	// Identity is the source document's own identifier. Merge class: part
+	// of the set key.
 	Identity string `json:"identity,omitempty"`
-	// Version is the source document's version, when the reference stated it.
+	// Version is the source document's version, when the reference stated
+	// it. Merge class: part of the set key -- an unstated version is its own
+	// key, distinct from every stated one.
 	Version int `json:"version,omitempty"`
 	// Checksum is a digest over the source document's original bytes, when
-	// the reference carried one -- SPDX always does.
+	// the reference carried one -- SPDX always does. Merge class: scalar,
+	// fill-gaps within the key; the first stated digest stands.
 	Checksum *Digest `json:"checksum,omitempty"`
 }
 
@@ -177,77 +190,42 @@ func documentChecksumFor(checksum *Digest) *Digest {
 	return &normalized
 }
 
-// foldDocumentSources folds gated sources that name the same document and
-// returns them sorted. Entries with the same identity and stated version are
-// one document and fill each other's gaps, first stated standing. An entry
-// with no stated version is folded into a versioned one only when that
-// identity has exactly one stated version: with two or more, which one it
-// belongs to is unknowable, and folding it into whichever came first attached
-// its checksum to a version chosen by input order -- an exporter could then
-// emit a checksum for the wrong document version. It stays separate instead,
-// as its own unversioned entry. The result does not depend on the order the
-// entries arrived in, beyond which of two conflicting checksums for one
-// document stands.
+// foldDocumentSources folds gated sources with the same (Identity, Version)
+// key and returns them sorted. Entries sharing a key are one document and
+// fill each other's checksum gap, first stated standing. An entry with no
+// stated version is its own key, distinct from every stated version of the
+// same identity, and is never folded into one: which version it belonged to
+// is unknowable, and guessing "the one stated version seen so far" made the
+// answer depend on merge order -- Merge(Merge(unversioned, v1), v2) attached
+// its checksum to v1 and the other order to v2, with no way to restore the
+// ambiguity once folded. Keyed exactly, the set is commutative, associative,
+// and idempotent, which is what a set merge class promises.
 func foldDocumentSources(gated []DocumentSource) []DocumentSource {
-	type versions struct {
-		stated      map[int]int // version -> index into folded
-		unversioned int         // index into folded, or -1
+	type key struct {
+		identity string
+		version  int
 	}
-	byIdentity := make(map[string]*versions, len(gated))
+	index := make(map[key]int, len(gated))
 	folded := make([]DocumentSource, 0, len(gated))
-	fill := func(index int, source DocumentSource) {
-		folded[index].Version = MergeFillGap(folded[index].Version, source.Version, nil)
-		folded[index].Checksum = MergeFillGap(folded[index].Checksum, source.Checksum, nil)
-	}
 	for _, source := range gated {
-		group := byIdentity[source.Identity]
-		if group == nil {
-			group = &versions{stated: map[int]int{}, unversioned: -1}
-			byIdentity[source.Identity] = group
-		}
-		switch {
-		case source.Version == 0 && group.unversioned >= 0:
-			fill(group.unversioned, source)
-		case source.Version == 0:
-			group.unversioned = len(folded)
-			folded = append(folded, source)
-		default:
-			if index, seen := group.stated[source.Version]; seen {
-				fill(index, source)
-			} else {
-				group.stated[source.Version] = len(folded)
-				folded = append(folded, source)
-			}
-		}
-	}
-	// Second pass: an unversioned entry joins the one stated version its
-	// identity has, and only then.
-	dropped := make(map[int]struct{})
-	for _, group := range byIdentity {
-		if group.unversioned < 0 || len(group.stated) != 1 {
+		k := key{source.Identity, source.Version}
+		if i, seen := index[k]; seen {
+			folded[i].Checksum = MergeFillGap(folded[i].Checksum, source.Checksum, nil)
 			continue
 		}
-		for _, index := range group.stated {
-			fill(index, folded[group.unversioned])
-		}
-		dropped[group.unversioned] = struct{}{}
+		index[k] = len(folded)
+		folded = append(folded, source.Clone())
 	}
-	out := make([]DocumentSource, 0, len(folded)-len(dropped))
-	for index, source := range folded {
-		if _, gone := dropped[index]; !gone {
-			out = append(out, source.Clone())
+	sort.SliceStable(folded, func(i, j int) bool {
+		if folded[i].Identity != folded[j].Identity {
+			return folded[i].Identity < folded[j].Identity
 		}
-	}
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Identity != out[j].Identity {
-			return out[i].Identity < out[j].Identity
-		}
-		return out[i].Version < out[j].Version
+		return folded[i].Version < folded[j].Version
 	})
-	if len(out) == 0 {
+	if len(folded) == 0 {
 		return nil
 	}
-	return out
+	return folded
 }
 
 // sameDocumentLink reports whether two link tuples name the same document:
@@ -317,15 +295,17 @@ type DocumentAssertions struct {
 	// somewhere to read them back into, a single ingest of that export lost
 	// every trace of its inputs.
 	//
-	// Gate: each entry passes DocumentSource.Normalized; entries naming the
-	// same document fold, with version and checksum filling gaps; the list
-	// is sorted for byte-stable output and bounded by maxDocumentSources,
-	// applied to the input before any work is done on it. An entry naming
-	// the document's own Identity is dropped: a document is not built from
-	// itself, and recording it would write a cycle. Merge class: set, unioned
-	// by document -- a document built from a merged document inherits that
-	// document's sources beside its own identity, so provenance survives
-	// more than one hop.
+	// Gate: each entry passes DocumentSource.Normalized; entries with the
+	// same (Identity, Version) key fold, the checksum filling a gap; the
+	// list is sorted for byte-stable output and bounded by
+	// maxDocumentSources, applied to the input before any work is done on
+	// it. An entry naming this document itself -- the same identity at a
+	// compatible version, per sameDocumentLink -- is dropped: a document is
+	// not built from itself, and recording it would write a cycle. A prior
+	// version of the same namespace is a different document and is kept.
+	// Merge class: set, keyed by (Identity, Version) -- a document built
+	// from a merged document inherits that document's sources beside its
+	// own identity, so provenance survives more than one hop.
 	Sources []DocumentSource `json:"sources,omitempty"`
 }
 
@@ -389,9 +369,17 @@ func (d DocumentAssertions) Normalized() (DocumentAssertions, bool) {
 	}
 	gated := make([]DocumentSource, 0, len(sources))
 	for _, source := range sources {
-		if cleaned, ok := source.Normalized(); ok && cleaned.Identity != normalized.Identity {
-			gated = append(gated, cleaned)
+		cleaned, ok := source.Normalized()
+		if !ok {
+			continue
 		}
+		// Itself, at a compatible version, is a cycle. A different stated
+		// version of the same namespace is a different document -- version
+		// 2 built from version 1 is real provenance -- and is kept.
+		if sameDocumentLink(normalized.Identity, normalized.Version, cleaned.Identity, cleaned.Version) {
+			continue
+		}
+		gated = append(gated, cleaned)
 	}
 	normalized.Sources = foldDocumentSources(gated)
 
