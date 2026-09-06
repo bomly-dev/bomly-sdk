@@ -175,6 +175,79 @@ func documentChecksumFor(checksum *Digest) *Digest {
 	return &normalized
 }
 
+// foldDocumentSources folds gated sources that name the same document and
+// returns them sorted. Entries with the same identity and stated version are
+// one document and fill each other's gaps, first stated standing. An entry
+// with no stated version is folded into a versioned one only when that
+// identity has exactly one stated version: with two or more, which one it
+// belongs to is unknowable, and folding it into whichever came first attached
+// its checksum to a version chosen by input order -- an exporter could then
+// emit a checksum for the wrong document version. It stays separate instead,
+// as its own unversioned entry. The result does not depend on the order the
+// entries arrived in, beyond which of two conflicting checksums for one
+// document stands.
+func foldDocumentSources(gated []DocumentSource) []DocumentSource {
+	type versions struct {
+		stated      map[int]int // version -> index into folded
+		unversioned int         // index into folded, or -1
+	}
+	byIdentity := make(map[string]*versions, len(gated))
+	folded := make([]DocumentSource, 0, len(gated))
+	fill := func(index int, source DocumentSource) {
+		folded[index].Version = MergeFillGap(folded[index].Version, source.Version, nil)
+		folded[index].Checksum = MergeFillGap(folded[index].Checksum, source.Checksum, nil)
+	}
+	for _, source := range gated {
+		group := byIdentity[source.Identity]
+		if group == nil {
+			group = &versions{stated: map[int]int{}, unversioned: -1}
+			byIdentity[source.Identity] = group
+		}
+		switch {
+		case source.Version == 0 && group.unversioned >= 0:
+			fill(group.unversioned, source)
+		case source.Version == 0:
+			group.unversioned = len(folded)
+			folded = append(folded, source)
+		default:
+			if index, seen := group.stated[source.Version]; seen {
+				fill(index, source)
+			} else {
+				group.stated[source.Version] = len(folded)
+				folded = append(folded, source)
+			}
+		}
+	}
+	// Second pass: an unversioned entry joins the one stated version its
+	// identity has, and only then.
+	dropped := make(map[int]struct{})
+	for _, group := range byIdentity {
+		if group.unversioned < 0 || len(group.stated) != 1 {
+			continue
+		}
+		for _, index := range group.stated {
+			fill(index, folded[group.unversioned])
+		}
+		dropped[group.unversioned] = struct{}{}
+	}
+	out := make([]DocumentSource, 0, len(folded)-len(dropped))
+	for index, source := range folded {
+		if _, gone := dropped[index]; !gone {
+			out = append(out, source.Clone())
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Identity != out[j].Identity {
+			return out[i].Identity < out[j].Identity
+		}
+		return out[i].Version < out[j].Version
+	})
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // sameDocumentLink reports whether two link tuples name the same document:
 // the same identity at a compatible version. Two stated versions that differ
 // are two documents sharing a namespace, and filling across them would pair
@@ -312,31 +385,13 @@ func (d DocumentAssertions) Normalized() (DocumentAssertions, bool) {
 	if len(sources) > maxDocumentSources {
 		sources = sources[:maxDocumentSources]
 	}
+	gated := make([]DocumentSource, 0, len(sources))
 	for _, source := range sources {
-		cleaned, ok := source.Normalized()
-		if !ok || cleaned.Identity == normalized.Identity {
-			continue
-		}
-		folded := false
-		for i := range normalized.Sources {
-			existing := &normalized.Sources[i]
-			if sameDocumentLink(existing.Identity, existing.Version, cleaned.Identity, cleaned.Version) {
-				existing.Version = MergeFillGap(existing.Version, cleaned.Version, nil)
-				existing.Checksum = MergeFillGap(existing.Checksum, cleaned.Checksum, nil)
-				folded = true
-				break
-			}
-		}
-		if !folded {
-			normalized.Sources = append(normalized.Sources, cleaned)
+		if cleaned, ok := source.Normalized(); ok && cleaned.Identity != normalized.Identity {
+			gated = append(gated, cleaned)
 		}
 	}
-	sort.SliceStable(normalized.Sources, func(i, j int) bool {
-		if normalized.Sources[i].Identity != normalized.Sources[j].Identity {
-			return normalized.Sources[i].Identity < normalized.Sources[j].Identity
-		}
-		return normalized.Sources[i].Version < normalized.Sources[j].Version
-	})
+	normalized.Sources = foldDocumentSources(gated)
 
 	for _, creator := range d.Creators {
 		if contact, ok := creator.Normalized(); ok {
@@ -391,11 +446,34 @@ func (d DocumentAssertions) MarshalJSON() ([]byte, error) {
 // the zero value rather than failing the payload: the entry it belongs to is
 // still a graph, and a document with no publishable claims is merely absent.
 func (d *DocumentAssertions) UnmarshalJSON(data []byte) error {
-	var wire documentAssertionsWire
+	// Sources are held as raw messages first and only the first
+	// maxDocumentSources of them are decoded. Decoding the whole list and
+	// bounding afterwards let a payload of ten thousand entries pay ten
+	// thousand element decodes -- each through DocumentSource's own gate --
+	// before the bound saw any of them. A raw message is a view over bytes
+	// the decoder already holds, so the entries past the bound cost nothing
+	// beyond that view.
+	var wire struct {
+		documentAssertionsWire
+		Sources []json.RawMessage `json:"sources,omitempty"`
+	}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
 	}
-	normalized, _ := DocumentAssertions(wire).Normalized()
+	raw := wire.Sources
+	if len(raw) > maxDocumentSources {
+		raw = raw[:maxDocumentSources]
+	}
+	assertions := DocumentAssertions(wire.documentAssertionsWire)
+	assertions.Sources = make([]DocumentSource, 0, len(raw))
+	for _, message := range raw {
+		var source DocumentSource
+		if err := json.Unmarshal(message, &source); err != nil {
+			return err
+		}
+		assertions.Sources = append(assertions.Sources, source)
+	}
+	normalized, _ := assertions.Normalized()
 	*d = normalized
 	return nil
 }

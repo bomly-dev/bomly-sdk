@@ -407,6 +407,47 @@ func TestDocumentSourcesAreGatedAndUnion(t *testing.T) {
 	// Two stated versions of one namespace are two documents.
 	twoVersions, _ := DocumentAssertions{Sources: []DocumentSource{{Identity: b, Version: 1}, {Identity: b, Version: 2}}}.Normalized()
 	assertSources(t, "two versions", twoVersions.Sources, []DocumentSource{{Identity: b, Version: 1}, {Identity: b, Version: 2}})
+	// An unversioned entry joins the one stated version its identity has,
+	// in either order. With two stated versions it cannot know which it
+	// belongs to, so it stays separate rather than attaching its checksum
+	// to whichever came first -- the result must not depend on input order.
+	shaDigest := Digest{Algorithm: DigestAlgorithmSHA256, Value: sha.Value}
+	for name, in := range map[string][]DocumentSource{
+		"unversioned first": {{Identity: b, Checksum: sha}, {Identity: b, Version: 1}},
+		"unversioned last":  {{Identity: b, Version: 1}, {Identity: b, Checksum: sha}},
+	} {
+		got, _ := DocumentAssertions{Sources: in}.Normalized()
+		assertSources(t, name, got.Sources, []DocumentSource{{Identity: b, Version: 1, Checksum: &shaDigest}})
+	}
+	for name, in := range map[string][]DocumentSource{
+		"ambiguous, unversioned first":  {{Identity: b, Checksum: sha}, {Identity: b, Version: 1}, {Identity: b, Version: 2}},
+		"ambiguous, unversioned middle": {{Identity: b, Version: 1}, {Identity: b, Checksum: sha}, {Identity: b, Version: 2}},
+		"ambiguous, unversioned last":   {{Identity: b, Version: 2}, {Identity: b, Version: 1}, {Identity: b, Checksum: sha}},
+	} {
+		got, _ := DocumentAssertions{Sources: in}.Normalized()
+		assertSources(t, name, got.Sources, []DocumentSource{
+			{Identity: b, Checksum: &shaDigest}, {Identity: b, Version: 1}, {Identity: b, Version: 2},
+		})
+	}
+
+	// The bound holds at decode too: entries past it are not decoded, so a
+	// payload of many sources costs at most the bound in element decodes.
+	var payload strings.Builder
+	payload.WriteString(`{"identity":"` + self + `","sources":[`)
+	for i := 0; i < maxDocumentSources+50; i++ {
+		if i > 0 {
+			payload.WriteString(",")
+		}
+		payload.WriteString(`{"identity":"https://example.test/spdxdocs/src-` + strconv.Itoa(i) + `"}`)
+	}
+	payload.WriteString(`]}`)
+	var decodedMany DocumentAssertions
+	if err := json.Unmarshal([]byte(payload.String()), &decodedMany); err != nil {
+		t.Fatal(err)
+	}
+	if len(decodedMany.Sources) != maxDocumentSources {
+		t.Fatalf("decoded %d sources, want the bound %d", len(decodedMany.Sources), maxDocumentSources)
+	}
 
 	// Merge class: set, unioned by document, and the merged record's own
 	// identity never lands among its sources. Each side is gated first, so a
