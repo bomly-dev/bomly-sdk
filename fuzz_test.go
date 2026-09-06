@@ -908,6 +908,40 @@ func FuzzDocumentAssertions(f *testing.F) {
 	})
 }
 
+// NormalizeDescription is a gate on untrusted text that is re-applied at every
+// hop -- wire decode, registry seeding, document ingest -- so its output must
+// be a fixed point within the bound it documents. It was not: UTF-8 repair
+// tripled invalid bytes past the bound, and the next pass emptied the value.
+func FuzzNormalizeDescription(f *testing.F) {
+	for _, seed := range []string{
+		"A tidy package.", "line one\nline two\ttabbed", "clean\x00text\x07", "a\xffb",
+		"00" + strings.Repeat("\xff", 3000) + "0000", strings.Repeat("\xff", maxDescriptionLength/3),
+		strings.Repeat("a", maxDescriptionLength+1), "", "   ", "\xff", "\xef\xbf\xbd",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, value string) {
+		if len(value) > maxFuzzInputSize {
+			t.Skip("input exceeds fuzz bound")
+		}
+		once := NormalizeDescription(value)
+		if len(once) > maxDescriptionLength {
+			t.Fatalf("output is %d bytes, past the %d bound", len(once), maxDescriptionLength)
+		}
+		if !utf8.ValidString(once) {
+			t.Fatalf("output is not valid UTF-8: %q", once)
+		}
+		for _, r := range once {
+			if (r < ' ' && r != '\n' && r != '\r' && r != '\t') || r == 0x7f {
+				t.Fatalf("output carries control character %U", r)
+			}
+		}
+		if twice := NormalizeDescription(once); twice != once {
+			t.Fatalf("not a fixed point: %d bytes, then %d bytes", len(once), len(twice))
+		}
+	})
+}
+
 // The source-scope gate is a fixed point, and the export helper only ever
 // writes a CycloneDX spelling or nothing -- whatever word the source used.
 func FuzzSourceScope(f *testing.F) {

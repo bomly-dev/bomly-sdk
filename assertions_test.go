@@ -409,6 +409,51 @@ func TestNormalizeOriginURLStillSelectsTheOriginForms(t *testing.T) {
 
 // --- description and homepage gates ---------------------------------------
 
+// A description that survives one pass must survive the next unchanged.
+// Repairing invalid UTF-8 turns each bad byte into a three-byte U+FFFD, so a
+// value under the bound came out at three times the maximum, and the second
+// pass -- seeing an over-long value -- returned "". Export, ingest, export
+// lost the description on the second hop. Found by a fuzz target in
+// bomly-cli.
+func TestNormalizeDescriptionIsAFixedPointWithinItsBound(t *testing.T) {
+	// The reproducer from the report: 3006 bytes in, 9006 out, then 0.
+	amplified := "00" + strings.Repeat("\xff", 3000) + "0000"
+	once := NormalizeDescription(amplified)
+	if once != "" {
+		t.Fatalf("a value that repairs to %d bytes, past the %d bound, was kept", len(once), maxDescriptionLength)
+	}
+
+	// Repair that stays within the bound is kept, and is stable.
+	small := "a\xffb"
+	if got := NormalizeDescription(small); got != "a\uFFFDb" || NormalizeDescription(got) != got {
+		t.Fatalf("NormalizeDescription(%q) = %q, then %q; want a stable repaired value", small, got, NormalizeDescription(got))
+	}
+	// Right at the edge: the largest repair that fits within the bound
+	// survives (three bytes per replaced byte, so it lands just under a
+	// bound that is not a multiple of three), and one more replaced byte
+	// does not.
+	atBound := strings.Repeat("\xff", maxDescriptionLength/3)
+	if got := NormalizeDescription(atBound); len(got) != 3*(maxDescriptionLength/3) || NormalizeDescription(got) != got {
+		t.Fatalf("repair landing within the bound: len=%d, stable=%v; want kept and stable", len(got), NormalizeDescription(got) == got)
+	}
+	if got := NormalizeDescription(atBound + "\xff"); got != "" {
+		t.Fatalf("repair one U+FFFD past the bound was kept at %d bytes", len(got))
+	}
+
+	for _, value := range []string{
+		"  A tidy package.  ", "line one\nline two", "clean\x00text\x07",
+		strings.Repeat("a", maxDescriptionLength), strings.Repeat("a", maxDescriptionLength+1), amplified, small,
+	} {
+		once := NormalizeDescription(value)
+		if twice := NormalizeDescription(once); twice != once {
+			t.Errorf("NormalizeDescription(%q...) = %d bytes, then %d bytes; want a fixed point", value[:min(len(value), 12)], len(once), len(twice))
+		}
+		if len(once) > maxDescriptionLength {
+			t.Errorf("NormalizeDescription returned %d bytes, past the %d bound", len(once), maxDescriptionLength)
+		}
+	}
+}
+
 func TestNormalizeDescription(t *testing.T) {
 	if got := NormalizeDescription("  A tidy package.  "); got != "A tidy package." {
 		t.Fatalf("NormalizeDescription trimmed to %q", got)
