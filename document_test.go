@@ -282,6 +282,20 @@ func TestDocumentVersionAndChecksumAreGatedAndFillGaps(t *testing.T) {
 			t.Errorf("%s: identity-less fields did not fill each other's gaps: %+v %+v", name, merged, merged.Checksum)
 		}
 	}
+	// Orphan fields fill independently, not gated on their versions
+	// agreeing, so grouping does not decide whether the checksum survives:
+	// (v1 + checksum) + v2 and v1 + (checksum + v2) agree, with the first
+	// stated version standing either way.
+	orphanV1 := DocumentAssertions{Version: 1}
+	orphanV2 := DocumentAssertions{Version: 2}
+	for name, merged := range map[string]DocumentAssertions{
+		"(v1+checksum)+v2": MergeDocumentAssertions(MergeDocumentAssertions(orphanV1, orphanChecksum), orphanV2),
+		"v1+(checksum+v2)": MergeDocumentAssertions(orphanV1, MergeDocumentAssertions(orphanChecksum, orphanV2)),
+	} {
+		if merged.Identity != "" || merged.Version != 1 || merged.Checksum == nil || merged.Checksum.Algorithm != DigestAlgorithmSHA1 {
+			t.Errorf("%s: grouping changed the orphan tuple: %+v %+v", name, merged, merged.Checksum)
+		}
+	}
 	for name, merged := range map[string]DocumentAssertions{
 		"orphan then identified": MergeDocumentAssertions(orphanChecksum, good),
 		"identified then orphan": MergeDocumentAssertions(good, orphanChecksum),

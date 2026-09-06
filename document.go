@@ -647,17 +647,22 @@ func MergeDocumentAssertions(dst, src DocumentAssertions) DocumentAssertions {
 	//
 	// A version or checksum with no identity is a link to nothing yet: the
 	// gate keeps them (a document may state them before its identity is
-	// known), but they cannot be published as a reference. So an
+	// known), but they cannot be published as a reference, and with no
+	// identity there is no document for them to be "the same" as. So an
 	// identity-less side yields the whole tuple to a side that has an
-	// identity, and two identity-less sides fill each other's gaps. Treating
-	// the orphan fields as a stated link instead made the merge depend on
-	// order -- one order kept the version and dropped the checksum, the
-	// other the reverse.
-	versionsAgree := left.Version == 0 || right.Version == 0 || left.Version == right.Version
+	// identity, and two identity-less sides fill each field's gap
+	// independently, first stated standing -- not gated on their versions
+	// agreeing, which is a same-document test and has no document to apply
+	// to. Gating it there made grouping matter: (v1 + checksum) + v2 kept
+	// the checksum while v1 + (checksum + v2) lost it, since the inner merge
+	// had paired the checksum with version 2 first. Treating the orphan
+	// fields as a stated link had the same shape one step earlier -- one
+	// order kept the version and dropped the checksum, the other the
+	// reverse.
 	switch {
 	case left.Identity == "" && right.Identity != "":
 		merged.Identity, merged.Version, merged.Checksum = right.Identity, right.Version, right.Checksum
-	case left.Identity == "" && versionsAgree,
+	case left.Identity == "",
 		sameDocumentLink(left.Identity, left.Version, right.Identity, right.Version):
 		merged.Version = MergeFillGap(left.Version, right.Version, nil)
 		merged.Checksum = MergeFillGap(left.Checksum, right.Checksum, nil)
