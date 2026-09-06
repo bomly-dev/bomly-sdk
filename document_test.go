@@ -568,8 +568,10 @@ func TestDocumentSourcesAreGatedAndUnion(t *testing.T) {
 		t.Errorf("a hand-built source was written ungated: %s", element)
 	}
 	// A repeated top-level "sources" key would give each copy its own
-	// decode budget; Bomly never writes one, so it is refused outright. A
-	// nested object's own "sources" key is not a top-level repeat.
+	// decode budget; Bomly never writes one, so it is refused outright --
+	// by the field decoder itself, which encoding/json calls once per
+	// occurrence on the same value; this pins that it does. A nested
+	// object's own "sources" key is not a top-level repeat.
 	var repeated DocumentAssertions
 	if err := json.Unmarshal([]byte(`{"sources":[{"identity":"https://a.test"}],"name":"x","sources":[{"identity":"https://b.test"}]}`), &repeated); err == nil || !strings.Contains(err.Error(), `"sources" key repeated`) {
 		t.Errorf("repeated sources key: err = %v, want it refused", err)

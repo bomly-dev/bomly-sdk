@@ -495,15 +495,6 @@ func (d *DocumentAssertions) UnmarshalJSON(data []byte) error {
 	// and bounding afterwards let a payload of ten thousand entries pay ten
 	// thousand element decodes -- each through DocumentSource's own gate --
 	// and as many byte copies before the bound saw any of them.
-	// A repeated "sources" key would give each occurrence its own decode
-	// budget, since encoding/json calls the field decoder once per
-	// occurrence and keeps the last. Bomly never writes a duplicate key, so
-	// one is structure the payload should not have, and it is refused
-	// before any array is decoded rather than letting the bound be paid
-	// once per copy.
-	if err := rejectRepeatedTopLevelKey(data, "sources"); err != nil {
-		return err
-	}
 	var wire struct {
 		documentAssertionsWire
 		Sources boundedDocumentSources `json:"sources,omitempty"`
@@ -512,57 +503,9 @@ func (d *DocumentAssertions) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	assertions := DocumentAssertions(wire.documentAssertionsWire)
-	assertions.Sources = []DocumentSource(wire.Sources)
+	assertions.Sources = wire.Sources.sources
 	normalized, _ := assertions.Normalized()
 	*d = normalized
-	return nil
-}
-
-// rejectRepeatedTopLevelKey fails when an object names key more than once
-// at its top level. It walks the tokens of an already syntax-checked value
-// without copying any of it -- encoding/json validated the whole document
-// before this decoder was reached -- so the walk is the one pass the outer
-// decoder makes anyway. A value that is not an object is left for the outer
-// decoder to reject.
-func rejectRepeatedTopLevelKey(data []byte, key string) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	opening, err := decoder.Token()
-	if err != nil || opening != json.Delim('{') {
-		return nil
-	}
-	seen := false
-	for decoder.More() {
-		name, err := decoder.Token()
-		if err != nil {
-			return nil
-		}
-		if name == key {
-			if seen {
-				return fmt.Errorf("document assertions: %q key repeated", key)
-			}
-			seen = true
-		}
-		// Skip the value, tracking nesting so a nested object's keys are
-		// not mistaken for top-level ones.
-		depth := 0
-		for {
-			token, err := decoder.Token()
-			if err != nil {
-				return nil
-			}
-			if delim, ok := token.(json.Delim); ok {
-				switch delim {
-				case '{', '[':
-					depth++
-				case '}', ']':
-					depth--
-				}
-			}
-			if depth == 0 {
-				break
-			}
-		}
-	}
 	return nil
 }
 
@@ -573,18 +516,35 @@ func rejectRepeatedTopLevelKey(data []byte, key string) error {
 // field decodes and which no field-level decoder can avoid; that pass is
 // bounded by whatever bounds the payload itself. Stopping early is safe for
 // the same reason: the outer pass has already validated the array's syntax.
-type boundedDocumentSources []DocumentSource
+//
+// It also refuses to decode twice. encoding/json calls a field's decoder
+// once per occurrence of its key, on the same field value, keeping the
+// last -- so a payload repeating "sources" would pay the bound once per
+// copy. Bomly never writes a duplicate key, so the second call is refused.
+// Carrying that in the decoder's own state costs nothing; a pre-scan of the
+// object for the repeated key walked every token of the array first, which
+// reintroduced work proportional to the payload the bound exists to avoid.
+// TestDocumentSourcesAreGatedAndUnion pins that encoding/json does hand the
+// second occurrence to the same value, so a change there fails loudly.
+type boundedDocumentSources struct {
+	sources []DocumentSource
+	decoded bool
+}
 
-// UnmarshalJSON reads at most maxDocumentSources elements. A null array is
-// no sources.
+// UnmarshalJSON reads at most maxDocumentSources elements, once. A null
+// array is no sources.
 func (s *boundedDocumentSources) UnmarshalJSON(data []byte) error {
+	if s.decoded {
+		return fmt.Errorf("document assertions: \"sources\" key repeated")
+	}
+	s.decoded = true
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	opening, err := decoder.Token()
 	if err != nil {
 		return fmt.Errorf("document sources: %w", err)
 	}
 	if opening == nil {
-		*s = nil
+		s.sources = nil
 		return nil
 	}
 	if delim, ok := opening.(json.Delim); !ok || delim != '[' {
@@ -598,7 +558,7 @@ func (s *boundedDocumentSources) UnmarshalJSON(data []byte) error {
 		}
 		out = append(out, source)
 	}
-	*s = out
+	s.sources = out
 	return nil
 }
 

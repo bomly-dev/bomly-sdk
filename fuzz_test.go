@@ -1007,12 +1007,6 @@ func FuzzDocumentAssertionsJSON(f *testing.F) {
 		if len(decoded.Sources) > maxDocumentSources {
 			t.Fatalf("decoded %d sources, past the bound %d", len(decoded.Sources), maxDocumentSources)
 		}
-		// A repeated top-level sources key never decodes; the walk that
-		// finds it must agree with the outer decoder about what is top
-		// level, so it is exercised on the same bytes.
-		if err := rejectRepeatedTopLevelKey(raw, "sources"); err != nil {
-			t.Fatalf("decoded a payload the duplicate-key walk rejects: %s", raw)
-		}
 		encoded, err := json.Marshal(decoded)
 		if err != nil {
 			t.Fatalf("re-encode failed: %v", err)
