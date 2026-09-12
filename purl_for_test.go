@@ -115,3 +115,23 @@ func TestBuildPackageURLForRefusesAnAmbiguousEcosystemWithoutItsManager(t *testi
 			"whose managers all agree")
 	}
 }
+
+// A manager that names no registry for this ecosystem is not a manager for
+// these purposes. PackageManagerOther belongs to EcosystemOther and
+// PackageManagerMultiple to none, so both would satisfy a "did you pass one?"
+// check while answering nothing about which registry a package came from.
+func TestBuildPackageURLForRequiresAManagerOfThatEcosystem(t *testing.T) {
+	for _, manager := range []PackageManager{PackageManagerUnknown, PackageManagerOther, PackageManagerMultiple} {
+		if got := BuildPackageURLFor(EcosystemSwift, manager, "ns", "pkg", "1"); got != "" {
+			t.Errorf("swift with manager %q minted %q; that manager belongs to %q, so it cannot say "+
+				"whether this is SwiftPM or CocoaPods", manager, got, manager.Ecosystem())
+		}
+	}
+	// The two that do belong still answer, and answer differently.
+	swiftpm := BuildPackageURLFor(EcosystemSwift, PackageManagerSwiftPM, "ns", "pkg", "1")
+	cocoapods := BuildPackageURLFor(EcosystemSwift, PackageManagerCocoaPods, "", "pkg", "1")
+	if swiftpm == "" || cocoapods == "" || swiftpm == cocoapods {
+		t.Errorf("swiftpm = %q, cocoapods = %q; both belong to the swift ecosystem and must mint "+
+			"distinct identities", swiftpm, cocoapods)
+	}
+}
