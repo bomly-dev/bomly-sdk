@@ -113,6 +113,28 @@ var requiredWireFields = map[string]string{
 	"RemediationStrategyHint.Action":                      "grandfathered",
 }
 
+// hasJSONOption reports whether a json tag's option list contains exactly this
+// option.
+//
+// A substring test is not the same question: "notomitempty" contains
+// "omitempty", and encoding/json ignores the unknown option, so the field is
+// emitted while a substring check calls it optional. A mistyped tag would then
+// change the wire schema with this guard reporting nothing -- the exact
+// failure this file exists to prevent, in the file that prevents it.
+//
+// Split by hand because the standard library keeps its own tag parser
+// (encoding/json's tagOptions) unexported, and reflect.StructTag only hands
+// back the raw value. There is no authority to delegate to for the option
+// list, and the grammar is one comma-separated string.
+func hasJSONOption(options, want string) bool {
+	for option := range strings.SplitSeq(options, ",") {
+		if option == want {
+			return true
+		}
+	}
+	return false
+}
+
 // ownsItsEncoding reports whether a type marshals itself, in which case its
 // struct tags describe nothing: the wire shape is whatever MarshalJSON emits.
 // DependencyNode is the case that matters here -- ADR-0041 gives it a codec of
@@ -197,13 +219,13 @@ func TestWireV1ReachableFieldsCarryOmitEmpty(t *testing.T) {
 			}
 			key := typ.Name() + "." + field.Name
 			if reason, exempt := requiredWireFields[key]; exempt {
-				if strings.Contains(options, "omitempty") {
+				if hasJSONOption(options, "omitempty") {
 					t.Errorf("%s is listed as always sent (%s) but carries omitempty; "+
 						"the list and the tag disagree, so one of them is wrong", key, reason)
 				}
 				continue
 			}
-			if !strings.Contains(options, "omitempty") {
+			if !hasJSONOption(options, "omitempty") {
 				t.Errorf("%s is a v1 wire field without omitempty: the tag is the wire schema, so a "+
 					"consumer generating one by reflection now reads it as required. Add omitempty, or "+
 					"add %q to requiredWireFields with the reason it is always sent.", key, key)
@@ -261,6 +283,29 @@ func TestRequiredWireFieldsAreAllReachable(t *testing.T) {
 		if !present[key] {
 			t.Errorf("requiredWireFields exempts %q, which is not reachable from any v1 wire root; "+
 				"drop the entry, or the day it returns it returns unchecked", key)
+		}
+	}
+}
+
+// The option test itself, pinned on the shapes that motivated it. A rule about
+// exact matching is worth nothing if nobody has seen it reject a near miss.
+func TestJSONOptionMatchingIsExact(t *testing.T) {
+	for _, testCase := range []struct {
+		options string
+		want    bool
+		why     string
+	}{
+		{"omitempty", true, "the option alone"},
+		{"string,omitempty", true, "after another option"},
+		{"omitempty,string", true, "before another option"},
+		{"", false, "no options at all"},
+		{"string", false, "a different option"},
+		{"notomitempty", false, "encoding/json ignores this, so the field is emitted"},
+		{"omitemptyish", false, "a longer option that starts the same way"},
+		{"omitzero", false, "the neighbouring option, which means something else"},
+	} {
+		if got := hasJSONOption(testCase.options, "omitempty"); got != testCase.want {
+			t.Errorf("hasJSONOption(%q) = %v, want %v -- %s", testCase.options, got, testCase.want, testCase.why)
 		}
 	}
 }
