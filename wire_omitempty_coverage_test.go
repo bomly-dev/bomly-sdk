@@ -116,6 +116,73 @@ var alwaysSentKeys = map[string]string{
 	"Subproject.executionTarget":                            "grandfathered",
 }
 
+// intentionallyRequired are the keys whose FIELD should carry no omitempty:
+// the schema says required, and the tag should say so too.
+//
+// This is a strict subset of alwaysSentKeys, and the difference is the point.
+// A key is in alwaysSentKeys when a zero value emits it, which happens for two
+// unrelated reasons: the field has no marker, or the field has one and
+// encoding/json ignores it because the value is a struct. Only the first is a
+// statement about the tag. Treating them alike would exempt every struct-valued
+// field from the tag rule, and those are exactly the fields whose marker can be
+// dropped without moving a byte -- the regression that started this thread.
+var intentionallyRequired = map[string]string{
+	"AnalyzeRequest.analyzerFilter":                         "the field carries no marker today",
+	"AnalyzeRequest.executionTarget":                        "the field carries no marker today",
+	"AnalyzeRequest.query":                                  "the field carries no marker today",
+	"AnalyzeRequest.subprojectInfo":                         "the field carries no marker today",
+	"AnalyzerDescriptor.name":                               "the field carries no marker today",
+	"ApplicableResponse.applicable":                         "the field carries no marker today",
+	"AuditRequest.auditorFilter":                            "the field carries no marker today",
+	"AuditRequest.executionTarget":                          "the field carries no marker today",
+	"AuditRequest.query":                                    "the field carries no marker today",
+	"AuditRequest.subprojectInfo":                           "the field carries no marker today",
+	"AuditorDescriptor.name":                                "the field carries no marker today",
+	"CallPath.sink":                                         "the field carries no marker today",
+	"DependencyDetailTransition.after":                      "the field carries no marker today",
+	"DependencyDetailTransition.afterRegistryEligible":      "the field carries no marker today",
+	"DependencyDetailTransition.before":                     "the field carries no marker today",
+	"DependencyDetailTransition.beforeRegistryEligible":     "the field carries no marker today",
+	"DependencyDetailTransition.changedFields":              "the field carries no marker today",
+	"DetectionRequest.detectorFilter":                       "the field carries no marker today",
+	"DetectionRequest.executionTarget":                      "the field carries no marker today",
+	"DetectionRequest.query":                                "the field carries no marker today",
+	"DetectionRequest.subproject":                           "the field carries no marker today",
+	"DetectionResult.rootExecutionTarget":                   "the field carries no marker today",
+	"DetectionResult.subprojectInfo":                        "the field carries no marker today",
+	"DetectorDescriptor.name":                               "the field carries no marker today",
+	"DetectorWarning.message":                               "the field carries no marker today",
+	"DetectorWarning.type":                                  "the field carries no marker today",
+	"EPSSScore.epss":                                        "the field carries no marker today",
+	"Finding.id":                                            "the field carries no marker today",
+	"Finding.kind":                                          "the field carries no marker today",
+	"GraphEntry.manifest":                                   "the field carries no marker today",
+	"MatchRequest.executionTarget":                          "the field carries no marker today",
+	"MatchRequest.matcherFilter":                            "the field carries no marker today",
+	"MatchRequest.query":                                    "the field carries no marker today",
+	"MatchRequest.subprojectInfo":                           "the field carries no marker today",
+	"MatcherDescriptor.name":                                "the field carries no marker today",
+	"MatcherStats.name":                                     "the field carries no marker today",
+	"PackageManagerSupport.packageManager":                  "the field carries no marker today",
+	"PackageRemediation.status":                             "the field carries no marker today",
+	"PackageRemediationSuggestion.action":                   "the field carries no marker today",
+	"PackageRemediationSuggestion.affected_dependency_refs": "the field carries no marker today",
+	"PackageScorecard.aggregateScore":                       "the field carries no marker today",
+	"PackageScorecardCheck.name":                            "the field carries no marker today",
+	"PackageScorecardCheck.score":                           "the field carries no marker today",
+	"Reachability.status":                                   "the field carries no marker today",
+	"ReachabilityEvidence.status":                           "the field carries no marker today",
+	"ReadyResponse.ready":                                   "the field carries no marker today",
+	"RemediationHint.dependencyRef":                         "the field carries no marker today",
+	"RemediationHintRequest.detection":                      "the field carries no marker today",
+	"RemediationStrategyHint.action":                        "the field carries no marker today",
+	"ResolutionFallback.from":                               "the field carries no marker today",
+	"ResolutionMetadata.install_executed":                   "the field carries no marker today",
+	"RiskScore.score":                                       "the field carries no marker today",
+	"Subproject.executionTarget":                            "the field carries no marker today",
+	"Vulnerability.id":                                      "the field carries no marker today",
+}
+
 // A zero value of every type on the v1 wire emits only declared keys.
 //
 // This asks the encoder, not the struct tags. Four review rounds found four
@@ -186,9 +253,17 @@ func TestWireV1TaggedFieldsDeclareOmitEmpty(t *testing.T) {
 				continue // not on the wire, or an embed contributing its own fields
 			}
 			key := typ.Name() + "." + name
-			if _, declared := alwaysSentKeys[key]; declared {
+			if _, required := intentionallyRequired[key]; required {
 				continue
 			}
+			// Deliberately NOT exempt for being in alwaysSentKeys. A key
+			// lands there for two different reasons, and only one of them
+			// says anything about the tag: a field the encoder emits
+			// regardless -- a struct value, where omitempty is a no-op --
+			// still has a marker to lose, and losing it still changes the
+			// schema a reflection-based consumer generates. Exempting it
+			// here because the bytes cannot see the loss is how that
+			// regression walks back in.
 			if !hasJSONOption(options, "omitempty") {
 				t.Errorf("%s is tagged without omitempty: a consumer generating a schema by reflection "+
 					"reads the key as required even where the bytes happen to match. Add omitempty, or "+
@@ -318,8 +393,13 @@ func TestZeroValueRuleSeesEveryWayAKeyArrives(t *testing.T) {
 		{"a missing marker emits", struct {
 			A string `json:"a"`
 		}{}, []string{"a"}},
+		// staticcheck SA5008 rejects an unknown tag option, which is a
+		// stronger guard than this fixture for this one shape: it fails at
+		// lint time rather than at test time. The fixture stays anyway,
+		// because it pins what the *encoder* does with a malformed option,
+		// and a lint rule can be disabled where the wire cannot.
 		{"a mistyped marker emits, because encoding/json ignores the option", struct {
-			A string `json:"a,notomitempty"`
+			A string `json:"a,notomitempty"` //nolint:staticcheck // the malformed option is the fixture
 		}{}, []string{"a"}},
 		{"an untagged exported field emits under its Go name", struct {
 			A string
