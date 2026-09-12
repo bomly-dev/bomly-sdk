@@ -18,7 +18,7 @@ type PackageScorecard struct {
 	// the run.
 	ScorecardVersion string `json:"scorecardVersion,omitempty"`
 	// RunDate is when the run was performed.
-	RunDate time.Time `json:"runDate"`
+	RunDate time.Time `json:"runDate,omitempty"`
 	// AggregateScore is the overall Scorecard aggregate, 0.0–10.0.
 	// A negative value (typically -1) indicates "unscored".
 	AggregateScore float64 `json:"aggregateScore"`
