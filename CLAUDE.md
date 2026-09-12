@@ -189,29 +189,36 @@ branch.
   algorithm. Any unavoidable custom implementation documents why the upstream
   path is insufficient and ships differential or fixture tests plus fuzzing.
 
-### The modernizer, and the one analyzer we decline
+### The modernizer, and the analyzers we decline
 
-`go fix ./...` is the Go 1.27 modernizer and is worth running. One of its
-analyzers is declined in this repository and in bomly-cli, and the two must
-keep agreeing:
+`go fix ./...` is the Go 1.27 modernizer. It **applies** its rewrites in place;
+`go fix -diff ./...` prints them instead, which is how to look first.
+
+Two of its analyzers are declined here. Run it as:
 
 ```sh
-go fix -embedlit=false ./...
+go fix -embedlit=false -omitzero=false ./...
 ```
 
-`embedlit` flattens `Coordinates: Coordinates{...}` into the bare promoted
-fields at construction sites. It is behaviour-identical and `gorelease` is
-indifferent, so nothing mechanical will object -- which is the reason to write
-the decision down. Coordinates is a named identity concept (ADR-0041), and the
-wrapper at a construction site is what makes the identity visible where a
-package is built. That argument is strongest in this module, because this is
-where identity is defined.
+- **`embedlit`** flattens `Coordinates: Coordinates{...}` into the bare
+  promoted fields at construction sites. It is behaviour-identical and
+  `gorelease` is indifferent, so nothing mechanical will object -- which is the
+  reason to write the decision down. Coordinates is a named identity concept
+  (ADR-0041), and the wrapper at a construction site is what makes the identity
+  visible where a package is built. That argument is strongest in this module,
+  because this is where identity is defined. bomly-cli declines it too, and the
+  two must keep agreeing: they disagreed once, and reverting cost 43 hunks.
+- **`omitzero`** drops `omitempty` from struct-valued JSON fields. The encoded
+  bytes do not move -- `encoding/json` never omits a struct -- so no test and
+  no API gate objects. But the tag *is* the wire schema for `bomly.plugin.v1`
+  (see the compatibility contract above), and a consumer generating a schema by
+  reflection then reads the field as required. This pass took that rewrite and
+  it cost four review rounds to undo; the markers it would delete are back on
+  `MatchResult.MatcherStats`, `PackageScorecard.RunDate` and
+  `CallFrame.Position`, and `go fix ./...` unqualified deletes them again.
 
-The two repositories disagreed on this once already: the CLI's modernizer pass
-rejected the analyzer and this module's applied it, which put the same question
-on record with two different answers. Reverting cost 43 hunks. Running
-`go fix ./...` without the flag will silently propose all of them again.
-
+Neither is caught by a test, a linter or the API gate, which is exactly why the
+list lives here.
 ## Build & test
 
 ```sh
