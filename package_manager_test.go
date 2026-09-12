@@ -203,7 +203,7 @@ func TestPackageURLTypeForEcosystemAlone(t *testing.T) {
 		EcosystemErlang: true,
 	}
 	specTypes := map[string]bool{
-		"apk": true, "cargo": true, "cocoapods": true, "composer": true,
+		"apk": true, "brew": true, "cargo": true, "cocoapods": true, "composer": true,
 		"conan": true, "cran": true, "deb": true, "gem": true,
 		"githubactions": true, "golang": true, "hackage": true, "hex": true,
 		"maven": true, "npm": true, "nuget": true, "opam": true, "otp": true,
@@ -218,7 +218,8 @@ func TestPackageURLTypeForEcosystemAlone(t *testing.T) {
 		withManager := PackageURLTypeForValues(ecosystem, manager)
 		if !specTypes[withManager] {
 			// Ecosystems Bomly reports but the purl spec has no type for
-			// (conda, homebrew, nix, ...) are out of scope here.
+			// (conda, nix, ...) are out of scope here. Homebrew is not one
+			// of them: the spec's type is brew (bomly-sdk#75).
 			continue
 		}
 		if got := PackageURLTypeForValues(ecosystem); got != withManager {

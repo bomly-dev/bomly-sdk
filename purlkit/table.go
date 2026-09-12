@@ -39,7 +39,23 @@ func TypeForValues(values ...string) string {
 		case "swiftpm":
 			return "swift"
 		case "github-actions", "githubactions":
+			// A documented deviation, not a spec type. The specification
+			// defines pkg:github, and that names a repository -- a source
+			// checkout -- which is a different thing from an Action a
+			// workflow depends on. Bomly and Syft both key Actions on
+			// pkg:githubactions, and OSV has no GitHub Actions ecosystem
+			// for either spelling to match, so the row stays as it is and
+			// the departure is recorded here and in the root package's
+			// specTypesOutsideTheEcosystemVocabulary.
 			return "githubactions"
+		case "homebrew", "brew":
+			// The specification's Homebrew type is pkg:brew
+			// (testdata/purl-spec/types/brew-definition.json: "type":
+			// "brew", examples pkg:brew/sqlite@3.43.2); Bomly's ecosystem
+			// token is homebrew. Without this row the verbatim fallback
+			// minted the non-spec pkg:homebrew, which no advisory or SBOM
+			// consumer keyed on the type could match (bomly-sdk#75).
+			return "brew"
 		case "conan", "cpp":
 			return "conan"
 		case "mix", "hex", "elixir", "rebar":
@@ -110,10 +126,11 @@ var purlTypeEcosystems = map[string]string{
 	"golang": "go",
 	// The specification's Homebrew type is pkg:brew; Bomly's token is
 	// homebrew. Its absence here was an omission, not a decision: a
-	// document carrying pkg:brew ingested with no ecosystem at all. Note
-	// that the mint direction still emits the non-spec pkg:homebrew --
-	// correcting that changes minted identities, so it is tracked
-	// separately.
+	// document carrying pkg:brew ingested with no ecosystem at all. The
+	// mint direction agrees since bomly-sdk#75 (TypeForValues answers
+	// "brew" for the homebrew token); the alias table below still resolves
+	// the legacy pkg:homebrew type so documents minted before that change
+	// keep ingesting with their ecosystem.
 	"brew": "homebrew",
 	// pkg:otp, unlike pkg:hex, names exactly one ecosystem.
 	"otp":           "erlang",
@@ -178,7 +195,10 @@ var canonicalEcosystems = map[string]string{
 	"github-actions": "github-actions", "githubactions": "github-actions",
 	"lua": "lua", "luarocks": "lua",
 	"prolog": "prolog", "swipl-pack": "prolog",
-	"alpm": "alpm", "apk": "apk", "conda": "conda", "homebrew": "homebrew",
+	// "brew" is the specification's Homebrew type and what the homebrew
+	// token now mints; "homebrew" stays so a bare pkg:homebrew from a
+	// document minted before bomly-sdk#75 still resolves to its ecosystem.
+	"alpm": "alpm", "apk": "apk", "conda": "conda", "homebrew": "homebrew", "brew": "homebrew",
 	"nix": "nix", "portage": "portage", "rpm": "rpm", "sbom": "sbom",
 	"snap": "snap", "terraform": "terraform", "wordpress": "wordpress",
 	"other": "other",
