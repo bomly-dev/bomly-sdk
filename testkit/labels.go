@@ -1,6 +1,7 @@
 package testkit
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -156,10 +157,8 @@ func nodeMatchesLabel(node sdk.GraphNode, name, version string, loose bool) bool
 	}
 	actual := []string{coords.Name, coords.EcosystemName(), coords.DisplayName()}
 	for _, want := range labelSpellings(name, loose) {
-		for _, got := range actual {
-			if got == want {
-				return true
-			}
+		if slices.Contains(actual, want) {
+			return true
 		}
 	}
 	return false

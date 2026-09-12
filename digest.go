@@ -3,7 +3,7 @@ package sdk
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -162,7 +162,7 @@ func DigestAlgorithms() []DigestAlgorithm {
 	for _, profile := range digestAlgorithmProfiles {
 		algorithms = append(algorithms, profile.canonical)
 	}
-	sort.Slice(algorithms, func(i, j int) bool { return algorithms[i] < algorithms[j] })
+	slices.Sort(algorithms)
 	return algorithms
 }
 

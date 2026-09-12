@@ -1,6 +1,7 @@
 package sdk
 
 import (
+	"maps"
 	"sort"
 	"strings"
 )
@@ -72,8 +73,6 @@ func mergeMetadataPreservingReserved(constructed, caller map[string]any) map[str
 		}
 		merged[key] = value
 	}
-	for key, value := range constructed {
-		merged[key] = value
-	}
+	maps.Copy(merged, constructed)
 	return merged
 }

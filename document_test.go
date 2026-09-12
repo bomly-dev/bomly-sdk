@@ -483,7 +483,7 @@ func TestDocumentSourcesAreGatedAndUnion(t *testing.T) {
 	// The bound is applied to the input, before any gate runs: entries past
 	// it are not read at all, even when the ones before it are junk.
 	many := make([]DocumentSource, 0, maxDocumentSources+10)
-	for i := 0; i < maxDocumentSources+10; i++ {
+	for i := range maxDocumentSources + 10 {
 		many = append(many, DocumentSource{Identity: "https://example.test/spdxdocs/src-" + strconv.Itoa(i)})
 	}
 	bounded, _ := DocumentAssertions{Sources: many}.Normalized()
@@ -530,7 +530,7 @@ func TestDocumentSourcesAreGatedAndUnion(t *testing.T) {
 	// either way round, rather than to whichever operand came first.
 	fullA := make([]DocumentSource, 0, maxDocumentSources)
 	fullB := make([]DocumentSource, 0, maxDocumentSources)
-	for i := 0; i < maxDocumentSources; i++ {
+	for i := range maxDocumentSources {
 		fullA = append(fullA, DocumentSource{Identity: "https://a.test/spdxdocs/" + strconv.Itoa(i)})
 		fullB = append(fullB, DocumentSource{Identity: "https://b.test/spdxdocs/" + strconv.Itoa(i)})
 	}
@@ -556,7 +556,7 @@ func TestDocumentSourcesAreGatedAndUnion(t *testing.T) {
 	// payload of many sources costs at most the bound in element decodes.
 	var payload strings.Builder
 	payload.WriteString(`{"identity":"` + self + `","sources":[`)
-	for i := 0; i < maxDocumentSources+50; i++ {
+	for i := range maxDocumentSources + 50 {
 		if i > 0 {
 			payload.WriteString(",")
 		}

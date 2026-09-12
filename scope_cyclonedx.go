@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -258,7 +259,7 @@ func DecodeScopeSetLenient(value string) (ScopeSetDecoding, error) {
 		return ScopeSetDecoding{}, nil
 	}
 	var decoded ScopeSetDecoding
-	for _, field := range strings.Split(trimmed, ",") {
+	for field := range strings.SplitSeq(trimmed, ",") {
 		// An empty field is malformed, not absent. ParseScope reads "" as
 		// ScopeUnknown with no error -- correct for a detector that has
 		// nothing to say, wrong here, where a separator with nothing after it
@@ -283,7 +284,7 @@ func DecodeScopeSetLenient(value string) (ScopeSetDecoding, error) {
 			decoded.Scopes = append(decoded.Scopes, scope)
 		}
 	}
-	sort.Slice(decoded.Scopes, func(i, j int) bool { return decoded.Scopes[i] < decoded.Scopes[j] })
+	slices.Sort(decoded.Scopes)
 	return decoded, nil
 }
 
@@ -387,20 +388,10 @@ func ScopesFromCycloneDXComponent(scope, carrier string) []Scope {
 
 // containsScope reports whether a scope is already in a set.
 func containsScope(scopes []Scope, scope Scope) bool {
-	for _, existing := range scopes {
-		if existing == scope {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(scopes, scope)
 }
 
 // containsString reports whether a token is already in a slice.
 func containsString(values []string, value string) bool {
-	for _, existing := range values {
-		if existing == value {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, value)
 }

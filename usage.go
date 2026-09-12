@@ -2,7 +2,7 @@ package sdk
 
 import (
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -40,7 +40,7 @@ func (n *DependencyNode) LocationScopes() []Scope {
 			union = append(union, scope)
 		}
 	}
-	sort.Slice(union, func(i, j int) bool { return union[i] < union[j] })
+	slices.Sort(union)
 	return union
 }
 

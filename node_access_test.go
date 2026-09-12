@@ -153,7 +153,7 @@ func TestNodeAccessorsReadEachKind(t *testing.T) {
 // the loss this constructor exists to prevent.
 func TestNewDependencyNodeFromCarriesEveryStatedField(t *testing.T) {
 	proto := DependencyNode{
-		Coordinates:  Coordinates{Ecosystem: EcosystemNPM, Name: "left-pad", Version: "1.3.0"},
+		Ecosystem: EcosystemNPM, Name: "left-pad", Version: "1.3.0",
 		Relationship: DependencyRelationshipDirect,
 		Source:       DependencySourceRegistry,
 		Scopes:       ScopesOf(ScopeRuntime),
@@ -221,8 +221,8 @@ func TestNewDependencyNodeFromCarriesEveryStatedField(t *testing.T) {
 // reads.
 func TestNewDependencyNodeFromDerivesPackageRefFromTheIdentity(t *testing.T) {
 	node, err := NewDependencyNodeFrom(DependencyNode{
-		Coordinates: Coordinates{Ecosystem: EcosystemNPM, Name: "left-pad", Version: "1.3.0"},
-		PackageRef:  "pkg:npm/some-other-package@9.9.9",
+		Ecosystem: EcosystemNPM, Name: "left-pad", Version: "1.3.0",
+		PackageRef: "pkg:npm/some-other-package@9.9.9",
 	})
 	if err != nil {
 		t.Fatalf("NewDependencyNodeFrom() error = %v", err)
@@ -496,7 +496,7 @@ func TestGenericFallbackIdentityKeepsItsEcosystemWhenReconstructed(t *testing.T)
 // construction reached into a node already built.
 func TestNewDependencyNodeFromDeepCopiesLocations(t *testing.T) {
 	proto := DependencyNode{
-		Coordinates: Coordinates{Ecosystem: EcosystemNPM, Name: "left-pad", Version: "1.3.0"},
+		Ecosystem: EcosystemNPM, Name: "left-pad", Version: "1.3.0",
 		Locations: []PackageLocation{{
 			RealPath:   "package-lock.json",
 			AccessPath: "package-lock.json",
@@ -548,7 +548,7 @@ func TestNewDependencyNodeFromPreservesConstructorDerivedState(t *testing.T) {
 
 	// The provenance breadcrumbs match what the plain constructor records.
 	normalized, err := NewDependencyNodeFrom(DependencyNode{
-		Coordinates: Coordinates{Ecosystem: EcosystemNPM, Name: "Left-Pad", Version: "1.3.0"},
+		Ecosystem: EcosystemNPM, Name: "Left-Pad", Version: "1.3.0",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -568,7 +568,7 @@ func TestNewDependencyNodeFromPreservesConstructorDerivedState(t *testing.T) {
 	// A key the constructor does not itself write, so the guard is what keeps
 	// it out rather than the constructor's own value landing on top.
 	hijacked, err := NewDependencyNodeFrom(DependencyNode{
-		Coordinates: Coordinates{Ecosystem: EcosystemNPM, Name: "Left-Pad", Version: "1.3.0"},
+		Ecosystem: EcosystemNPM, Name: "Left-Pad", Version: "1.3.0",
 		Metadata: map[string]any{
 			normMetadataOriginalVersionKey: "fabricated",
 			"producer.note":                "kept",

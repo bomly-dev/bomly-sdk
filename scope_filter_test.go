@@ -229,8 +229,8 @@ func TestFilterDetectionResultByScope_FiltersEntryPackages(t *testing.T) {
 			Graph:    depsGraph,
 			Manifest: ManifestMetadata{Path: "package-lock.json"},
 			Packages: []*Package{
-				{Coordinates: Coordinates{PURL: BuildPackageURL("npm", "", "react", "18.2.0")}},
-				{Coordinates: Coordinates{PURL: BuildPackageURL("npm", "", "vitest", "2.0.0")}},
+				{PURL: BuildPackageURL("npm", "", "react", "18.2.0")},
+				{PURL: BuildPackageURL("npm", "", "vitest", "2.0.0")},
 			},
 		}}},
 	}

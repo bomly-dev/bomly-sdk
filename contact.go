@@ -359,7 +359,7 @@ func stripAddressTokens(value string) string {
 		return value
 	}
 	kept := make([]string, 0, 4)
-	for _, field := range strings.Fields(value) {
+	for field := range strings.FieldsSeq(value) {
 		if strings.Contains(field, "@") {
 			continue
 		}

@@ -3,6 +3,7 @@ package sdk
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"reflect"
 	"strconv"
 	"strings"
@@ -97,8 +98,7 @@ func schemaForType(t reflect.Type, seen map[reflect.Type]bool) (map[string]any, 
 		seen[t] = true
 		defer delete(seen, t)
 		properties := map[string]any{}
-		for i := 0; i < t.NumField(); i++ {
-			field := t.Field(i)
+		for field := range t.Fields() {
 			if !field.IsExported() {
 				continue
 			}
@@ -112,9 +112,7 @@ func schemaForType(t reflect.Type, seen map[reflect.Type]bool) (map[string]any, 
 					return nil, err
 				}
 				if embeddedProps, ok := embedded["properties"].(map[string]any); ok {
-					for key, value := range embeddedProps {
-						properties[key] = value
-					}
+					maps.Copy(properties, embeddedProps)
 				}
 				continue
 			}

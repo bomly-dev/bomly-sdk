@@ -3,6 +3,7 @@ package sdk
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"path"
 	"sort"
 	"strings"
@@ -178,9 +179,7 @@ func (w *nodeWire) decodeDependencyNode() (*DependencyNode, error) {
 		if node.Metadata == nil {
 			node.Metadata = make(map[string]any, len(w.Metadata))
 		}
-		for key, value := range w.Metadata {
-			node.Metadata[key] = value
-		}
+		maps.Copy(node.Metadata, w.Metadata)
 	}
 	node.Matched = w.Matched
 	node.PackageRef = w.PackageRef

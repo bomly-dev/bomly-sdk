@@ -51,7 +51,7 @@ func TestLicenseRefsInIsDeterministic(t *testing.T) {
 	}
 	// Map iteration order is randomized per pass, so repeating the call is
 	// what exposes an unsorted result.
-	for pass := 0; pass < 200; pass++ {
+	for pass := range 200 {
 		again := LicenseRefsIn(expression)
 		for i := range again {
 			if again[i] != first[i] {

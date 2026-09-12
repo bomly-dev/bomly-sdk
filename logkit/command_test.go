@@ -2,6 +2,7 @@ package logkit
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -97,10 +98,5 @@ func TestSanitizeURLFailsClosedAndDoesNotInspectQueryValues(t *testing.T) {
 }
 
 func containsArgument(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, want)
 }

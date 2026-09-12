@@ -8,7 +8,7 @@ import (
 
 func TestPackageRemediationCloneAndJSON(t *testing.T) {
 	original := &Package{
-		Coordinates: Coordinates{PURL: "pkg:npm/example@1.0.0"},
+		PURL: "pkg:npm/example@1.0.0",
 		Remediation: &PackageRemediation{
 			Status:             PackageRemediationComplete,
 			RecommendedVersion: "1.2.0",
@@ -57,7 +57,7 @@ func TestPackageRemediationCloneAndJSON(t *testing.T) {
 
 func TestPackageRemediationJSONOmitsEmptyValues(t *testing.T) {
 	data, err := json.Marshal(&Package{
-		Coordinates: Coordinates{PURL: "pkg:npm/example@1.0.0"},
+		PURL: "pkg:npm/example@1.0.0",
 	})
 	if err != nil {
 		t.Fatalf("Marshal() error = %v", err)
@@ -67,7 +67,7 @@ func TestPackageRemediationJSONOmitsEmptyValues(t *testing.T) {
 	}
 
 	data, err = json.Marshal(&Package{
-		Coordinates: Coordinates{PURL: "pkg:npm/example@1.0.0"},
+		PURL: "pkg:npm/example@1.0.0",
 		Remediation: &PackageRemediation{
 			Status: PackageRemediationUnknown,
 		},

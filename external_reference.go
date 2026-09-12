@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -757,12 +758,7 @@ func isCPE23Locator(value string) bool {
 	// NA ("-"). An empty one is not "unspecified" in this binding -- the
 	// binding has spellings for that -- so "cpe:2.3:a::::::::::" is malformed
 	// however well it counts.
-	for _, component := range splitUnescaped(value)[2:] {
-		if component == "" {
-			return false
-		}
-	}
-	return true
+	return !slices.Contains(splitUnescaped(value)[2:], "")
 }
 
 // isCPE22Locator reports whether a value is a CPE 2.2 URI.

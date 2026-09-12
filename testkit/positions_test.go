@@ -37,7 +37,7 @@ func (fakeLockfileDetector) ResolveGraph(_ context.Context, req sdk.DetectionReq
 	if err != nil {
 		return sdk.DetectionResult{}, err
 	}
-	for _, raw := range strings.Split(string(data), "\n") {
+	for raw := range strings.SplitSeq(string(data), "\n") {
 		line++
 		fields := strings.Fields(raw)
 		if len(fields) != 2 {

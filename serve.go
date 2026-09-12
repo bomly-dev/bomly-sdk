@@ -148,7 +148,7 @@ func (p *managedPlugin) GRPCServer(_ *hplugin.GRPCBroker, server *grpc.Server) e
 	return nil
 }
 
-func (p *managedPlugin) GRPCClient(_ context.Context, _ *hplugin.GRPCBroker, conn *grpc.ClientConn) (interface{}, error) {
+func (p *managedPlugin) GRPCClient(_ context.Context, _ *hplugin.GRPCBroker, conn *grpc.ClientConn) (any, error) {
 	return &serviceClient{conn: conn}, nil
 }
 
@@ -517,13 +517,13 @@ func registerPluginService(server *grpc.Server, impl *serviceServer) {
 	}, impl)
 }
 
-func detectHandler(srv interface{}, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func detectHandler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	return bytesHandler(srv, ctx, dec, interceptor, "/bomly.plugin.v1.Plugin/Detect", func(ctx context.Context, req *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
 		return srv.(*serviceServer).Detect(ctx, req)
 	})
 }
 
-func detectorDescriptorHandler(srv interface{}, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func detectorDescriptorHandler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(emptypb.Empty)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -537,7 +537,7 @@ func detectorDescriptorHandler(srv interface{}, ctx context.Context, dec func(an
 	return interceptor(ctx, in, &grpc.UnaryServerInfo{Server: srv, FullMethod: "/bomly.plugin.v1.Plugin/DetectorDescriptor"}, method)
 }
 
-func detectorPackageManagerSupportHandler(srv interface{}, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func detectorPackageManagerSupportHandler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(emptypb.Empty)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -551,37 +551,37 @@ func detectorPackageManagerSupportHandler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, &grpc.UnaryServerInfo{Server: srv, FullMethod: "/bomly.plugin.v1.Plugin/DetectorPackageManagerSupport"}, method)
 }
 
-func detectorReadyHandler(srv interface{}, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func detectorReadyHandler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	return bytesHandler(srv, ctx, dec, interceptor, "/bomly.plugin.v1.Plugin/DetectorReady", func(ctx context.Context, req *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
 		return srv.(*serviceServer).DetectorReady(ctx, req)
 	})
 }
 
-func detectorApplicableHandler(srv interface{}, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func detectorApplicableHandler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	return bytesHandler(srv, ctx, dec, interceptor, "/bomly.plugin.v1.Plugin/DetectorApplicable", func(ctx context.Context, req *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
 		return srv.(*serviceServer).DetectorApplicable(ctx, req)
 	})
 }
 
-func detectorInstallHandler(srv interface{}, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func detectorInstallHandler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	return bytesHandler(srv, ctx, dec, interceptor, "/bomly.plugin.v1.Plugin/DetectorInstall", func(ctx context.Context, req *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
 		return srv.(*serviceServer).DetectorInstall(ctx, req)
 	})
 }
 
-func detectorRemediationHintsHandler(srv interface{}, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func detectorRemediationHintsHandler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	return bytesHandler(srv, ctx, dec, interceptor, "/bomly.plugin.v1.Plugin/DetectorRemediationHints", func(ctx context.Context, req *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
 		return srv.(*serviceServer).DetectorRemediationHints(ctx, req)
 	})
 }
 
-func matchHandler(srv interface{}, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func matchHandler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	return bytesHandler(srv, ctx, dec, interceptor, "/bomly.plugin.v1.Plugin/Match", func(ctx context.Context, req *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
 		return srv.(*serviceServer).Match(ctx, req)
 	})
 }
 
-func matcherDescriptorHandler(srv interface{}, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func matcherDescriptorHandler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(emptypb.Empty)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -595,25 +595,25 @@ func matcherDescriptorHandler(srv interface{}, ctx context.Context, dec func(any
 	return interceptor(ctx, in, &grpc.UnaryServerInfo{Server: srv, FullMethod: "/bomly.plugin.v1.Plugin/MatcherDescriptor"}, method)
 }
 
-func matcherReadyHandler(srv interface{}, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func matcherReadyHandler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	return bytesHandler(srv, ctx, dec, interceptor, "/bomly.plugin.v1.Plugin/MatcherReady", func(ctx context.Context, req *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
 		return srv.(*serviceServer).MatcherReady(ctx, req)
 	})
 }
 
-func matcherApplicableHandler(srv interface{}, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func matcherApplicableHandler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	return bytesHandler(srv, ctx, dec, interceptor, "/bomly.plugin.v1.Plugin/MatcherApplicable", func(ctx context.Context, req *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
 		return srv.(*serviceServer).MatcherApplicable(ctx, req)
 	})
 }
 
-func auditHandler(srv interface{}, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func auditHandler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	return bytesHandler(srv, ctx, dec, interceptor, "/bomly.plugin.v1.Plugin/Audit", func(ctx context.Context, req *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
 		return srv.(*serviceServer).Audit(ctx, req)
 	})
 }
 
-func auditorDescriptorHandler(srv interface{}, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func auditorDescriptorHandler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(emptypb.Empty)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -627,20 +627,20 @@ func auditorDescriptorHandler(srv interface{}, ctx context.Context, dec func(any
 	return interceptor(ctx, in, &grpc.UnaryServerInfo{Server: srv, FullMethod: "/bomly.plugin.v1.Plugin/AuditorDescriptor"}, method)
 }
 
-func auditorReadyHandler(srv interface{}, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func auditorReadyHandler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	return bytesHandler(srv, ctx, dec, interceptor, "/bomly.plugin.v1.Plugin/AuditorReady", func(ctx context.Context, req *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
 		return srv.(*serviceServer).AuditorReady(ctx, req)
 	})
 }
 
-func auditorApplicableHandler(srv interface{}, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func auditorApplicableHandler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	return bytesHandler(srv, ctx, dec, interceptor, "/bomly.plugin.v1.Plugin/AuditorApplicable", func(ctx context.Context, req *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
 		return srv.(*serviceServer).AuditorApplicable(ctx, req)
 	})
 }
 
 func bytesHandler(
-	srv interface{},
+	srv any,
 	ctx context.Context,
 	dec func(any) error,
 	interceptor grpc.UnaryServerInterceptor,

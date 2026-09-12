@@ -1,24 +1,16 @@
 package sdk
 
+import "slices"
+
 func includesName(include []string, name string) bool {
 	if len(include) == 0 {
 		return true
 	}
-	for _, candidate := range include {
-		if candidate == name {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(include, name)
 }
 
 func excludesName(exclude []string, name string) bool {
-	for _, candidate := range exclude {
-		if candidate == name {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(exclude, name)
 }
 
 // maxMergeCapacity bounds the preallocation hint a merge may ask for. It is a
