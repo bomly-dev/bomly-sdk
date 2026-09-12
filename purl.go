@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"strings"
+	"sync"
 
 	"github.com/bomly-dev/bomly-sdk/purlkit"
 )
@@ -51,8 +52,41 @@ func BuildPackageURL(purlType, namespace, name, version string) string {
 // It is additive: BuildPackageURL keeps working for callers that genuinely
 // have only a type string, such as an SBOM ingest reading one off a document.
 func BuildPackageURLFor(ecosystem Ecosystem, manager PackageManager, namespace, name, version string) string {
+	if manager == PackageManagerUnknown && ecosystemNeedsItsPackageManager(ecosystem) {
+		// Refusing beats guessing. The ecosystem alone answers for one of
+		// its registries and is wrong for the others, and the wrong answer
+		// is a well-formed package URL that matches no advisory -- the
+		// failure mode this constructor exists to remove, arriving through
+		// a zero value instead of through a one-token call. An empty
+		// result is what BuildPackageURL already returns when there is no
+		// valid identity to mint, so callers handle it.
+		return ""
+	}
 	return BuildPackageURL(PackageURLTypeForValues(ecosystem, manager), namespace, name, version)
 }
+
+// ecosystemNeedsItsPackageManager reports whether the ecosystem alone gives a
+// different package-url type than one of its own package managers would.
+//
+// Derived, not listed. purlkit already knows which ecosystems span more than
+// one registry -- it has no "swift" case because swift is itself a purl type
+// and cocoapods is the other half, and it maps erlang at the manager level so
+// a bare erlang value cannot guess between Hex and OTP. Asking it, rather than
+// copying the answer into a table here, means an ecosystem that becomes
+// ambiguous in a later purlkit release is covered without an edit.
+var ecosystemNeedsItsPackageManager = sync.OnceValue(func() func(Ecosystem) bool {
+	ambiguous := map[Ecosystem]bool{}
+	for _, manager := range AllPackageManagers() {
+		ecosystem := manager.Ecosystem()
+		if ecosystem == "" {
+			continue
+		}
+		if PackageURLTypeForValues(ecosystem, manager) != PackageURLTypeForValues(ecosystem) {
+			ambiguous[ecosystem] = true
+		}
+	}
+	return func(ecosystem Ecosystem) bool { return ambiguous[ecosystem] }
+})()
 
 // PackageURLTypeForValues maps ecosystem/build-system values to a package-url type.
 //

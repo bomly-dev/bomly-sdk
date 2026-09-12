@@ -80,3 +80,38 @@ func TestBuildPackageURLForKeepsTheVocabularyOpen(t *testing.T) {
 			"first-class, not an error", got)
 	}
 }
+
+// An ecosystem that spans two registries refuses to answer without its
+// package manager, rather than answering for whichever registry the
+// ecosystem token happens to name.
+//
+// The zero value is the hazard here. A detector that simply forgets the
+// argument gets PackageManagerUnknown, and the one-token mapping this
+// constructor exists to prevent arrives through the back door.
+func TestBuildPackageURLForRefusesAnAmbiguousEcosystemWithoutItsManager(t *testing.T) {
+	// swift covers SwiftPM and CocoaPods; erlang covers Hex and OTP.
+	for _, ecosystem := range []Ecosystem{EcosystemSwift, "erlang"} {
+		if got := BuildPackageURLFor(ecosystem, PackageManagerUnknown, "ns", "pkg", "1"); got != "" {
+			t.Errorf("%s without a package manager minted %q; it spans more than one registry, so that "+
+				"identity is right for one of them and silently wrong for the rest", ecosystem, got)
+		}
+	}
+
+	// An unambiguous ecosystem still answers: the refusal is scoped to the
+	// case where the manager carries information, not to every missing one.
+	if got := BuildPackageURLFor(EcosystemPython, PackageManagerUnknown, "", "requests", "2"); got != "pkg:pypi/requests@2" {
+		t.Errorf("python without a manager = %q, want pkg:pypi/requests@2; python has one registry and "+
+			"refusing there would break callers for nothing", got)
+	}
+
+	// And the ambiguity is derived from purlkit, not declared here, so the
+	// predicate must agree with the thing it is derived from.
+	if !ecosystemNeedsItsPackageManager(EcosystemSwift) {
+		t.Error("swift is not detected as needing its manager; the derivation has stopped seeing " +
+			"purlkit's cocoapods/swiftpm split")
+	}
+	if ecosystemNeedsItsPackageManager(EcosystemPython) {
+		t.Error("python is detected as needing its manager; the derivation is reporting ecosystems " +
+			"whose managers all agree")
+	}
+}
