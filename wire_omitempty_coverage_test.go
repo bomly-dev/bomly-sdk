@@ -4,131 +4,218 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 )
 
-// requiredWireFields are the v1 payload fields deliberately sent even when
-// zero, keyed as "Type.Field".
+// wireRoots are the payloads serve.go encodes and decodes for bomly.plugin.v1.
 //
-// The list is inverted on purpose. TestWireV1NewFieldsAreOmitEmpty enumerates
-// the field names it forbids, so a field nobody adds to that list is not
-// checked at all -- AGENTS.md says as much, and the go1.27 modernizer pass
-// proved it by deleting omitempty from three exported wire fields with every
-// test green. A list of what is checked is a list somebody has to remember;
-// a list of what is exempt is a list a reviewer sees grow.
-//
-// Adding an entry here means asserting that consumers should treat the field
-// as always present. That is a wire decision, so it should be an edit someone
-// argues for rather than a silence.
-var requiredWireFields = map[string]string{
-	"MatcherDescriptor.Name":  "a descriptor without a name cannot be routed to",
-	"AnalyzerDescriptor.Name": "a descriptor without a name cannot be routed to",
-	"DetectorDescriptor.Name": "a descriptor without a name cannot be routed to",
-	"AuditorDescriptor.Name":  "a descriptor without a name cannot be routed to",
-
-	// Grandfathered. These predate the rule and were found by this test on
-	// its first run, not introduced by it. They are recorded as they are,
-	// which is not the same as endorsed: adding omitempty to any of them is
-	// a wire change, and a wire change does not belong in a modernizer pass.
-	//
-	// Worth a deliberate look of their own -- the request fields plausibly
-	// are always sent, and AggregateScore plausibly means something at zero,
-	// but "plausibly" is the reason this list exists rather than a silence.
-	// See bomly-sdk#78.
-	"MatchRequest.ExecutionTarget":    "grandfathered: sent on every request today",
-	"MatchRequest.SubprojectInfo":     "grandfathered: sent on every request today",
-	"MatchRequest.Query":              "grandfathered: sent on every request today",
-	"MatchRequest.MatcherFilter":      "grandfathered: sent on every request today",
-	"AnalyzeRequest.ExecutionTarget":  "grandfathered: sent on every request today",
-	"AnalyzeRequest.SubprojectInfo":   "grandfathered: sent on every request today",
-	"AnalyzeRequest.Query":            "grandfathered: sent on every request today",
-	"AnalyzeRequest.AnalyzerFilter":   "grandfathered: sent on every request today",
-	"PackageScorecard.AggregateScore": "grandfathered: a zero score is a score, not an absence",
+// Taken from serve.go rather than chosen, because a hand-picked root set is
+// the bug this test was rewritten to fix: the first version listed thirteen
+// types it seemed reasonable to check and reached a sixth of the wire.
+var wireRoots = []any{
+	MatchRequest{}, MatchResponse{},
+	AnalyzeRequest{}, AnalyzeResponse{},
+	DetectRequest{}, DetectResponse{},
+	AuditRequest{}, AuditResponse{},
+	ReadyResponse{}, ApplicableResponse{}, InstallResponse{},
+	RemediationHintRequest{}, RemediationHintResponse{},
+	MatcherDescriptor{}, AnalyzerDescriptor{},
+	DetectorDescriptor{}, AuditorDescriptor{},
 }
 
-// Every JSON-tagged field on a v1 wire payload carries omitempty unless it is
-// listed above.
+// requiredWireFields are the v1 fields sent even when zero, keyed "Type.Field".
+//
+// Two kinds of entry, and the difference is deliberate. Some carry a reason:
+// an identity or a discriminator whose absence would make the payload
+// unreadable, where the zero value is still an answer. The rest say
+// "grandfathered", which records what is true without claiming it was
+// decided -- they predate the rule and were found by this test's first run,
+// not introduced by it. Adding omitempty to any of them relaxes the wire
+// schema, which is a change this pass is not the place to make. bomly-sdk#78
+// tracks turning each grandfathered line into a reason or a marker.
+//
+// New entries should be rare and each should carry a real reason. A list of
+// exemptions is something a reviewer watches grow; that only works while the
+// list means something.
+var requiredWireFields = map[string]string{
+	// Identity and discriminators: the zero value is an answer, not an absence.
+	"Vulnerability.ID":                     "a vulnerability without an ID cannot be referenced",
+	"Finding.ID":                           "a finding without an ID cannot be referenced",
+	"Finding.Kind":                         "the discriminator that says how to read the finding",
+	"MatcherStats.Name":                    "stats that do not say whose they are cannot be attributed",
+	"PackageScorecardCheck.Name":           "a check without a name cannot be reported",
+	"MatcherDescriptor.Name":               "a descriptor without a name cannot be routed to",
+	"AnalyzerDescriptor.Name":              "a descriptor without a name cannot be routed to",
+	"DetectorDescriptor.Name":              "a descriptor without a name cannot be routed to",
+	"AuditorDescriptor.Name":               "a descriptor without a name cannot be routed to",
+	"PackageManagerSupport.PackageManager": "the key the support row is about",
+	// Booleans whose whole purpose is the false answer.
+	"ReadyResponse.Ready":           "false is the answer this response exists to give",
+	"ApplicableResponse.Applicable": "false is the answer this response exists to give",
+
+	// Grandfathered: recorded, not endorsed. See bomly-sdk#78.
+	"MatchRequest.ExecutionTarget":                        "grandfathered",
+	"MatchRequest.SubprojectInfo":                         "grandfathered",
+	"MatchRequest.Query":                                  "grandfathered",
+	"MatchRequest.MatcherFilter":                          "grandfathered",
+	"AnalyzeRequest.ExecutionTarget":                      "grandfathered",
+	"AnalyzeRequest.SubprojectInfo":                       "grandfathered",
+	"AnalyzeRequest.Query":                                "grandfathered",
+	"AnalyzeRequest.AnalyzerFilter":                       "grandfathered",
+	"DetectionRequest.ExecutionTarget":                    "grandfathered",
+	"DetectionRequest.Subproject":                         "grandfathered",
+	"DetectionRequest.DetectorFilter":                     "grandfathered",
+	"DetectionRequest.Query":                              "grandfathered",
+	"DetectionResult.SubprojectInfo":                      "grandfathered",
+	"DetectionResult.RootExecutionTarget":                 "grandfathered",
+	"AuditRequest.ExecutionTarget":                        "grandfathered",
+	"AuditRequest.SubprojectInfo":                         "grandfathered",
+	"AuditRequest.Query":                                  "grandfathered",
+	"AuditRequest.AuditorFilter":                          "grandfathered",
+	"Subproject.ExecutionTarget":                          "grandfathered",
+	"EPSSScore.EPSS":                                      "grandfathered",
+	"Reachability.Status":                                 "grandfathered",
+	"ReachabilityEvidence.Status":                         "grandfathered",
+	"CallPath.Sink":                                       "grandfathered",
+	"PackageScorecard.AggregateScore":                     "grandfathered",
+	"PackageScorecardCheck.Score":                         "grandfathered",
+	"PackageRemediation.Status":                           "grandfathered",
+	"PackageRemediationSuggestion.AffectedDependencyRefs": "grandfathered",
+	"PackageRemediationSuggestion.Action":                 "grandfathered",
+	"GraphEntry.Manifest":                                 "grandfathered",
+	"ResolutionMetadata.InstallExecuted":                  "grandfathered",
+	"ResolutionFallback.From":                             "grandfathered",
+	"DetectorWarning.Type":                                "grandfathered",
+	"DetectorWarning.Message":                             "grandfathered",
+	"DependencyDetailTransition.Before":                   "grandfathered",
+	"DependencyDetailTransition.After":                    "grandfathered",
+	"DependencyDetailTransition.ChangedFields":            "grandfathered",
+	"DependencyDetailTransition.BeforeRegistryEligible":   "grandfathered",
+	"DependencyDetailTransition.AfterRegistryEligible":    "grandfathered",
+	"RiskScore.Score":                                     "grandfathered",
+	"RemediationHintRequest.Detection":                    "grandfathered",
+	"RemediationHint.DependencyRef":                       "grandfathered",
+	"RemediationStrategyHint.Action":                      "grandfathered",
+}
+
+// Every JSON-tagged field on every type reachable from a v1 wire root carries
+// omitempty, unless requiredWireFields says why not.
 //
 // AGENTS.md: "struct JSON tags *are* the wire schema. New fields must be
-// optional and tagged omitempty." That makes a dropped marker a schema change
-// even when the encoded bytes are identical, because schema-driven consumers
-// read the tag, not the output -- a field that loses omitempty reads as
-// required to anything generating a schema from reflection.
+// optional and tagged omitempty." A dropped marker is therefore a schema
+// change even when the encoded bytes are identical, because a consumer
+// generating a schema by reflection reads the tag, not the output.
 //
-// Checked by reflection rather than by name so the rule covers fields nobody
-// thought to enumerate, which is exactly where it failed before.
-func TestWireV1PayloadFieldsCarryOmitEmpty(t *testing.T) {
-	payloads := []any{
-		MatchRequest{}, MatchResult{},
-		AnalyzeRequest{}, AnalyzeResult{},
-		MatcherDescriptor{}, AnalyzerDescriptor{},
-		DetectorDescriptor{}, AuditorDescriptor{},
-		DependencyNode{}, Package{},
-		DocumentAssertions{}, DocumentSource{},
-		PackageScorecard{},
-	}
-	for _, payload := range payloads {
-		typ := reflect.TypeOf(payload)
+// Reachability is the point. The guard this replaces enumerated field names,
+// so a field nobody listed went unchecked; the version after that enumerated
+// types, so a field on an unlisted type went unchecked -- the same hole moved
+// one level up, which is how it survived being "fixed" once. Walking from the
+// payloads serve.go actually serializes leaves nowhere for a wire field to be
+// added unseen: nested structs, embedded structs, and slice, map and pointer
+// element types are all followed.
+func TestWireV1ReachableFieldsCarryOmitEmpty(t *testing.T) {
+	sdkPackage := reflect.TypeOf(MatchRequest{}).PkgPath()
+	visited := map[reflect.Type]bool{}
+
+	var walk func(reflect.Type)
+	walk = func(typ reflect.Type) {
+		for {
+			switch typ.Kind() {
+			case reflect.Pointer, reflect.Slice, reflect.Array, reflect.Map:
+				typ = typ.Elem()
+				continue
+			}
+			break
+		}
+		// Only this module's types: a stdlib struct's fields are not ours
+		// to tag, and walking into them would report time.Time forever.
+		if typ.Kind() != reflect.Struct || typ.PkgPath() != sdkPackage || visited[typ] {
+			return
+		}
+		visited[typ] = true
+
 		for i := range typ.NumField() {
 			field := typ.Field(i)
 			if !field.IsExported() {
 				continue
 			}
-			tag, ok := field.Tag.Lookup("json")
-			if !ok || tag == "-" || strings.HasPrefix(tag, "-,") {
+			walk(field.Type)
+
+			tag, tagged := field.Tag.Lookup("json")
+			if !tagged || tag == "-" || strings.HasPrefix(tag, "-,") {
 				continue
 			}
 			name, options, _ := strings.Cut(tag, ",")
 			if name == "" && field.Anonymous {
-				// An embedded struct's own fields are reached through
-				// their own type; the embed itself carries no wire name.
+				// An embedded struct contributes its own fields, which the
+				// walk above reaches directly; the embed carries no name.
 				continue
 			}
 			key := typ.Name() + "." + field.Name
 			if reason, exempt := requiredWireFields[key]; exempt {
 				if strings.Contains(options, "omitempty") {
 					t.Errorf("%s is listed as always sent (%s) but carries omitempty; "+
-						"drop one of the two, they disagree", key, reason)
+						"the list and the tag disagree, so one of them is wrong", key, reason)
 				}
 				continue
 			}
 			if !strings.Contains(options, "omitempty") {
 				t.Errorf("%s is a v1 wire field without omitempty: the tag is the wire schema, so a "+
-					"consumer generating one from reflection now reads it as required. Add omitempty, "+
-					"or add %q to requiredWireFields with the reason it is always sent.", key, key)
+					"consumer generating one by reflection now reads it as required. Add omitempty, or "+
+					"add %q to requiredWireFields with the reason it is always sent.", key, key)
 			}
 		}
 	}
+
+	for _, root := range wireRoots {
+		walk(reflect.TypeOf(root))
+	}
+
+	// A walk that reached almost nothing would pass this test in silence,
+	// which is precisely how the previous two versions looked healthy.
+	if len(visited) < 50 {
+		t.Errorf("the walk reached only %d types; it reached 79 when written, so it is no longer "+
+			"following the wire and its silence means nothing", len(visited))
+	}
 }
 
-// The predicate above is only worth having if it sees a missing marker, so
-// pin it on a fixture rather than on the types it polices -- those pass today
-// and would pass a rule that inspected nothing.
-func TestOmitEmptyCoverageSeesAMissingMarker(t *testing.T) {
-	type fixture struct {
-		Kept    string    `json:"kept,omitempty"`
-		Dropped time.Time `json:"dropped"`
-		Ignored string    `json:"-"`
-		unexpo  string    //nolint:unused // exercises the unexported skip
+// An exemption naming a type or field that no longer exists is a rule nobody
+// is applying -- and it hides the day that field comes back without a marker.
+func TestRequiredWireFieldsAreAllReachable(t *testing.T) {
+	sdkPackage := reflect.TypeOf(MatchRequest{}).PkgPath()
+	present := map[string]bool{}
+	visited := map[reflect.Type]bool{}
+
+	var walk func(reflect.Type)
+	walk = func(typ reflect.Type) {
+		for {
+			switch typ.Kind() {
+			case reflect.Pointer, reflect.Slice, reflect.Array, reflect.Map:
+				typ = typ.Elem()
+				continue
+			}
+			break
+		}
+		if typ.Kind() != reflect.Struct || typ.PkgPath() != sdkPackage || visited[typ] {
+			return
+		}
+		visited[typ] = true
+		for i := range typ.NumField() {
+			field := typ.Field(i)
+			if !field.IsExported() {
+				continue
+			}
+			present[typ.Name()+"."+field.Name] = true
+			walk(field.Type)
+		}
+	}
+	for _, root := range wireRoots {
+		walk(reflect.TypeOf(root))
 	}
 
-	var missing []string
-	typ := reflect.TypeOf(fixture{})
-	for i := range typ.NumField() {
-		field := typ.Field(i)
-		if !field.IsExported() {
-			continue
+	for key := range requiredWireFields {
+		if !present[key] {
+			t.Errorf("requiredWireFields exempts %q, which is not reachable from any v1 wire root; "+
+				"drop the entry, or the day it returns it returns unchecked", key)
 		}
-		tag, ok := field.Tag.Lookup("json")
-		if !ok || tag == "-" {
-			continue
-		}
-		if _, options, _ := strings.Cut(tag, ","); !strings.Contains(options, "omitempty") {
-			missing = append(missing, field.Name)
-		}
-	}
-	if len(missing) != 1 || missing[0] != "Dropped" {
-		t.Errorf("walk reported %v; want exactly [Dropped] -- Kept has the marker, Ignored is not on the "+
-			"wire, and the unexported field is not addressable by a consumer", missing)
 	}
 }
