@@ -51,7 +51,7 @@ func TestDigestSubjectSourceTreeRoundTrips(t *testing.T) {
 
 func TestPackageAttestationCloneIsDeep(t *testing.T) {
 	pkg := &Package{
-		PURL: "pkg:npm/react@18.2.0",
+		Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"},
 		Attestations: []PackageAttestation{{
 			PredicateType: "https://slsa.dev/provenance/v1",
 			Source:        "example-matcher",
@@ -76,9 +76,9 @@ func TestPackageAttestationCloneIsDeep(t *testing.T) {
 // Attestations survive registry deduplication when the record that wins has
 // none of its own.
 func TestPackageMergeFromFillsAttestations(t *testing.T) {
-	pkg := &Package{PURL: "pkg:npm/react@18.2.0"}
+	pkg := &Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}}
 	pkg.MergeFrom(&Package{
-		PURL:         "pkg:npm/react@18.2.0",
+		Coordinates:  Coordinates{PURL: "pkg:npm/react@18.2.0"},
 		Attestations: []PackageAttestation{{PredicateType: "https://slsa.dev/provenance/v1", Verified: true}},
 	})
 
@@ -88,10 +88,10 @@ func TestPackageMergeFromFillsAttestations(t *testing.T) {
 
 	// The merged copy must not share state with the source.
 	source := &Package{
-		PURL:         "pkg:npm/react@18.2.0",
+		Coordinates:  Coordinates{PURL: "pkg:npm/react@18.2.0"},
 		Attestations: []PackageAttestation{{PredicateType: "https://slsa.dev/provenance/v1", Digest: &Digest{Value: "abc123"}}},
 	}
-	target := &Package{PURL: "pkg:npm/react@18.2.0"}
+	target := &Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}}
 	target.MergeFrom(source)
 	target.Attestations[0].Digest.Value = "def456"
 	if source.Attestations[0].Digest.Value != "abc123" {
@@ -102,7 +102,7 @@ func TestPackageMergeFromFillsAttestations(t *testing.T) {
 // An empty attestation list is omitted, so payloads for the overwhelmingly
 // common case are unchanged.
 func TestPackageAttestationsOmittedWhenEmpty(t *testing.T) {
-	raw, err := json.Marshal(&Package{PURL: "pkg:npm/react@18.2.0"})
+	raw, err := json.Marshal(&Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,11 +115,11 @@ func TestPackageAttestationsOmittedWhenEmpty(t *testing.T) {
 // keeping whichever arrived first.
 func TestPackageMergeFromUnionsAttestations(t *testing.T) {
 	pkg := &Package{
-		PURL:         "pkg:npm/react@18.2.0",
+		Coordinates:  Coordinates{PURL: "pkg:npm/react@18.2.0"},
 		Attestations: []PackageAttestation{{Source: "provenance-matcher", PredicateType: "https://slsa.dev/provenance/v1", URL: "https://example.test/provenance"}},
 	}
 	pkg.MergeFrom(&Package{
-		PURL: "pkg:npm/react@18.2.0",
+		Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"},
 		Attestations: []PackageAttestation{
 			{Source: "signature-matcher", PredicateType: "https://in-toto.io/attestation/release/v0.1", URL: "https://example.test/release"},
 			// The same statement the first record already carries, now verified.
@@ -141,11 +141,11 @@ func TestPackageMergeFromUnionsAttestations(t *testing.T) {
 // Statements differing only by digest are different statements.
 func TestPackageMergeFromKeepsDistinctDigests(t *testing.T) {
 	pkg := &Package{
-		PURL:         "pkg:npm/react@18.2.0",
+		Coordinates:  Coordinates{PURL: "pkg:npm/react@18.2.0"},
 		Attestations: []PackageAttestation{{Source: "m", URL: "https://example.test/p", Digest: &Digest{Algorithm: DigestAlgorithmSHA256, Value: "aaa"}}},
 	}
 	pkg.MergeFrom(&Package{
-		PURL:         "pkg:npm/react@18.2.0",
+		Coordinates:  Coordinates{PURL: "pkg:npm/react@18.2.0"},
 		Attestations: []PackageAttestation{{Source: "m", URL: "https://example.test/p", Digest: &Digest{Algorithm: DigestAlgorithmSHA256, Value: "bbb"}}},
 	})
 
@@ -168,8 +168,8 @@ func TestPackageMergeFromKeepsVerificationWithItsIssuer(t *testing.T) {
 	}
 
 	t.Run("different issuers stay separate", func(t *testing.T) {
-		pkg := &Package{PURL: "pkg:npm/react@18.2.0", Attestations: []PackageAttestation{statement("issuer-a", false)}}
-		pkg.MergeFrom(&Package{PURL: "pkg:npm/react@18.2.0", Attestations: []PackageAttestation{statement("issuer-b", true)}})
+		pkg := &Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{statement("issuer-a", false)}}
+		pkg.MergeFrom(&Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{statement("issuer-b", true)}})
 
 		if len(pkg.Attestations) != 2 {
 			t.Fatalf("attestations = %+v, want both issuers kept", pkg.Attestations)
@@ -185,8 +185,8 @@ func TestPackageMergeFromKeepsVerificationWithItsIssuer(t *testing.T) {
 	// to an issuer named by a different record would say that issuer's
 	// signature was checked, which nobody established.
 	t.Run("an issuerless verification is not attributed to a later issuer", func(t *testing.T) {
-		pkg := &Package{PURL: "pkg:npm/react@18.2.0", Attestations: []PackageAttestation{statement("", true)}}
-		pkg.MergeFrom(&Package{PURL: "pkg:npm/react@18.2.0", Attestations: []PackageAttestation{statement("issuer-a", false)}})
+		pkg := &Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{statement("", true)}}
+		pkg.MergeFrom(&Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{statement("issuer-a", false)}})
 
 		if len(pkg.Attestations) != 2 {
 			t.Fatalf("attestations = %+v, want the issuerless verification kept separate", pkg.Attestations)
@@ -200,8 +200,8 @@ func TestPackageMergeFromKeepsVerificationWithItsIssuer(t *testing.T) {
 
 	// The same, with the records arriving the other way round.
 	t.Run("merge order does not change the outcome", func(t *testing.T) {
-		pkg := &Package{PURL: "pkg:npm/react@18.2.0", Attestations: []PackageAttestation{statement("issuer-a", false)}}
-		pkg.MergeFrom(&Package{PURL: "pkg:npm/react@18.2.0", Attestations: []PackageAttestation{statement("", true)}})
+		pkg := &Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{statement("issuer-a", false)}}
+		pkg.MergeFrom(&Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{statement("", true)}})
 
 		if len(pkg.Attestations) != 2 {
 			t.Fatalf("attestations = %+v, want the issuerless verification kept separate", pkg.Attestations)
@@ -223,8 +223,8 @@ func TestPackageMergeFromKeepsVerificationWithItsIssuer(t *testing.T) {
 				if order == "weak second" {
 					first, second = strong, weak
 				}
-				pkg := &Package{PURL: "pkg:npm/react@18.2.0", Attestations: []PackageAttestation{first}}
-				pkg.MergeFrom(&Package{PURL: "pkg:npm/react@18.2.0", Attestations: []PackageAttestation{second}})
+				pkg := &Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{first}}
+				pkg.MergeFrom(&Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{second}})
 
 				if len(pkg.Attestations) != 1 {
 					t.Fatalf("attestations = %+v, want one record", pkg.Attestations)
@@ -239,8 +239,8 @@ func TestPackageMergeFromKeepsVerificationWithItsIssuer(t *testing.T) {
 	// One issuer, two records: verification is additive, because both records
 	// speak about the same signer.
 	t.Run("one issuer verified in a later record", func(t *testing.T) {
-		pkg := &Package{PURL: "pkg:npm/react@18.2.0", Attestations: []PackageAttestation{statement("issuer-a", false)}}
-		pkg.MergeFrom(&Package{PURL: "pkg:npm/react@18.2.0", Attestations: []PackageAttestation{statement("issuer-a", true)}})
+		pkg := &Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{statement("issuer-a", false)}}
+		pkg.MergeFrom(&Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{statement("issuer-a", true)}})
 
 		if len(pkg.Attestations) != 1 {
 			t.Fatalf("attestations = %+v, want one record for one issuer", pkg.Attestations)
@@ -251,8 +251,8 @@ func TestPackageMergeFromKeepsVerificationWithItsIssuer(t *testing.T) {
 	})
 
 	t.Run("an unknown issuer is filled from the verified record", func(t *testing.T) {
-		pkg := &Package{PURL: "pkg:npm/react@18.2.0", Attestations: []PackageAttestation{statement("", false)}}
-		pkg.MergeFrom(&Package{PURL: "pkg:npm/react@18.2.0", Attestations: []PackageAttestation{statement("issuer-b", true)}})
+		pkg := &Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{statement("", false)}}
+		pkg.MergeFrom(&Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{statement("issuer-b", true)}})
 
 		if len(pkg.Attestations) != 1 {
 			t.Fatalf("attestations = %+v, want one record", pkg.Attestations)
@@ -266,11 +266,11 @@ func TestPackageMergeFromKeepsVerificationWithItsIssuer(t *testing.T) {
 // Statements differing only by what their digest covers are different claims.
 func TestPackageMergeFromKeepsDistinctDigestSubjects(t *testing.T) {
 	pkg := &Package{
-		PURL:         "pkg:golang/example.test/mod@1.0.0",
+		Coordinates:  Coordinates{PURL: "pkg:golang/example.test/mod@1.0.0"},
 		Attestations: []PackageAttestation{{Source: "m", URL: "https://example.test/p", Digest: &Digest{Algorithm: DigestAlgorithmSHA256, Value: "aaa"}}},
 	}
 	pkg.MergeFrom(&Package{
-		PURL:         "pkg:golang/example.test/mod@1.0.0",
+		Coordinates:  Coordinates{PURL: "pkg:golang/example.test/mod@1.0.0"},
 		Attestations: []PackageAttestation{{Source: "m", URL: "https://example.test/p", Digest: &Digest{Algorithm: DigestAlgorithmSHA256, Value: "aaa", Subject: DigestSubjectSourceTree}}},
 	})
 
@@ -286,8 +286,8 @@ func TestPackageMergeFromUnionsDigests(t *testing.T) {
 	artifact := Digest{Algorithm: DigestAlgorithmSHA256, Value: "aaa"}
 	sourceTree := Digest{Algorithm: DigestAlgorithmSHA256, Value: "aaa", Subject: DigestSubjectSourceTree}
 
-	pkg := &Package{PURL: "pkg:golang/example.test/mod@1.0.0", Digests: []Digest{artifact}}
-	pkg.MergeFrom(&Package{PURL: "pkg:golang/example.test/mod@1.0.0", Digests: []Digest{sourceTree, artifact}})
+	pkg := &Package{Coordinates: Coordinates{PURL: "pkg:golang/example.test/mod@1.0.0"}, Digests: []Digest{artifact}}
+	pkg.MergeFrom(&Package{Coordinates: Coordinates{PURL: "pkg:golang/example.test/mod@1.0.0"}, Digests: []Digest{sourceTree, artifact}})
 
 	if len(pkg.Digests) != 2 {
 		t.Fatalf("digests = %+v, want both claims kept and the repeat dropped", pkg.Digests)
@@ -307,8 +307,8 @@ func TestPackageMergeFromDistinguishesDigestsThatWouldCollide(t *testing.T) {
 	left := PackageAttestation{Source: "m", URL: "https://example.test/s", Digest: &Digest{Algorithm: DigestAlgorithmSHA256, Value: "a:b", Subject: "c"}}
 	right := PackageAttestation{Source: "m", URL: "https://example.test/s", Digest: &Digest{Algorithm: DigestAlgorithmSHA256, Value: "a", Subject: "b:c"}, Verified: true}
 
-	pkg := &Package{PURL: "pkg:npm/react@18.2.0", Attestations: []PackageAttestation{left}}
-	pkg.MergeFrom(&Package{PURL: "pkg:npm/react@18.2.0", Attestations: []PackageAttestation{right}})
+	pkg := &Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{left}}
+	pkg.MergeFrom(&Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}, Attestations: []PackageAttestation{right}})
 
 	if len(pkg.Attestations) != 2 {
 		t.Fatalf("attestations = %+v, want two: the digests differ", pkg.Attestations)

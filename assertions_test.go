@@ -804,7 +804,7 @@ func TestRegistryGatesArrivingAssertions(t *testing.T) {
 	registry := NewPackageRegistry()
 	// The first record of a PURL takes the clone path, not the merge path.
 	stored := registry.Add(&Package{
-		PURL:        "pkg:npm/react@18.2.0",
+		Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"},
 		Homepage:    "https://user:pw@react.test/",
 		Description: "bad\x07text",
 		Supplier:    &Contact{Kind: ContactKindOrganization, Name: "Acme\nInc"},
@@ -830,9 +830,9 @@ func TestRegistryGatesArrivingAssertions(t *testing.T) {
 	// The merge path is gated too: a second update for the same PURL fills
 	// gaps, and must not fill them with an unpublishable value.
 	ApplyPackageUpdates(registry, []*Package{{
-		PURL:     "pkg:npm/react@18.2.0",
-		Homepage: "https://user:pw@evil.test/",
-		Supplier: &Contact{Kind: ContactKindOrganization, Name: "Bad\nActor"},
+		Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"},
+		Homepage:    "https://user:pw@evil.test/",
+		Supplier:    &Contact{Kind: ContactKindOrganization, Name: "Bad\nActor"},
 	}})
 	merged, _ := registry.Get("pkg:npm/react@18.2.0")
 	if merged.Homepage != "" || merged.Supplier != nil {
@@ -842,8 +842,8 @@ func TestRegistryGatesArrivingAssertions(t *testing.T) {
 	// A publishable update still fills the gap -- the gate rejects, it does
 	// not simply refuse everything.
 	ApplyPackageUpdates(registry, []*Package{{
-		PURL:     "pkg:npm/react@18.2.0",
-		Homepage: "https://react.test",
+		Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"},
+		Homepage:    "https://react.test",
 	}})
 	merged, _ = registry.Get("pkg:npm/react@18.2.0")
 	if merged.Homepage != "https://react.test" {
@@ -1030,7 +1030,7 @@ func TestFoldGatesBothWitnessesBeforeMeasuringTheGap(t *testing.T) {
 // installed after insertion would otherwise reach every reader unchecked.
 func TestRegistryMarshalReGatesMutatedRecords(t *testing.T) {
 	registry := NewPackageRegistry()
-	registry.Add(&Package{PURL: "pkg:npm/react@18.2.0"})
+	registry.Add(&Package{Coordinates: Coordinates{PURL: "pkg:npm/react@18.2.0"}})
 	stored := registry.Ensure("pkg:npm/react@18.2.0")
 	stored.Homepage = "https://user:pw@evil.test/"
 	stored.Description = "bad\x07text"
@@ -1289,7 +1289,7 @@ func TestContactURLCarriesNoAddress(t *testing.T) {
 // and digests encode as empty "{}" objects.
 func TestPackageUpdatesAreGatedOnTheWire(t *testing.T) {
 	result := MatchResult{PackageUpdates: []*Package{{
-		PURL:        "pkg:npm/a@1.0.0",
+		Coordinates: Coordinates{PURL: "pkg:npm/a@1.0.0"},
 		Homepage:    "https://user:pw@evil.test/",
 		Description: "bad\x07text",
 		Supplier:    &Contact{Kind: ContactKindOrganization},
@@ -1321,7 +1321,7 @@ func TestPackageUpdatesAreGatedOnTheWire(t *testing.T) {
 	}
 
 	// Marshaling must not rewrite the record its holder still owns.
-	held := &Package{PURL: "pkg:npm/a@1.0.0", Homepage: "https://user:pw@evil.test/"}
+	held := &Package{Coordinates: Coordinates{PURL: "pkg:npm/a@1.0.0"}, Homepage: "https://user:pw@evil.test/"}
 	if _, err := json.Marshal(held); err != nil {
 		t.Fatalf("encode package: %v", err)
 	}

@@ -903,14 +903,14 @@ func TestEnrichableNodesAreDependencyNodes(t *testing.T) {
 }
 
 func TestPackageHelpers(t *testing.T) {
-	pkg := &Package{PURL: "pkg:generic/acme/demo@1.0.0",
+	pkg := &Package{Coordinates: Coordinates{PURL: "pkg:generic/acme/demo@1.0.0",
 		Org:     "acme",
 		Name:    "demo",
-		Version: "1.0.0", Licenses: []PackageLicense{
-			{Value: "MIT"},
-			{SPDXExpression: "Apache-2.0"},
-			{},
-		},
+		Version: "1.0.0"}, Licenses: []PackageLicense{
+		{Value: "MIT"},
+		{SPDXExpression: "Apache-2.0"},
+		{},
+	},
 	}
 
 	if got := pkg.DisplayName(); got != "acme:demo" {
