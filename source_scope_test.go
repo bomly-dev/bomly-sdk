@@ -120,7 +120,7 @@ func TestSourceScopeIsGated(t *testing.T) {
 	}
 	// The prototype constructor copies it through the gate too.
 	from, err := NewDependencyNodeFrom(DependencyNode{
-		Ecosystem: EcosystemNPM, Name: "left-pad", Version: "1.3.0",
+		Coordinates: Coordinates{Ecosystem: EcosystemNPM, Name: "left-pad", Version: "1.3.0"},
 		SourceScope: " optional ",
 	})
 	if err != nil {

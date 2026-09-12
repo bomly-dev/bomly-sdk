@@ -57,7 +57,7 @@ func TestServiceServerAnalyzerRoundTrip(t *testing.T) {
 				t.Fatal("expected AcceptPackageUpdates to survive the wire")
 			}
 			return &AnalyzeResponse{
-				PackageUpdates: []*Package{{PURL: "pkg:golang/example.com/mod@v1.0.0"}},
+				PackageUpdates: []*Package{{Coordinates: Coordinates{PURL: "pkg:golang/example.com/mod@v1.0.0"}}},
 				AnalyzerRuns:   []string{"stub-analyzer"},
 			}, nil
 		},
@@ -154,8 +154,8 @@ func TestApplyPackageUpdates(t *testing.T) {
 	base.Name = "left-pad"
 
 	updated := ApplyPackageUpdates(registry, []*Package{
-		{PURL: "pkg:npm/left-pad@1.3.0", Licenses: []PackageLicense{{Value: "MIT"}}},
-		{PURL: "pkg:npm/is-even@1.0.0"},
+		{Coordinates: Coordinates{PURL: "pkg:npm/left-pad@1.3.0"}, Licenses: []PackageLicense{{Value: "MIT"}}},
+		{Coordinates: Coordinates{PURL: "pkg:npm/is-even@1.0.0"}},
 		nil,
 		{}, // no PURL: ignored
 	})
@@ -176,7 +176,7 @@ func TestApplyPackageUpdates(t *testing.T) {
 	if reg := ApplyPackageUpdates(nil, nil); reg != nil {
 		t.Fatal("nil registry with no updates should stay nil")
 	}
-	if reg := ApplyPackageUpdates(nil, []*Package{{PURL: "pkg:npm/a@1.0.0"}}); reg == nil || len(reg.All()) != 1 {
+	if reg := ApplyPackageUpdates(nil, []*Package{{Coordinates: Coordinates{PURL: "pkg:npm/a@1.0.0"}}}); reg == nil || len(reg.All()) != 1 {
 		t.Fatal("nil registry with updates should allocate")
 	}
 }
