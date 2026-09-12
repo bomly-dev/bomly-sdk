@@ -3,6 +3,7 @@ package sdk
 import (
 	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 )
 
@@ -605,5 +606,92 @@ func TestAssertedPURLRecordsNoNormalizationBreadcrumbs(t *testing.T) {
 	}
 	if _, recorded := minted.Metadata[normMetadataAppliedKey]; !recorded {
 		t.Fatalf("coordinate-minted identity lost its breadcrumbs: %v", minted.Metadata)
+	}
+}
+
+// TestFoldDoesNotAliasTheWitnessLocations pins that a witness handed to
+// InsertNode without CloneNode does not share its location memory with the
+// survivor: the appended record is a deep copy, so a later mutation of the
+// witness's scope slice or position does not reach the folded node.
+func TestFoldDoesNotAliasTheWitnessLocations(t *testing.T) {
+	graph := New()
+	first := mustDepPURL(t, "pkg:npm/left-pad@1.3.0")
+	if err := graph.AddNode(first); err != nil {
+		t.Fatal(err)
+	}
+
+	second := mustDepPURL(t, "pkg:npm/left-pad@1.3.0")
+	second.Locations = []PackageLocation{{
+		RealPath:     "packages/a/package.json",
+		Position:     &SourcePosition{File: "packages/a/package.json", Line: 12},
+		ModuleRoot:   "packages/a",
+		Scopes:       []Scope{ScopeRuntime},
+		Relationship: DependencyRelationshipDirect,
+	}}
+	survivor, err := graph.InsertNode(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, ok := survivor.(*DependencyNode)
+	if !ok {
+		t.Fatalf("survivor is %T", survivor)
+	}
+	if len(dep.Locations) != 1 {
+		t.Fatalf("locations = %+v, want the witness's one record", dep.Locations)
+	}
+
+	second.Locations[0].Scopes[0] = ScopeDevelopment
+	second.Locations[0].Position.Line = 99
+
+	got := dep.Locations[0]
+	if !slices.Equal(got.Scopes, []Scope{ScopeRuntime}) {
+		t.Errorf("survivor scopes = %v after mutating the witness, want runtime", got.Scopes)
+	}
+	if got.Position == nil || got.Position.Line != 12 {
+		t.Errorf("survivor position = %+v after mutating the witness, want line 12", got.Position)
+	}
+}
+
+// TestFoldKeepsUnattributedAndAttributedRecordsOfOneSiteDistinct pins that
+// an empty ModuleRoot means "not attributed" (ADR-0037), not "any root": an
+// unattributed record and an attributed record of one site are two usages
+// and both survive, whichever the fold sees first.
+func TestFoldKeepsUnattributedAndAttributedRecordsOfOneSiteDistinct(t *testing.T) {
+	newWitness := func(root string) *DependencyNode {
+		dep := mustDepPURL(t, "pkg:npm/left-pad@1.3.0")
+		dep.Locations = []PackageLocation{{
+			RealPath:   "pnpm-lock.yaml",
+			Position:   &SourcePosition{File: "pnpm-lock.yaml", Line: 42},
+			ModuleRoot: root,
+		}}
+		return dep
+	}
+	for name, roots := range map[string][]string{
+		"unattributed first": {"", "packages/a"},
+		"attributed first":   {"packages/a", ""},
+	} {
+		graph := New()
+		var survivor GraphNode
+		for _, root := range roots {
+			node, err := graph.InsertNode(newWitness(root))
+			if err != nil {
+				t.Fatalf("%s: InsertNode: %v", name, err)
+			}
+			survivor = node
+		}
+		dep, ok := survivor.(*DependencyNode)
+		if !ok {
+			t.Fatalf("%s: survivor is %T", name, survivor)
+		}
+		if len(dep.Locations) != 2 {
+			t.Fatalf("%s: locations = %+v, want the unattributed and attributed records kept apart", name, dep.Locations)
+		}
+		seen := map[string]bool{}
+		for _, loc := range dep.Locations {
+			seen[loc.ModuleRoot] = true
+		}
+		if !seen[""] || !seen["packages/a"] {
+			t.Errorf("%s: module roots = %v, want both the empty and the attributed root", name, seen)
+		}
 	}
 }

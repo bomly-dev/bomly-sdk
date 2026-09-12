@@ -188,12 +188,15 @@ func (g *Graph) AddNode(node GraphNode) error {
 // identity already exists in the graph unions into the existing record and
 // the survivor is returned. Identity is the node ID, and IDs are disjoint
 // across kinds, so a fold always joins records of one kind. Dependency
-// folds union scopes, locations, and origins, merge the relationship, and
-// fold registry-match eligibility toward eligible (any-witness: when
-// exactly one witness is eligible, its source survives — withholding
+// folds union scopes and origins, merge the relationship, and union
+// locations by usage record — ADR-0037's (module root, declaration site),
+// see mergeNodeLocations — where a matched record merges its per-site
+// scopes and relationship instead of keeping whichever witness came first.
+// They also fold registry-match eligibility toward eligible (any-witness:
+// when exactly one witness is eligible, its source survives — withholding
 // enrichment from a package a registry release genuinely uses would hide
-// vulnerabilities). Module folds union locations; manifest folds are
-// no-ops beyond the identity match.
+// vulnerabilities). Module folds union locations by the same usage rule;
+// manifest folds are no-ops beyond the identity match.
 func (g *Graph) InsertNode(node GraphNode) (GraphNode, error) {
 	if isNilNode(node) {
 		return nil, ErrNilNode
@@ -245,6 +248,15 @@ func foldNodes(surviving, witness GraphNode) {
 			survivor.AddScope(scope)
 		}
 		mergeNodeLocations(&survivor.Locations, incoming.Locations)
+		// The node-level set stays a superset of its sites: once the
+		// witness's records are merged in, every scope a site carries is
+		// added to the node — including the survivor's own sites, which
+		// AddNode never lifted. Not SyncScopesFromLocations — that replaces
+		// the node set with the sites' union and would drop a node-level
+		// scope no site carries.
+		for _, scope := range survivor.LocationScopes() {
+			survivor.AddScope(scope)
+		}
 		survivor.Origins = MergeOrigins(survivor.Origins, incoming.Origins)
 		mergeDependencySources(survivor, incoming)
 		// Every witness's assertions about one package survive the fold:
@@ -470,13 +482,64 @@ func mergeDependencySources(surviving, witness *DependencyNode) {
 	surviving.Source = witness.Source
 }
 
-// mergeNodeLocations appends the locations dst does not already carry.
+// mergeNodeLocations unions a witness's locations into dst by usage record:
+// a location naming a usage dst already carries merges its per-site
+// attribution into that record, and any other location is appended. The
+// appended copy is deep — a witness handed to InsertNode without CloneNode
+// must not share its positions or scope slices with the surviving node.
 func mergeNodeLocations(dst *[]PackageLocation, additions []PackageLocation) {
 	for _, location := range additions {
-		if !hasDependencyLocation(*dst, location) {
-			*dst = append(*dst, location)
+		if i := usageRecordIndex(*dst, location); i >= 0 {
+			mergeUsageRecord(&(*dst)[i], location)
+			continue
+		}
+		*dst = append(*dst, clonePackageLocations([]PackageLocation{location})[0])
+	}
+}
+
+// usageRecordIndex returns the index of the record in existing that names
+// the same usage as loc, or -1. A usage is ADR-0037's unit — (module root,
+// declaration site) — so two records agree when RealPath, AccessPath,
+// Position, and ModuleRoot all match. Scopes and Relationship are
+// attribution carried by the record, not part of its identity: a second
+// module root's record of the same path is a distinct usage, while a second
+// witness of one usage contributes to the record already there. An empty
+// ModuleRoot means the producer did not attribute the site, and it stays
+// distinct from an attributed record of the same path rather than folding
+// into whichever came first.
+func usageRecordIndex(existing []PackageLocation, loc PackageLocation) int {
+	for i, e := range existing {
+		if e.RealPath != loc.RealPath || e.AccessPath != loc.AccessPath || e.ModuleRoot != loc.ModuleRoot {
+			continue
+		}
+		if sourcePositionsEqual(e.Position, loc.Position) {
+			return i
 		}
 	}
+	return -1
+}
+
+// mergeUsageRecord unions a second witness's attribution of one usage into
+// the surviving record. Scopes union as a set; two witnesses disagreeing on
+// relationship resolve rank-max (direct over transitive over unknown), the
+// same rule the node-level relationship follows. A record whose only scope
+// was unknown loses it on merge, consistent with LocationScopes, which
+// never reports an unknown scope either.
+func mergeUsageRecord(dst *PackageLocation, src PackageLocation) {
+	dst.Scopes = mergeScopeSet(dst.Scopes, src.Scopes)
+	dst.Relationship = MergeDependencyRelationship(dst.Relationship, src.Relationship)
+}
+
+// mergeScopeSet returns the sorted union of two scope sets without unknown
+// entries. existing is returned unchanged when there is nothing to add, so a
+// record a witness had nothing to say about keeps the slice it had.
+func mergeScopeSet(existing, additions []Scope) []Scope {
+	if len(additions) == 0 {
+		return existing
+	}
+	merged := ScopesOf(append(append([]Scope(nil), existing...), additions...)...)
+	slices.Sort(merged)
+	return merged
 }
 
 // Node returns a node by ID.
