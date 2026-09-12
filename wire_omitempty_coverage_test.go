@@ -27,14 +27,23 @@ var wireRoots = []any{
 // alwaysSentKeys are the wire keys a zero value still emits, by "Type.key".
 //
 // Keyed by the JSON name rather than the Go field, because the wire is the
-// subject and the two differ where it matters: the filter types send
+// subject and the two differ where it matters: the filter types used to send
 // "Include", capitalised, carrying no tag at all.
 //
-// Two kinds of entry. Some carry a reason: an identity or discriminator whose
-// absence would make the payload unreadable, where zero is still an answer.
-// The rest say "grandfathered", which records what is true without claiming it
-// was decided. bomly-sdk#78 tracks turning each of those into a reason or a
-// marker, and every one it resolves is a key these rules begin guarding.
+// Every entry says why the key is on the wire. The list opened with 53 marked
+// "grandfathered" -- true, but not decided -- and bomly-sdk#78 spent them:
+// eleven fields took omitempty and left this list, which is eleven keys these
+// rules begin guarding. The rest are below in four groups, each group the
+// reason its keys are always sent. The grandfather clause is gone; an entry
+// added here from now on is a claim someone made.
+//
+// The eleven that left were checked against bomly-cli and the plugin repos
+// first, because omitting a key relaxes the schema: none is read by key
+// presence, none appears in a published schema or a golden, and absence
+// decodes to the same value as the null they used to send. The ones that
+// stayed include two the check kept here -- epss, which bomly-cli's smoke
+// harness uses to recognise a vulnerability object by key presence, and
+// affected_dependency_refs, which its published schema marks required.
 var alwaysSentKeys = map[string]string{
 	// Identity and discriminators: zero is an answer, not an absence.
 	"Vulnerability.id":                     "a vulnerability without an ID cannot be referenced",
@@ -49,71 +58,66 @@ var alwaysSentKeys = map[string]string{
 	"PackageManagerSupport.packageManager": "the key the support row is about",
 	"DependencyNode.id":                    "the canonical package URL is the node's identity (ADR-0041)",
 	"DependencyNode.kind":                  "the sealed union's discriminator (ADR-0041)",
+	"DetectorWarning.type":                 "the discriminator policy branches on: DegradesCoverage reads it",
+	"DetectorWarning.message":              "a warning with no message is nothing a reader can act on",
+	"PackageRemediation.status":            "the discriminator that says how far the fix evidence goes",
+	"PackageRemediationSuggestion.action":  "the discriminator that says which remediation is suggested",
+	"PackageRemediationSuggestion.affected_dependency_refs": "the occurrences the suggestion applies to; " +
+		"one that names none cannot be applied, and bomly-cli publishes the key as required",
+	"RemediationStrategyHint.action": "the discriminator that says which strategy the hint is evidence for",
+	"Reachability.status":            "the discriminator the annotation exists to carry",
+	"ReachabilityEvidence.status":    "the discriminator the finding exists to carry",
+	"RemediationHint.dependencyRef":  "a hint that does not name its occurrence cannot be applied",
+	"ResolutionFallback.from":        "the failed primary detector this record exists to name",
+
 	// Booleans whose whole purpose is the false answer.
 	"ReadyResponse.ready":           "false is the answer this response exists to give",
 	"ApplicableResponse.applicable": "false is the answer this response exists to give",
+	"ResolutionMetadata.install_executed": "false is the common answer and the one a CI reader needs: " +
+		"no install ran, so the graph came from committed files",
+	"DependencyDetailTransition.beforeRegistryEligible": "a registry-eligibility change is the pair; " +
+		"the false side is the change being reported, and absent would read as unstated",
+	"DependencyDetailTransition.afterRegistryEligible": "a registry-eligibility change is the pair; " +
+		"the false side is the change being reported, and absent would read as unstated",
 
-	// Grandfathered: recorded, not endorsed. Each is a key a zero value puts
-	// on the wire today. Giving one omitempty relaxes the v1 schema, which is
-	// a decision for #78, not for the pass that added these rules.
-	//
-	// The capitalised ones are untagged exported fields, encoded under their
-	// Go names. Those need `json:"Include,omitempty"` keeping the capital --
-	// tagging one "include" renames the wire field, which is a v1 break
-	// wearing the shape of an additive change.
-	"AnalyzeRequest.analyzerFilter":                         "grandfathered",
-	"AnalyzeRequest.executionTarget":                        "grandfathered",
-	"AnalyzeRequest.query":                                  "grandfathered",
-	"AnalyzeRequest.subprojectInfo":                         "grandfathered",
-	"AnalyzerFilter.Exclude":                                "grandfathered",
-	"AnalyzerFilter.Include":                                "grandfathered",
-	"AuditRequest.auditorFilter":                            "grandfathered",
-	"AuditRequest.executionTarget":                          "grandfathered",
-	"AuditRequest.query":                                    "grandfathered",
-	"AuditRequest.subprojectInfo":                           "grandfathered",
-	"AuditorFilter.Exclude":                                 "grandfathered",
-	"AuditorFilter.Include":                                 "grandfathered",
-	"CallFrame.position":                                    "grandfathered",
-	"CallPath.sink":                                         "grandfathered",
-	"DependencyDetailTransition.after":                      "grandfathered",
-	"DependencyDetailTransition.afterRegistryEligible":      "grandfathered",
-	"DependencyDetailTransition.before":                     "grandfathered",
-	"DependencyDetailTransition.beforeRegistryEligible":     "grandfathered",
-	"DependencyDetailTransition.changedFields":              "grandfathered",
-	"DetectionRequest.detectorFilter":                       "grandfathered",
-	"DetectionRequest.executionTarget":                      "grandfathered",
-	"DetectionRequest.query":                                "grandfathered",
-	"DetectionRequest.subproject":                           "grandfathered",
-	"DetectionResult.rootExecutionTarget":                   "grandfathered",
-	"DetectionResult.subprojectInfo":                        "grandfathered",
-	"DetectorFilter.Exclude":                                "grandfathered",
-	"DetectorFilter.Include":                                "grandfathered",
-	"DetectorWarning.message":                               "grandfathered",
-	"DetectorWarning.type":                                  "grandfathered",
-	"EPSSScore.epss":                                        "grandfathered",
-	"GraphEntry.manifest":                                   "grandfathered",
-	"MatchRequest.executionTarget":                          "grandfathered",
-	"MatchRequest.matcherFilter":                            "grandfathered",
-	"MatchRequest.query":                                    "grandfathered",
-	"MatchRequest.subprojectInfo":                           "grandfathered",
-	"MatchResult.matcherStats":                              "grandfathered",
-	"MatcherFilter.Exclude":                                 "grandfathered",
-	"MatcherFilter.Include":                                 "grandfathered",
-	"PackageRemediation.status":                             "grandfathered",
-	"PackageRemediationSuggestion.action":                   "grandfathered",
-	"PackageRemediationSuggestion.affected_dependency_refs": "grandfathered",
-	"PackageScorecard.aggregateScore":                       "grandfathered",
-	"PackageScorecard.runDate":                              "grandfathered",
-	"PackageScorecardCheck.score":                           "grandfathered",
-	"Reachability.status":                                   "grandfathered",
-	"ReachabilityEvidence.status":                           "grandfathered",
-	"RemediationHint.dependencyRef":                         "grandfathered",
-	"RemediationHintRequest.detection":                      "grandfathered",
-	"RemediationStrategyHint.action":                        "grandfathered",
-	"ResolutionFallback.from":                               "grandfathered",
-	"ResolutionMetadata.install_executed":                   "grandfathered",
-	"RiskScore.score":                                       "grandfathered",
-	"Subproject.executionTarget":                            "grandfathered",
+	// Scores, where zero is a measurement. Absence of data is the absence of
+	// the containing record, not a missing key inside it.
+	"EPSSScore.epss":                  "0.0 is a probability; no EPSS data means no EPSSScore at all",
+	"PackageScorecard.aggregateScore": "0.0 is a score; unscored is -1, and no run means no PackageScorecard",
+	"PackageScorecardCheck.score":     "0 is a score; inconclusive is -1",
+	"RiskScore.score":                 "0 is a score -- no risk found -- not a missing one",
+
+	// Struct-valued fields. encoding/json never omits a struct, so omitempty
+	// on one changes no bytes and no tag can take these keys off the wire --
+	// which is also why three of them already carry a marker that does
+	// nothing. Only a pointer or omitzero would omit them, and either is a
+	// wire change of its own rather than the marker this list is about. Each
+	// reason below says why the value is meant to be there as well.
+	"MatchRequest.executionTarget":        "the target the host is scanning, set on every request",
+	"MatchRequest.subprojectInfo":         "the subproject the request is scoped to",
+	"MatchRequest.query":                  "an empty query is the whole-scope query, not a missing one",
+	"MatchRequest.matcherFilter":          "an empty filter is 'narrow nothing', which is a filter",
+	"AnalyzeRequest.executionTarget":      "the target the host is scanning, set on every request",
+	"AnalyzeRequest.subprojectInfo":       "the subproject the request is scoped to",
+	"AnalyzeRequest.query":                "an empty query is the whole-scope query, not a missing one",
+	"AnalyzeRequest.analyzerFilter":       "an empty filter is 'narrow nothing', which is a filter",
+	"AuditRequest.executionTarget":        "the target the host is scanning, set on every request",
+	"AuditRequest.subprojectInfo":         "the subproject the request is scoped to",
+	"AuditRequest.query":                  "an empty query is the whole-scope query, not a missing one",
+	"AuditRequest.auditorFilter":          "an empty filter is 'narrow nothing', which is a filter",
+	"DetectionRequest.executionTarget":    "the target the host is scanning, set on every request",
+	"DetectionRequest.subproject":         "the subproject the request is scoped to",
+	"DetectionRequest.query":              "an empty query is the whole-scope query, not a missing one",
+	"DetectionRequest.detectorFilter":     "an empty filter is 'narrow nothing', which is a filter",
+	"DetectionResult.subprojectInfo":      "the subproject the returned graphs belong to",
+	"DetectionResult.rootExecutionTarget": "the target the detection ran against",
+	"Subproject.executionTarget":          "where the subproject was found",
+	"CallPath.sink":                       "the symbol the path leads to, which is what makes it a path",
+	"GraphEntry.manifest":                 "the manifest this graph is scoped to",
+	"RemediationHintRequest.detection":    "the completed detection the hint request is about",
+	"CallFrame.position":                  "declares omitempty; encoding/json ignores it on a struct value",
+	"MatchResult.matcherStats":            "declares omitempty; encoding/json ignores it on a struct value",
+	"PackageScorecard.runDate":            "declares omitempty; encoding/json ignores it on a time.Time",
 }
 
 // A zero value of every type on the v1 wire emits only declared keys.

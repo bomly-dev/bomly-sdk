@@ -7,9 +7,13 @@ import (
 )
 
 // MatcherFilter narrows matcher selection for a request.
+//
+// The json tags keep their capitals. These fields carried no tag, so v1
+// peers send "Include" and "Exclude"; lowercasing one renames the wire
+// field. TestWireV1FilterNamesKeepTheirCapitals fails if it happens.
 type MatcherFilter struct {
-	Include []string
-	Exclude []string
+	Include []string `json:"Include,omitempty"`
+	Exclude []string `json:"Exclude,omitempty"`
 }
 
 // Includes reports whether a matcher name is explicitly allowed.

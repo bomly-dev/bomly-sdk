@@ -607,3 +607,58 @@ func TestWireV1KeepsLenientDecoding(t *testing.T) {
 		}
 	})
 }
+
+// The four selection filters send capitalised wire names, and must keep them.
+//
+// They carried no json tag at all, so encoding/json used the Go field names:
+// a MatcherFilter has always gone out as {"Include":...,"Exclude":...}. Giving
+// them omitempty (bomly-sdk#78) meant writing a tag, and the obvious tag --
+// `json:"include,omitempty"` -- renames the field. That is a v1 break wearing
+// the shape of a tag tidy-up: it passes review, passes every test that only
+// round-trips through this same struct, and silently drops the filter of any
+// peer on the other side of the release.
+//
+// So the capital is the contract. This pins both directions: what these types
+// emit, and that a payload written before the tags existed still decodes.
+func TestWireV1FilterNamesKeepTheirCapitals(t *testing.T) {
+	const populated = `{"Include":["a"],"Exclude":["b"]}`
+
+	for name, value := range map[string]any{
+		"MatcherFilter":  MatcherFilter{Include: []string{"a"}, Exclude: []string{"b"}},
+		"AnalyzerFilter": AnalyzerFilter{Include: []string{"a"}, Exclude: []string{"b"}},
+		"DetectorFilter": DetectorFilter{Include: []string{"a"}, Exclude: []string{"b"}},
+		"AuditorFilter":  AuditorFilter{Include: []string{"a"}, Exclude: []string{"b"}},
+	} {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if string(encoded) != populated {
+			t.Errorf("%s encodes as %s, want %s -- the capitalised names are the v1 wire, "+
+				"and lowercasing a tag renames the field for every peer", name, encoded, populated)
+		}
+	}
+
+	// Decode, from a payload an older peer wrote: the names must still land.
+	var matcher MatcherFilter
+	if err := json.Unmarshal([]byte(populated), &matcher); err != nil {
+		t.Fatalf("v1 MatcherFilter no longer decodes: %v", err)
+	}
+	if !matcher.Includes("a") || !matcher.Excludes("b") {
+		t.Fatalf("v1 MatcherFilter lost its selection: %+v", matcher)
+	}
+
+	// Omission is the relaxation the tags added: an absent key and the null
+	// these types used to send decode to the same nil slice, which is what
+	// makes it safe for a consumer that never looks at the raw JSON.
+	var fromNull, fromAbsent DetectorFilter
+	if err := json.Unmarshal([]byte(`{"Include":null,"Exclude":null}`), &fromNull); err != nil {
+		t.Fatalf("null filter no longer decodes: %v", err)
+	}
+	if err := json.Unmarshal([]byte(`{}`), &fromAbsent); err != nil {
+		t.Fatalf("absent filter no longer decodes: %v", err)
+	}
+	if fromNull.Include != nil || fromAbsent.Include != nil || fromNull.Exclude != nil || fromAbsent.Exclude != nil {
+		t.Fatalf("null and absent must both decode to nil: %+v / %+v", fromNull, fromAbsent)
+	}
+}

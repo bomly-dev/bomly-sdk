@@ -63,9 +63,9 @@ const (
 // DependencyDetailTransition captures same-identity dependency detail changes.
 // Version changes remain represented separately by VersionChange.
 type DependencyDetailTransition struct {
-	Before                 *DependencyNode         `json:"before"`
-	After                  *DependencyNode         `json:"after"`
-	ChangedFields          []DependencyDetailField `json:"changedFields"`
+	Before                 *DependencyNode         `json:"before,omitempty"`
+	After                  *DependencyNode         `json:"after,omitempty"`
+	ChangedFields          []DependencyDetailField `json:"changedFields,omitempty"`
 	BeforeRelationship     DependencyRelationship  `json:"beforeRelationship,omitempty"`
 	AfterRelationship      DependencyRelationship  `json:"afterRelationship,omitempty"`
 	BeforeRegistryEligible bool                    `json:"beforeRegistryEligible"`
