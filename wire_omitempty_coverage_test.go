@@ -1,6 +1,7 @@
 package sdk
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -52,6 +53,21 @@ var requiredWireFields = map[string]string{
 	"ReadyResponse.Ready":           "false is the answer this response exists to give",
 	"ApplicableResponse.Applicable": "false is the answer this response exists to give",
 
+	// Untagged and therefore encoded under their Go names, always present:
+	// MatcherFilter went out as {"Include":null,"Exclude":null}. Left alone
+	// deliberately -- tagging them `json:"include,omitempty"` would rename
+	// the wire field from Include to include, which is a v1 break, not the
+	// additive change it looks like. The compatible fix keeps the capital:
+	// `json:"Include,omitempty"`. That is still a decision, and #78 has it.
+	"MatcherFilter.Include":  "grandfathered: untagged, encoded as \"Include\"",
+	"MatcherFilter.Exclude":  "grandfathered: untagged, encoded as \"Exclude\"",
+	"AnalyzerFilter.Include": "grandfathered: untagged, encoded as \"Include\"",
+	"AnalyzerFilter.Exclude": "grandfathered: untagged, encoded as \"Exclude\"",
+	"DetectorFilter.Include": "grandfathered: untagged, encoded as \"Include\"",
+	"DetectorFilter.Exclude": "grandfathered: untagged, encoded as \"Exclude\"",
+	"AuditorFilter.Include":  "grandfathered: untagged, encoded as \"Include\"",
+	"AuditorFilter.Exclude":  "grandfathered: untagged, encoded as \"Exclude\"",
+
 	// Grandfathered: recorded, not endorsed. See bomly-sdk#78.
 	"MatchRequest.ExecutionTarget":                        "grandfathered",
 	"MatchRequest.SubprojectInfo":                         "grandfathered",
@@ -95,6 +111,15 @@ var requiredWireFields = map[string]string{
 	"RemediationHintRequest.Detection":                    "grandfathered",
 	"RemediationHint.DependencyRef":                       "grandfathered",
 	"RemediationStrategyHint.Action":                      "grandfathered",
+}
+
+// ownsItsEncoding reports whether a type marshals itself, in which case its
+// struct tags describe nothing: the wire shape is whatever MarshalJSON emits.
+// DependencyNode is the case that matters here -- ADR-0041 gives it a codec of
+// its own, so its untagged fields never reach the wire under their Go names.
+func ownsItsEncoding(typ reflect.Type) bool {
+	marshaler := reflect.TypeOf((*json.Marshaler)(nil)).Elem()
+	return typ.Implements(marshaler) || reflect.PointerTo(typ).Implements(marshaler)
 }
 
 // Every JSON-tagged field on every type reachable from a v1 wire root carries
@@ -141,7 +166,27 @@ func TestWireV1ReachableFieldsCarryOmitEmpty(t *testing.T) {
 			walk(field.Type)
 
 			tag, tagged := field.Tag.Lookup("json")
-			if !tagged || tag == "-" || strings.HasPrefix(tag, "-,") {
+			if !tagged {
+				// An exported field with no tag is still encoded, under
+				// its Go name, with no zero-value omission: MatcherFilter
+				// went out as {"Include":null,"Exclude":null}. Untagged is
+				// not the same as unexposed, and skipping these is how a
+				// field joins the permanent wire without any rule seeing
+				// it. Types with their own MarshalJSON are exempt --
+				// their tags are not the schema, their marshaller is.
+				if field.Anonymous || ownsItsEncoding(typ) {
+					continue
+				}
+				key := typ.Name() + "." + field.Name
+				if _, exempt := requiredWireFields[key]; exempt {
+					continue
+				}
+				t.Errorf("%s is an exported wire field with no json tag: it is encoded as %q and never "+
+					"omitted. Tag it with omitempty, or add %q to requiredWireFields with the reason.",
+					key, field.Name, key)
+				continue
+			}
+			if tag == "-" || strings.HasPrefix(tag, "-,") {
 				continue
 			}
 			name, options, _ := strings.Cut(tag, ",")
