@@ -31,6 +31,29 @@ func BuildPackageURL(purlType, namespace, name, version string) string {
 	return built
 }
 
+// BuildPackageURLFor builds a package URL for an ecosystem and its package
+// manager, deciding the package-url type itself.
+//
+// Prefer this over BuildPackageURL wherever both tokens are known, which is
+// every detector. The type is not a parameter here, so a caller cannot pick
+// one: the mapping is purlkit's (ADR-0038) and stays there.
+//
+// That matters for a reason a code-review rule could not reach. The type
+// depends on BOTH tokens, and passing one is silently wrong in at least one
+// live case: the swift ecosystem covers SwiftPM and CocoaPods, purlkit has no
+// "swift" case because swift is itself a purl type, and so the package manager
+// is what separates pkg:swift from pkg:cocoapods. A caller handing
+// PackageURLTypeForValues only the ecosystem gets "swift" for a CocoaPods
+// package -- wrong ecosystem, no advisory matches, and nothing to see at the
+// call site. Taking both as parameters makes that unrepresentable rather than
+// discouraged. See bomly-dev/bomly-cli#449.
+//
+// It is additive: BuildPackageURL keeps working for callers that genuinely
+// have only a type string, such as an SBOM ingest reading one off a document.
+func BuildPackageURLFor(ecosystem Ecosystem, manager PackageManager, namespace, name, version string) string {
+	return BuildPackageURL(PackageURLTypeForValues(ecosystem, manager), namespace, name, version)
+}
+
 // PackageURLTypeForValues maps ecosystem/build-system values to a package-url type.
 //
 // The explicit switch below is the authority: it is consulted for every value
