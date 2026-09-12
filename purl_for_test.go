@@ -1,0 +1,137 @@
+package sdk
+
+import "testing"
+
+// The gap this constructor closes, stated as the two calls it makes
+// indistinguishable in correctness rather than in convenience.
+//
+// The swift ecosystem covers SwiftPM and CocoaPods. purlkit has no "swift"
+// case -- swift is itself a purl type -- so the package manager is what
+// separates the two. Hand PackageURLTypeForValues only the ecosystem and
+// CocoaPods packages mint as pkg:swift: wrong ecosystem, no advisory matches,
+// and a call site that looks right.
+func TestBuildPackageURLForNeedsBothTokensToBeCorrect(t *testing.T) {
+	const name, version = "Alamofire", "5.9.1"
+
+	// pkg:swift requires a namespace and pkg:cocoapods forbids one -- the
+	// spec's own per-type rules, which is a second reason the two cannot
+	// share a call site. Each is given what its type demands.
+	cocoapods := BuildPackageURLFor(EcosystemSwift, PackageManagerCocoaPods, "", name, version)
+	swiftpm := BuildPackageURLFor(EcosystemSwift, PackageManagerSwiftPM, "github.com/Alamofire", name, version)
+
+	if cocoapods == swiftpm {
+		t.Fatalf("CocoaPods and SwiftPM both mint %q; the package manager is not reaching the mapping "+
+			"and one ecosystem's packages are wearing the other's identity", cocoapods)
+	}
+	if want := "pkg:cocoapods/" + name + "@" + version; cocoapods != want {
+		t.Errorf("cocoapods = %q, want %q", cocoapods, want)
+	}
+	if want := "pkg:swift/github.com/Alamofire/" + name + "@" + version; swiftpm != want {
+		t.Errorf("swiftpm = %q, want %q", swiftpm, want)
+	}
+
+	// The shape this function exists to make unreachable: the ecosystem
+	// alone answers "swift" for both, which is right for one and wrong for
+	// the other. Asserted so the hazard is recorded, not just avoided.
+	if alone := PackageURLTypeForValues(EcosystemSwift); alone != "swift" {
+		t.Errorf("PackageURLTypeForValues(EcosystemSwift) = %q, want \"swift\"; the premise of this "+
+			"constructor is that one token is not enough, and that premise just changed", alone)
+	}
+}
+
+// Every ecosystem a detector mints for keeps the identity it had before this
+// constructor existed, so adopting it is not a silent re-identification.
+func TestBuildPackageURLForMatchesTheTypeItReplaces(t *testing.T) {
+	for _, testCase := range []struct {
+		ecosystem Ecosystem
+		manager   PackageManager
+		want      string
+	}{
+		{EcosystemPython, PackageManagerPip, "pkg:pypi/pkg@1"},
+		{EcosystemPython, PackageManagerPoetry, "pkg:pypi/pkg@1"},
+		{EcosystemRust, PackageManagerCargo, "pkg:cargo/pkg@1"},
+		{EcosystemPHP, PackageManagerComposer, "pkg:composer/pkg@1"},
+		{EcosystemElixir, PackageManagerMix, "pkg:hex/pkg@1"},
+		{EcosystemDotNet, PackageManagerNuGet, "pkg:nuget/pkg@1"},
+		{EcosystemCPP, PackageManagerConan, "pkg:conan/pkg@1"},
+		{EcosystemScala, PackageManagerSBT, "pkg:maven/pkg@1"},
+		{EcosystemDart, PackageManagerPub, "pkg:pub/pkg@1"},
+		{EcosystemSwift, PackageManagerCocoaPods, "pkg:cocoapods/pkg@1"},
+		// swift alone among these requires a namespace; the table gives it
+		// one rather than pretending the types are uniform.
+		{EcosystemSwift, PackageManagerSwiftPM, "pkg:swift/ns/pkg@1"},
+	} {
+		namespace := ""
+		if testCase.manager == PackageManagerSwiftPM {
+			namespace = "ns"
+		}
+		if got := BuildPackageURLFor(testCase.ecosystem, testCase.manager, namespace, "pkg", "1"); got != testCase.want {
+			t.Errorf("%s/%s = %q, want %q", testCase.ecosystem, testCase.manager, got, testCase.want)
+		}
+	}
+}
+
+// An unknown pair still mints something rather than nothing, because the type
+// vocabulary is open (ADR-0041): a detector for an ecosystem purlkit has never
+// heard of expresses itself as its own purl type.
+func TestBuildPackageURLForKeepsTheVocabularyOpen(t *testing.T) {
+	if got := BuildPackageURLFor("pokemon", "", "", "pikachu", "25"); got != "pkg:pokemon/pikachu@25" {
+		t.Errorf("an unknown ecosystem minted %q; the type vocabulary is open and a custom type is "+
+			"first-class, not an error", got)
+	}
+}
+
+// An ecosystem that spans two registries refuses to answer without its
+// package manager, rather than answering for whichever registry the
+// ecosystem token happens to name.
+//
+// The zero value is the hazard here. A detector that simply forgets the
+// argument gets PackageManagerUnknown, and the one-token mapping this
+// constructor exists to prevent arrives through the back door.
+func TestBuildPackageURLForRefusesAnAmbiguousEcosystemWithoutItsManager(t *testing.T) {
+	// swift covers SwiftPM and CocoaPods; erlang covers Hex and OTP.
+	for _, ecosystem := range []Ecosystem{EcosystemSwift, "erlang"} {
+		if got := BuildPackageURLFor(ecosystem, PackageManagerUnknown, "ns", "pkg", "1"); got != "" {
+			t.Errorf("%s without a package manager minted %q; it spans more than one registry, so that "+
+				"identity is right for one of them and silently wrong for the rest", ecosystem, got)
+		}
+	}
+
+	// An unambiguous ecosystem still answers: the refusal is scoped to the
+	// case where the manager carries information, not to every missing one.
+	if got := BuildPackageURLFor(EcosystemPython, PackageManagerUnknown, "", "requests", "2"); got != "pkg:pypi/requests@2" {
+		t.Errorf("python without a manager = %q, want pkg:pypi/requests@2; python has one registry and "+
+			"refusing there would break callers for nothing", got)
+	}
+
+	// And the ambiguity is derived from purlkit, not declared here, so the
+	// predicate must agree with the thing it is derived from.
+	if !ecosystemNeedsItsPackageManager(EcosystemSwift) {
+		t.Error("swift is not detected as needing its manager; the derivation has stopped seeing " +
+			"purlkit's cocoapods/swiftpm split")
+	}
+	if ecosystemNeedsItsPackageManager(EcosystemPython) {
+		t.Error("python is detected as needing its manager; the derivation is reporting ecosystems " +
+			"whose managers all agree")
+	}
+}
+
+// A manager that names no registry for this ecosystem is not a manager for
+// these purposes. PackageManagerOther belongs to EcosystemOther and
+// PackageManagerMultiple to none, so both would satisfy a "did you pass one?"
+// check while answering nothing about which registry a package came from.
+func TestBuildPackageURLForRequiresAManagerOfThatEcosystem(t *testing.T) {
+	for _, manager := range []PackageManager{PackageManagerUnknown, PackageManagerOther, PackageManagerMultiple} {
+		if got := BuildPackageURLFor(EcosystemSwift, manager, "ns", "pkg", "1"); got != "" {
+			t.Errorf("swift with manager %q minted %q; that manager belongs to %q, so it cannot say "+
+				"whether this is SwiftPM or CocoaPods", manager, got, manager.Ecosystem())
+		}
+	}
+	// The two that do belong still answer, and answer differently.
+	swiftpm := BuildPackageURLFor(EcosystemSwift, PackageManagerSwiftPM, "ns", "pkg", "1")
+	cocoapods := BuildPackageURLFor(EcosystemSwift, PackageManagerCocoaPods, "", "pkg", "1")
+	if swiftpm == "" || cocoapods == "" || swiftpm == cocoapods {
+		t.Errorf("swiftpm = %q, cocoapods = %q; both belong to the swift ecosystem and must mint "+
+			"distinct identities", swiftpm, cocoapods)
+	}
+}

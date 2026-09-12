@@ -87,11 +87,11 @@ func TestRegistryPackagesForGraphTargetLimitsToTarget(t *testing.T) {
 func TestMissingLicensePackagesAndNormalizeLicenseSet(t *testing.T) {
 	packages := []*sdk.Package{
 		nil,
-		{Name: "has-license", Version: "1.0.0",
+		{Coordinates: sdk.Coordinates{Name: "has-license", Version: "1.0.0"},
 			Licenses: []sdk.PackageLicense{{Value: "MIT"}}},
-		{Name: "", Version: "1.0.0"},
-		{Name: "no-version", Version: " "},
-		{Name: "eligible", Version: "2.0.0"},
+		{Coordinates: sdk.Coordinates{Name: "", Version: "1.0.0"}},
+		{Coordinates: sdk.Coordinates{Name: "no-version", Version: " "}},
+		{Coordinates: sdk.Coordinates{Name: "eligible", Version: "2.0.0"}},
 	}
 	eligible := MissingLicensePackages(packages)
 	if len(eligible) != 1 || eligible[0].Name != "eligible" {

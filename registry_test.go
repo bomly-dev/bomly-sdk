@@ -14,7 +14,7 @@ func TestPackageRegistryUsesPURLAsDefaultPackageID(t *testing.T) {
 		t.Fatalf("Ensure() package ID = %q, want %q", ensured.ID, purl)
 	}
 
-	added := registry.Add(&Package{PURL: purl})
+	added := registry.Add(&Package{Coordinates: Coordinates{PURL: purl}})
 	if added == nil {
 		t.Fatal("Add() returned nil")
 	}

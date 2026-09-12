@@ -1107,18 +1107,20 @@ func PackageFromDependencyNode(dep *DependencyNode) *Package {
 	}
 	purl := dep.NodeID()
 	return &Package{
-		PURL:           purl,
-		Ecosystem:      dep.Ecosystem,
-		Name:           dep.Name,
-		Version:        dep.Version,
-		Org:            dep.Org,
-		Type:           dep.Type,
-		PackageManager: dep.PackageManager,
-		Language:       dep.Language,
-		ID:             purl,
-		ResolvedURL:    dep.ResolvedURL,
-		Copyright:      dep.Copyright,
-		CPEs:           cloneStrings(dep.CPEs),
+		Coordinates: Coordinates{
+			PURL:           purl,
+			Ecosystem:      dep.Ecosystem,
+			Name:           dep.Name,
+			Version:        dep.Version,
+			Org:            dep.Org,
+			Type:           dep.Type,
+			PackageManager: dep.PackageManager,
+			Language:       dep.Language,
+		},
+		ID:          purl,
+		ResolvedURL: dep.ResolvedURL,
+		Copyright:   dep.Copyright,
+		CPEs:        cloneStrings(dep.CPEs),
 		// The component-level assertions the detecting or ingesting source
 		// made travel with the package, so an ingested document's supplier
 		// and description reach the registry rather than stopping at the

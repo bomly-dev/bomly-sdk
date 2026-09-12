@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"strings"
+	"sync"
 
 	"github.com/bomly-dev/bomly-sdk/purlkit"
 )
@@ -30,6 +31,68 @@ func BuildPackageURL(purlType, namespace, name, version string) string {
 	}
 	return built
 }
+
+// BuildPackageURLFor builds a package URL for an ecosystem and its package
+// manager, deciding the package-url type itself.
+//
+// Prefer this over BuildPackageURL wherever both tokens are known, which is
+// every detector. The type is not a parameter here, so a caller cannot pick
+// one: the mapping is purlkit's (ADR-0038) and stays there.
+//
+// That matters for a reason a code-review rule could not reach. The type
+// depends on BOTH tokens, and passing one is silently wrong in at least one
+// live case: the swift ecosystem covers SwiftPM and CocoaPods, purlkit has no
+// "swift" case because swift is itself a purl type, and so the package manager
+// is what separates pkg:swift from pkg:cocoapods. A caller handing
+// PackageURLTypeForValues only the ecosystem gets "swift" for a CocoaPods
+// package -- wrong ecosystem, no advisory matches, and nothing to see at the
+// call site. Taking both as parameters makes that unrepresentable rather than
+// discouraged. See bomly-dev/bomly-cli#449.
+//
+// It is additive: BuildPackageURL keeps working for callers that genuinely
+// have only a type string, such as an SBOM ingest reading one off a document.
+func BuildPackageURLFor(ecosystem Ecosystem, manager PackageManager, namespace, name, version string) string {
+	if ecosystemNeedsItsPackageManager(ecosystem) && manager.Ecosystem() != ecosystem {
+		// Refusing beats guessing. The ecosystem alone answers for one of
+		// its registries and is wrong for the others, and the wrong answer
+		// is a well-formed package URL that matches no advisory -- the
+		// failure mode this constructor exists to remove.
+		//
+		// The test is whether the manager belongs to this ecosystem, not
+		// whether it is non-zero. PackageManagerOther belongs to
+		// EcosystemOther and PackageManagerMultiple to none, so both name
+		// a manager while disambiguating nothing -- they would have walked
+		// past a zero-value check and minted the same wrong identity.
+		//
+		// An empty result is what BuildPackageURL already returns when
+		// there is no valid identity to mint, so callers handle it.
+		return ""
+	}
+	return BuildPackageURL(PackageURLTypeForValues(ecosystem, manager), namespace, name, version)
+}
+
+// ecosystemNeedsItsPackageManager reports whether the ecosystem alone gives a
+// different package-url type than one of its own package managers would.
+//
+// Derived, not listed. purlkit already knows which ecosystems span more than
+// one registry -- it has no "swift" case because swift is itself a purl type
+// and cocoapods is the other half, and it maps erlang at the manager level so
+// a bare erlang value cannot guess between Hex and OTP. Asking it, rather than
+// copying the answer into a table here, means an ecosystem that becomes
+// ambiguous in a later purlkit release is covered without an edit.
+var ecosystemNeedsItsPackageManager = sync.OnceValue(func() func(Ecosystem) bool {
+	ambiguous := map[Ecosystem]bool{}
+	for _, manager := range AllPackageManagers() {
+		ecosystem := manager.Ecosystem()
+		if ecosystem == "" {
+			continue
+		}
+		if PackageURLTypeForValues(ecosystem, manager) != PackageURLTypeForValues(ecosystem) {
+			ambiguous[ecosystem] = true
+		}
+	}
+	return func(ecosystem Ecosystem) bool { return ambiguous[ecosystem] }
+})()
 
 // PackageURLTypeForValues maps ecosystem/build-system values to a package-url type.
 //
