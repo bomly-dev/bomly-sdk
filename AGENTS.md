@@ -189,6 +189,29 @@ branch.
   algorithm. Any unavoidable custom implementation documents why the upstream
   path is insufficient and ships differential or fixture tests plus fuzzing.
 
+### The modernizer, and the one analyzer we decline
+
+`go fix ./...` is the Go 1.27 modernizer and is worth running. One of its
+analyzers is declined in this repository and in bomly-cli, and the two must
+keep agreeing:
+
+```sh
+go fix -embedlit=false ./...
+```
+
+`embedlit` flattens `Coordinates: Coordinates{...}` into the bare promoted
+fields at construction sites. It is behaviour-identical and `gorelease` is
+indifferent, so nothing mechanical will object -- which is the reason to write
+the decision down. Coordinates is a named identity concept (ADR-0041), and the
+wrapper at a construction site is what makes the identity visible where a
+package is built. That argument is strongest in this module, because this is
+where identity is defined.
+
+The two repositories disagreed on this once already: the CLI's modernizer pass
+rejected the analyzer and this module's applied it, which put the same question
+on record with two different answers. Reverting cost 43 hunks. Running
+`go fix ./...` without the flag will silently propose all of them again.
+
 ## Build & test
 
 ```sh
