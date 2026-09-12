@@ -268,7 +268,19 @@ func TestWireV1TaggedFieldsDeclareOmitEmpty(t *testing.T) {
 				continue // not on the wire, or an embed contributing its own fields
 			}
 			key := typ.Name() + "." + name
-			if _, required := intentionallyRequired[key]; required {
+			if reason, required := intentionallyRequired[key]; required {
+				// Checked, not skipped. An exemption says this field
+				// carries no marker on purpose; if one appears, the
+				// exemption and the tag now claim opposite things and the
+				// bytes cannot tell them apart, because encoding/json emits
+				// a zero struct either way. Silence here would let the
+				// marker be added -- or swapped for omitzero, which looks
+				// like a marker and is not this one -- with both wire
+				// guards still green.
+				if hasJSONOption(options, "omitempty") {
+					t.Errorf("%s is listed as required (%s) and yet declares omitempty; the list and "+
+						"the tag disagree, so one of them is wrong", key, reason)
+				}
 				continue
 			}
 			// Deliberately NOT exempt for being in alwaysSentKeys. A key
