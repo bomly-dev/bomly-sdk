@@ -22,6 +22,15 @@ var wireRoots = []any{
 	RemediationHintRequest{}, RemediationHintResponse{},
 	MatcherDescriptor{}, AnalyzerDescriptor{},
 	DetectorDescriptor{}, AuditorDescriptor{},
+
+	// The structs a custom MarshalJSON emits, registered because nothing
+	// reaches them by exported field. Graph holds its nodes and edges
+	// unexported and encodes them through graphJSON, so a zero Graph emits
+	// {} and the walk sees nothing -- while a populated one puts every
+	// nodeWire and DependencyEdge key on the wire. Naming them here is
+	// possible because this test lives in package sdk; a consumer could not
+	// write this rule, which is the argument for it living in the SDK.
+	graphJSON{}, nodeWire{}, DependencyEdge{},
 }
 
 // alwaysSentKeys are the wire keys a zero value still emits, by "Type.key".
@@ -48,6 +57,9 @@ var alwaysSentKeys = map[string]string{
 	"AuditorDescriptor.name":               "a descriptor without a name cannot be routed to",
 	"PackageManagerSupport.packageManager": "the key the support row is about",
 	"DependencyNode.id":                    "the canonical package URL is the node's identity (ADR-0041)",
+	"nodeWire.id":                          "the encoded form of that same identity",
+	"DependencyEdge.fromId":                "an edge without both endpoints joins nothing",
+	"DependencyEdge.toId":                  "an edge without both endpoints joins nothing",
 	"DependencyNode.kind":                  "the sealed union's discriminator (ADR-0041)",
 	// Booleans whose whole purpose is the false answer.
 	"ReadyResponse.ready":           "false is the answer this response exists to give",
@@ -127,6 +139,9 @@ var alwaysSentKeys = map[string]string{
 // field from the tag rule, and those are exactly the fields whose marker can be
 // dropped without moving a byte -- the regression that started this thread.
 var intentionallyRequired = map[string]string{
+	"nodeWire.id":                                           "the encoded node identity",
+	"DependencyEdge.fromId":                                 "an edge without both endpoints joins nothing",
+	"DependencyEdge.toId":                                   "an edge without both endpoints joins nothing",
 	"AnalyzeRequest.analyzerFilter":                         "the field carries no marker today",
 	"AnalyzeRequest.executionTarget":                        "the field carries no marker today",
 	"AnalyzeRequest.query":                                  "the field carries no marker today",
