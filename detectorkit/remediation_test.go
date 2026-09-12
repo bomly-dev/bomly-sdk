@@ -27,11 +27,9 @@ func TestBuildRemediationHintsResolvesRawDetectionCoordinates(t *testing.T) {
 	}
 	registry := sdk.NewPackageRegistry()
 	registry.Add(&sdk.Package{
-		Coordinates: sdk.Coordinates{
-			PURL:    "pkg:npm/example@1.0.0",
-			Name:    "example",
-			Version: "1.0.0",
-		},
+		PURL:    "pkg:npm/example@1.0.0",
+		Name:    "example",
+		Version: "1.0.0",
 		Remediation: &sdk.PackageRemediation{
 			Status:             sdk.PackageRemediationComplete,
 			RecommendedVersion: "1.2.0",

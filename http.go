@@ -182,7 +182,7 @@ func mergeNoProxy(standard, bomly string) string {
 	entries := make([]string, 0)
 	seen := make(map[string]struct{})
 	for _, list := range []string{standard, bomly} {
-		for _, entry := range strings.Split(list, ",") {
+		for entry := range strings.SplitSeq(list, ",") {
 			entry = strings.TrimSpace(entry)
 			if entry == "" {
 				continue

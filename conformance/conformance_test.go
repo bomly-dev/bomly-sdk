@@ -70,7 +70,7 @@ func (m fakeMatcher) Match(_ context.Context, req sdk.MatchRequest) (sdk.MatchRe
 		var updates []*sdk.Package
 		if req.Registry != nil {
 			for _, pkg := range req.Registry.All() {
-				update := &sdk.Package{Coordinates: sdk.Coordinates{PURL: pkg.PURL}}
+				update := &sdk.Package{PURL: pkg.PURL}
 				update.Metadata = map[string]any{"conformance.annotation": m.config.Annotation}
 				updates = append(updates, update)
 			}

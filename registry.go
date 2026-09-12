@@ -74,7 +74,7 @@ func (r *PackageRegistry) Ensure(purl string) *Package {
 	if existing, ok := r.byPURL[purl]; ok {
 		return existing
 	}
-	stored := &Package{Coordinates: Coordinates{PURL: purl}, ID: purl}
+	stored := &Package{PURL: purl, ID: purl}
 	r.byPURL[purl] = stored
 	r.order = append(r.order, purl)
 	return stored

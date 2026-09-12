@@ -56,7 +56,7 @@ func TestNormalizeLicenseSetBoundsClassificationBatches(t *testing.T) {
 	// parser invocation per value would otherwise be unbounded — but no
 	// value is dropped and none masquerades as SPDX.
 	big := make([]string, 0, 1030)
-	for i := 0; i < 1030; i++ {
+	for i := range 1030 {
 		big = append(big, "MIT-"+string(rune('a'+i%26))+string(rune('a'+(i/26)%26))+string(rune('a'+(i/676)%26)))
 	}
 	licenses := NormalizeLicenseSet(big, "declared")
@@ -74,7 +74,7 @@ func TestNormalizeLicenseSetGatesOnTheParsedSet(t *testing.T) {
 	// A raw slice padded with blanks and duplicates must not cost a small
 	// unique set its classification: the gate measures what is parsed.
 	padded := make([]string, 0, 2000)
-	for i := 0; i < 1990; i++ {
+	for i := range 1990 {
 		if i%2 == 0 {
 			padded = append(padded, "  ")
 		} else {

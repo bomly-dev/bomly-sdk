@@ -195,7 +195,7 @@ func TestReplacementTargetsAreActive(t *testing.T) {
 			}
 			continue
 		}
-		for _, token := range strings.Fields(target) {
+		for token := range strings.FieldsSeq(target) {
 			if token == "WITH" || token == "AND" || token == "OR" {
 				continue
 			}

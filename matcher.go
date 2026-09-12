@@ -69,7 +69,7 @@ type MatchRequest struct {
 type MatchResult struct {
 	Registry       *PackageRegistry `json:"registry,omitempty"`
 	PackageUpdates []*Package       `json:"packageUpdates,omitempty"`
-	MatcherStats   MatcherStats     `json:"matcherStats,omitempty"`
+	MatcherStats   MatcherStats     `json:"matcherStats"`
 }
 
 // MatcherStats describes one completed matcher run and optional summary counts.

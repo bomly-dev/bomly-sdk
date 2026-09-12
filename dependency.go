@@ -2,7 +2,7 @@ package sdk
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/bomly-dev/bomly-sdk/purlkit"
@@ -63,13 +63,7 @@ func ScopesOf(scopes ...Scope) []Scope {
 		if s == ScopeUnknown {
 			continue
 		}
-		dup := false
-		for _, existing := range out {
-			if existing == s {
-				dup = true
-				break
-			}
-		}
+		dup := slices.Contains(out, s)
 		if !dup {
 			out = append(out, s)
 		}
@@ -566,12 +560,7 @@ func (n *DependencyNode) HasScope(scope Scope) bool {
 	if n == nil {
 		return false
 	}
-	for _, s := range n.Scopes {
-		if s == scope {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(n.Scopes, scope)
 }
 
 // AddScope records a scope on the dependency if not already present.
@@ -580,7 +569,7 @@ func (n *DependencyNode) AddScope(scope Scope) {
 		return
 	}
 	n.Scopes = append(n.Scopes, scope)
-	sort.Slice(n.Scopes, func(i, j int) bool { return n.Scopes[i] < n.Scopes[j] })
+	slices.Sort(n.Scopes)
 }
 
 // Clone returns a deep copy of the dependency node.

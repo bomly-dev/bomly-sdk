@@ -85,7 +85,7 @@ func (s *serviceServer) Analyze(ctx context.Context, in *wrapperspb.BytesValue) 
 	})
 }
 
-func analyzerDescriptorHandler(srv interface{}, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func analyzerDescriptorHandler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(emptypb.Empty)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -99,19 +99,19 @@ func analyzerDescriptorHandler(srv interface{}, ctx context.Context, dec func(an
 	return interceptor(ctx, in, &grpc.UnaryServerInfo{Server: srv, FullMethod: "/bomly.plugin.v1.Plugin/AnalyzerDescriptor"}, method)
 }
 
-func analyzerReadyHandler(srv interface{}, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func analyzerReadyHandler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	return bytesHandler(srv, ctx, dec, interceptor, "/bomly.plugin.v1.Plugin/AnalyzerReady", func(ctx context.Context, req *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
 		return srv.(*serviceServer).AnalyzerReady(ctx, req)
 	})
 }
 
-func analyzerApplicableHandler(srv interface{}, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func analyzerApplicableHandler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	return bytesHandler(srv, ctx, dec, interceptor, "/bomly.plugin.v1.Plugin/AnalyzerApplicable", func(ctx context.Context, req *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
 		return srv.(*serviceServer).AnalyzerApplicable(ctx, req)
 	})
 }
 
-func analyzeHandler(srv interface{}, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func analyzeHandler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	return bytesHandler(srv, ctx, dec, interceptor, "/bomly.plugin.v1.Plugin/Analyze", func(ctx context.Context, req *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
 		return srv.(*serviceServer).Analyze(ctx, req)
 	})

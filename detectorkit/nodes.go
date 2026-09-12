@@ -3,6 +3,7 @@ package detectorkit
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 
 	sdk "github.com/bomly-dev/bomly-sdk"
@@ -170,9 +171,7 @@ func cloneMetadata(in map[string]any) map[string]any {
 		return nil
 	}
 	out := make(map[string]any, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
+	maps.Copy(out, in)
 	return out
 }
 

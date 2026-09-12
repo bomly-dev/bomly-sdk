@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -650,12 +651,7 @@ func testRoleSpecific(t *testing.T, m sdk.Module, component any) {
 }
 
 func hasCapability(capabilities []string, capability string) bool {
-	for _, entry := range capabilities {
-		if entry == capability {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(capabilities, capability)
 }
 
 // testDetectorSupport requires discoverable package-manager support: without

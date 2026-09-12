@@ -4,6 +4,7 @@ import (
 	"container/heap"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -128,12 +129,7 @@ func CloneDependencyDetailTransitions(transitions []DependencyDetailTransition) 
 }
 
 func dependencyDetailFieldIncluded(fields []DependencyDetailField, wanted DependencyDetailField) bool {
-	for _, field := range fields {
-		if field == wanted {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(fields, wanted)
 }
 
 // Graph stores the typed graph nodes as a directed graph, keyed by NodeID.
@@ -955,10 +951,7 @@ func Compare(base, head *Graph) Diff {
 		sortNodesForDiff(baseNodes)
 		sortNodesForDiff(headNodes)
 
-		pairs := len(baseNodes)
-		if len(headNodes) < pairs {
-			pairs = len(headNodes)
-		}
+		pairs := min(len(headNodes), len(baseNodes))
 		for i := 0; i < pairs; i++ {
 			before := baseNodes[i]
 			after := headNodes[i]

@@ -193,7 +193,7 @@ func TestManifestFileKindSurvivesTheWire(t *testing.T) {
 func TestPackageCloneAndMergeCarryDetectedOrigins(t *testing.T) {
 	origin := DependencyOrigin{ArtifactURL: "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz"}
 	repo := DependencyOrigin{Repository: "https://github.com/left-pad/left-pad"}
-	pkg := &Package{Coordinates: Coordinates{PURL: "pkg:npm/left-pad@1.3.0"}, DetectedOrigins: []DependencyOrigin{origin}}
+	pkg := &Package{PURL: "pkg:npm/left-pad@1.3.0", DetectedOrigins: []DependencyOrigin{origin}}
 	clone := pkg.Clone()
 	clone.DetectedOrigins[0] = repo
 	if pkg.DetectedOrigins[0] != origin {
@@ -201,7 +201,7 @@ func TestPackageCloneAndMergeCarryDetectedOrigins(t *testing.T) {
 	}
 	// Merge unions rather than dropping: a package seeded from two nodes
 	// keeps every vetted origin regardless of seeding order.
-	target := &Package{Coordinates: Coordinates{PURL: "pkg:npm/left-pad@1.3.0"}, DetectedOrigins: []DependencyOrigin{origin}}
+	target := &Package{PURL: "pkg:npm/left-pad@1.3.0", DetectedOrigins: []DependencyOrigin{origin}}
 	target.MergeFrom(&Package{DetectedOrigins: []DependencyOrigin{origin, repo}})
 	if len(target.DetectedOrigins) != 2 {
 		t.Fatalf("MergeFrom detected origins = %+v, want the deduplicated union", target.DetectedOrigins)

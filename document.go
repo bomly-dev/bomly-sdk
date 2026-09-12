@@ -507,7 +507,7 @@ func (d *DocumentAssertions) UnmarshalJSON(data []byte) error {
 	// and as many byte copies before the bound saw any of them.
 	var wire struct {
 		documentAssertionsWire
-		Sources boundedDocumentSources `json:"sources,omitempty"`
+		Sources boundedDocumentSources `json:"sources"`
 	}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return err

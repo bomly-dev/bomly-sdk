@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -129,10 +130,8 @@ func parseKnownEcosystem(value string) (Ecosystem, error) {
 		if normalized == string(item.Ecosystem) {
 			return item.Ecosystem, nil
 		}
-		for _, alias := range item.Aliases {
-			if normalized == alias {
-				return item.Ecosystem, nil
-			}
+		if slices.Contains(item.Aliases, normalized) {
+			return item.Ecosystem, nil
 		}
 	}
 	return EcosystemUnknown, fmt.Errorf("unsupported ecosystem %q", value)
