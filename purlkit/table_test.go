@@ -94,6 +94,8 @@ func TestCanonicalEcosystem(t *testing.T) {
 		"sbt": "scala", "packagist": "php", "bundler": "ruby",
 		"hackage": "haskell", "cran": "r", "opam": "ocaml", "deb": "dpkg",
 		"githubactions": "github-actions",
+		// Both the spec type and the legacy minted type name the ecosystem.
+		"brew": "homebrew", "homebrew": "homebrew",
 	}
 	for input, want := range cases {
 		got, ok := CanonicalEcosystem(input)
@@ -106,6 +108,23 @@ func TestCanonicalEcosystem(t *testing.T) {
 	}
 	if got, ok := CanonicalEcosystem("nothing", "cargo"); !ok || got != "rust" {
 		t.Fatalf("CanonicalEcosystem(nothing, cargo) = (%q, %v), want (rust, true)", got, ok)
+	}
+}
+
+// TestTypeForValuesHomebrewMintsTheSpecType pins bomly-sdk#75: the
+// specification's Homebrew type is pkg:brew (testdata/purl-spec/types/
+// brew-definition.json), and the homebrew token used to fall through to the
+// verbatim fallback and mint the non-spec pkg:homebrew.
+func TestTypeForValuesHomebrewMintsTheSpecType(t *testing.T) {
+	for _, input := range []string{"homebrew", "brew", "Homebrew", " BREW "} {
+		if got := TypeForValues(input); got != "brew" {
+			t.Errorf("TypeForValues(%q) = %q, want brew", input, got)
+		}
+	}
+	// Ecosystem and manager both spell it homebrew; the order must not
+	// matter, and neither may reach the verbatim fallback.
+	if got := TypeForValues("homebrew", "homebrew"); got != "brew" {
+		t.Errorf("TypeForValues(homebrew, homebrew) = %q, want brew", got)
 	}
 }
 

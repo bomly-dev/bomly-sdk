@@ -25,6 +25,8 @@ func TestPackageURLTypeForValuesMatchesLegacySwitch(t *testing.T) {
 		"gradle": "maven",
 		"pdm":    "pypi", "setuppy": "pypi", "setup.py": "pypi",
 		"gemspec": "gem",
+		// The spec's Homebrew type is pkg:brew; the fallback minted pkg:homebrew (bomly-sdk#75).
+		"homebrew": "brew", "brew": "brew",
 	}
 	tokens := []string{
 		"", "nuget", "dotnet", "cargo", "rust", "pub", "dart", "cocoapods",
@@ -34,7 +36,7 @@ func TestPackageURLTypeForValuesMatchesLegacySwitch(t *testing.T) {
 		"deb", "sbt", "scala", "ruby", "gem", "rubygems", "bundler", "php",
 		"composer", "python", "pypi", "pip", "pipenv", "poetry", "uv", "go",
 		"gomod", "golang", "npm", "pnpm", "yarn", "bun", "maven", "gradle",
-		"apk", "rpm", "alpm", "conda", "generic", "unknown-token",
+		"apk", "rpm", "alpm", "conda", "homebrew", "brew", "generic", "unknown-token",
 	}
 	for _, first := range tokens {
 		for _, second := range tokens {
@@ -148,6 +150,7 @@ func TestEcosystemForPURLTypeAnswersEveryRowTheCLICopiesLost(t *testing.T) {
 		"swift":         EcosystemSwift,
 		"maven":         EcosystemMaven,
 		"githubactions": EcosystemGitHub,
+		"brew":          EcosystemHomebrew,
 
 		"npm":       EcosystemNPM,
 		"apk":       EcosystemAPK,
@@ -155,7 +158,6 @@ func TestEcosystemForPURLTypeAnswersEveryRowTheCLICopiesLost(t *testing.T) {
 		"alpm":      EcosystemALPM,
 		"conda":     EcosystemConda,
 		"nix":       EcosystemNix,
-		"homebrew":  EcosystemHomebrew,
 		"portage":   EcosystemPortage,
 		"snap":      EcosystemSnap,
 		"terraform": EcosystemTerraform,
@@ -233,6 +235,79 @@ func TestEcosystemForPURLTypeRoundTripsTheEcosystemVocabulary(t *testing.T) {
 	}
 }
 
+// TestHomebrewMintsBrewAndStillIngestsHomebrew pins both directions of
+// bomly-sdk#75. The specification's Homebrew type is pkg:brew
+// (purlkit/testdata/purl-spec/types/brew-definition.json); Bomly's token is
+// homebrew, and until this change a PURL-less Homebrew coordinate fell
+// through purlkit's verbatim fallback and minted the non-spec pkg:homebrew.
+//
+// Minting now answers the specification. Ingest keeps answering both: a
+// document minted before this change names pkg:homebrew, and reading it back
+// as no ecosystem would be a regression for nothing.
+//
+// What is deliberately not done is folding the two on merge. Identity is the
+// canonical package URL (ADR-0041), pkg:homebrew/sqlite@3.43.2 and
+// pkg:brew/sqlite@3.43.2 are different strings, and a fold keyed on anything
+// looser is the collapse TestSameNameInTwoEcosystemsStaysTwoNodes exists to
+// rule out. A pre-change document is re-scanned, not re-keyed.
+func TestHomebrewMintsBrewAndStillIngestsHomebrew(t *testing.T) {
+	for _, purlType := range []string{"brew", "homebrew"} {
+		if got := EcosystemForPURLType(purlType); got != EcosystemHomebrew {
+			t.Errorf("EcosystemForPURLType(%q) = %q, want %q", purlType, got, EcosystemHomebrew)
+		}
+	}
+	for _, values := range [][]any{
+		{EcosystemHomebrew},
+		{EcosystemHomebrew, PackageManagerHomebrew},
+		{"brew"},
+	} {
+		if got := PackageURLTypeForValues(values...); got != "brew" {
+			t.Errorf("PackageURLTypeForValues(%v) = %q, want brew", values, got)
+		}
+	}
+
+	const want = "pkg:brew/sqlite@3.43.2"
+	coords := Coordinates{
+		Ecosystem:      EcosystemHomebrew,
+		PackageManager: PackageManagerHomebrew,
+		Name:           "sqlite",
+		Version:        "3.43.2",
+	}
+	if got := coords.CanonicalPURL(); got != want {
+		t.Errorf("CanonicalPURL() = %q, want %q", got, want)
+	}
+	if got := BuildPackageURLFor(EcosystemHomebrew, PackageManagerHomebrew, "", "sqlite", "3.43.2"); got != want {
+		t.Errorf("BuildPackageURLFor(homebrew) = %q, want %q", got, want)
+	}
+	minted, err := NewDependencyNode(coords)
+	if err != nil {
+		t.Fatalf("new homebrew node: %v", err)
+	}
+	if got := minted.NodeID(); got != want {
+		t.Errorf("a PURL-less Homebrew coordinate is identified as %q, want %q", got, want)
+	}
+	if got := minted.Ecosystem; got != EcosystemHomebrew {
+		t.Errorf("the minted node's ecosystem is %q, want %q", got, EcosystemHomebrew)
+	}
+
+	// A stated package URL is a claim and is honoured as stated, so a
+	// pre-change document keeps its identity and its ecosystem.
+	const legacy = "pkg:homebrew/sqlite@3.43.2"
+	stated, err := NewDependencyNode(Coordinates{PURL: legacy})
+	if err != nil {
+		t.Fatalf("new node from the legacy purl: %v", err)
+	}
+	if got := stated.NodeID(); got != legacy {
+		t.Errorf("a stated %s is identified as %q; a stated package URL is honoured, not re-minted", legacy, got)
+	}
+	if got := stated.Ecosystem; got != EcosystemHomebrew {
+		t.Errorf("the legacy purl's ecosystem is %q, want %q", got, EcosystemHomebrew)
+	}
+	if minted.NodeID() == stated.NodeID() {
+		t.Errorf("pkg:brew and pkg:homebrew share the identity %q; they are different canonical package URLs and must not fold", minted.NodeID())
+	}
+}
+
 // specTypesOutsideTheEcosystemVocabulary names every purl type the
 // specification defines that EcosystemForPURLType deliberately does not
 // answer, with the reason. A type absent from both this list and the join is
@@ -250,6 +325,13 @@ var specTypesOutsideTheEcosystemVocabulary = map[string]string{
 	// Actions, which Bomly and Syft key on the non-spec pkg:githubactions;
 	// answering EcosystemGitHub for pkg:github would relabel every source
 	// checkout as a workflow dependency.
+	//
+	// The mint direction is the documented deviation that pairs with this
+	// refusal: the specification defines no type for Actions, so the
+	// homebrew correction (bomly-sdk#75, pkg:homebrew → pkg:brew) has no
+	// counterpart here. pkg:githubactions stays, as a Bomly-owned type in
+	// the open vocabulary, until the specification defines one — see the
+	// githubactions case in purlkit.TypeForValues.
 	"github": "names a repository, not the Actions ecosystem",
 
 	"bazel":            "a build system, not a package registry",
