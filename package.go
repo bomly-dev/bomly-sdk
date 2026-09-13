@@ -121,7 +121,11 @@ type PackageLocation struct {
 	// api:break-approved label. Neither this module nor the CLI compared
 	// locations or keyed a map by one, and encoding the set as a string to
 	// keep comparability would reintroduce the untyped stash that phase 1.4
-	// exists to remove. Compare RealPath and AccessPath, or key by them.
+	// exists to remove. A location's identity is its usage unit (ADR-0037):
+	// (RealPath, AccessPath, Position, ModuleRoot). Scopes and Relationship
+	// are attribution the record carries, not part of what it names, so two
+	// records of one usage merge them rather than standing side by side;
+	// usageRecordIndex and mergeNodeLocations in graph.go are the fold.
 
 	// ModuleRoot is the module whose resolution produced this site: a
 	// workspace member's directory, a Go main module, a Maven reactor

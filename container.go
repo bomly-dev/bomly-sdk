@@ -158,18 +158,6 @@ func MergeGraph(dst, src *Graph) error {
 	return CopyEdgesInto(dst, src, nil)
 }
 
-func hasDependencyLocation(existing []PackageLocation, loc PackageLocation) bool {
-	for _, e := range existing {
-		if e.RealPath != loc.RealPath || e.AccessPath != loc.AccessPath {
-			continue
-		}
-		if sourcePositionsEqual(e.Position, loc.Position) {
-			return true
-		}
-	}
-	return false
-}
-
 func sourcePositionsEqual(a, b *SourcePosition) bool {
 	if a == nil || b == nil {
 		return a == b
