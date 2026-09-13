@@ -531,12 +531,11 @@ func mergeUsageRecord(dst *PackageLocation, src PackageLocation) {
 }
 
 // mergeScopeSet returns the sorted union of two scope sets without unknown
-// entries. existing is returned unchanged when there is nothing to add, so a
-// record a witness had nothing to say about keeps the slice it had.
+// entries. It normalizes even when there is nothing to add: a surviving
+// record carrying an unknown or unsorted set would otherwise keep it in one
+// merge order and lose it in the other, and a fold must not depend on which
+// witness arrived first.
 func mergeScopeSet(existing, additions []Scope) []Scope {
-	if len(additions) == 0 {
-		return existing
-	}
 	merged := ScopesOf(append(append([]Scope(nil), existing...), additions...)...)
 	slices.Sort(merged)
 	return merged

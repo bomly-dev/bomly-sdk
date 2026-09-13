@@ -253,3 +253,50 @@ func TestMergeGraphUnionsAttributionOnAMatchedUsageRecord(t *testing.T) {
 		}
 	}
 }
+
+// TestMergeGraphNormalizesAMatchedUsageRecordInEitherOrder pins that folding
+// two records of one usage does not depend on which arrived first: a record
+// carrying only the unknown scope loses it whether it is the survivor or the
+// witness, so identical inputs consolidate to identical graphs.
+func TestMergeGraphNormalizesAMatchedUsageRecordInEitherOrder(t *testing.T) {
+	const mergedID = "pkg:npm/left-pad@1.3.0"
+	newEntry := func(scopes []Scope) *Graph {
+		g := New()
+		dep := mustDepPURL(t, mergedID)
+		dep.Locations = []PackageLocation{{
+			RealPath:   "packages/a/package.json",
+			AccessPath: "packages/a/package.json",
+			Position:   &SourcePosition{File: "packages/a/package.json", Line: 12},
+			ModuleRoot: "packages/a",
+			Scopes:     scopes,
+		}}
+		if err := g.AddNode(dep); err != nil {
+			t.Fatalf("AddNode: %v", err)
+		}
+		return g
+	}
+	unknownOnly := func() *Graph { return newEntry([]Scope{ScopeUnknown}) }
+	unscoped := func() *Graph { return newEntry(nil) }
+
+	for name, order := range map[string][]*Graph{
+		"unknown then unscoped": {unknownOnly(), unscoped()},
+		"unscoped then unknown": {unscoped(), unknownOnly()},
+	} {
+		merged := New()
+		for _, g := range order {
+			if err := MergeGraph(merged, g); err != nil {
+				t.Fatalf("%s: MergeGraph: %v", name, err)
+			}
+		}
+		node, ok := merged.DependencyNode(mergedID)
+		if !ok || node == nil {
+			t.Fatalf("%s: merged node missing", name)
+		}
+		if len(node.Locations) != 1 {
+			t.Fatalf("%s: locations = %+v, want one record for one usage", name, node.Locations)
+		}
+		if got := node.Locations[0].Scopes; len(got) != 0 {
+			t.Errorf("%s: record scopes = %q, want the unknown scope dropped in both orders", name, got)
+		}
+	}
+}
