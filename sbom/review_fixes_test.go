@@ -77,6 +77,61 @@ func TestAStatedBOMRefIsTheReference(t *testing.T) {
 	}
 }
 
+// A key derived for a ref-less component never takes a stated bom-ref, in
+// either document order: the stated ref may be the derived key's suffixed
+// spelling, or the derived key's base itself. Each component keeps its own
+// entry and every stated ref still names its own component.
+func TestADerivedReferenceNeverTakesAStatedBOMRef(t *testing.T) {
+	cases := map[string]string{
+		"stated suffix first": `[
+		  {"bom-ref":"pkg:npm/foo@1.0.0-2","type":"library","name":"stated","version":"9.9.9"},
+		  {"type":"library","name":"foo","version":"1.0.0","purl":"pkg:npm/foo@1.0.0"},
+		  {"type":"library","name":"foo","version":"1.0.0","purl":"pkg:npm/foo@1.0.0"}
+		]`,
+		"stated suffix after": `[
+		  {"type":"library","name":"foo","version":"1.0.0","purl":"pkg:npm/foo@1.0.0"},
+		  {"type":"library","name":"foo","version":"1.0.0","purl":"pkg:npm/foo@1.0.0"},
+		  {"bom-ref":"pkg:npm/foo@1.0.0-1","type":"library","name":"stated","version":"9.9.9"}
+		]`,
+		"stated base after": `[
+		  {"type":"library","name":"foo","version":"1.0.0","purl":"pkg:npm/foo@1.0.0"},
+		  {"bom-ref":"pkg:npm/foo@1.0.0","type":"library","name":"stated","version":"9.9.9"}
+		]`,
+	}
+	for name, components := range cases {
+		t.Run(name, func(t *testing.T) {
+			raw := `{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,"components":` + components + `}`
+			var stated []map[string]any
+			if err := json.Unmarshal([]byte(components), &stated); err != nil {
+				t.Fatalf("fixture: %v", err)
+			}
+			doc, _, err := UnmarshalAutoJSON([]byte(raw))
+			if err != nil {
+				t.Fatalf("ingest: %v", err)
+			}
+			if len(doc.Components) != len(stated) {
+				t.Fatalf("components = %d, want all %d kept: %+v", len(doc.Components), len(stated), doc.Components)
+			}
+			byID := map[string]Component{}
+			for _, component := range doc.Components {
+				if _, dup := byID[component.ID]; dup {
+					t.Fatalf("reference %q is shared by two components: %+v", component.ID, doc.Components)
+				}
+				byID[component.ID] = component
+			}
+			for _, entry := range stated {
+				ref, ok := entry["bom-ref"].(string)
+				if !ok {
+					continue
+				}
+				if got := byID[ref].Name; got != "stated" {
+					t.Errorf("stated bom-ref %q names %q, want the component that stated it", ref, got)
+				}
+			}
+		})
+	}
+}
+
 // A CycloneDX document's revision is decoded with its serial: a direct
 // UnmarshalJSON -> MarshalJSON round trip used to write revision 1 of a
 // document it had read at revision 4, which changes the BOM-Link identity.
