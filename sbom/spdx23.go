@@ -657,8 +657,8 @@ func spdxExternalReferences(component Component) []*v23.PackageExternalReference
 		})
 	}
 	for _, vuln := range component.Vulnerabilities {
-		locator := spdxVulnerabilityLocator(vuln)
-		if locator == "" {
+		locator, ok := spdxVulnerabilityLocator(vuln)
+		if !ok {
 			continue
 		}
 		refs = append(refs, &v23.PackageExternalReference{
@@ -722,15 +722,24 @@ func spdxAdditionalOriginReferences(component Component) []*v23.PackageExternalR
 	return refs
 }
 
-// spdxVulnerabilityLocator returns the best URL for a vulnerability external
-// reference, falling back to the advisory ID when no reference URL is known.
-func spdxVulnerabilityLocator(vuln Vulnerability) string {
-	if len(vuln.Advisories) > 0 {
-		if url := strings.TrimSpace(vuln.Advisories[0]); url != "" {
-			return url
+// spdxVulnerabilityLocator returns the first of a vulnerability's advisory
+// URLs that passes the SDK's external-reference gate for a SECURITY advisory,
+// and false when none does. It used to fall back to the bare advisory ID,
+// which is not a URL: the locator was unpublishable, and SPDX ingest ran the
+// same gate and dropped it, so the vulnerability vanished on the next hop.
+// A vulnerability with no advisory URL has no SPDX 2.3 reference to write.
+func spdxVulnerabilityLocator(vuln Vulnerability) (string, bool) {
+	for _, advisory := range vuln.Advisories {
+		ref, ok := sdk.ExternalReference{
+			Category: sdk.ExternalReferenceCategorySecurity,
+			Type:     common.TypeSecurityAdvisory,
+			Locator:  advisory,
+		}.Normalized()
+		if ok {
+			return ref.Locator, true
 		}
 	}
-	return strings.TrimSpace(vuln.ID)
+	return "", false
 }
 
 // spdxExtractedTexts indexes a document's extracted-license section by

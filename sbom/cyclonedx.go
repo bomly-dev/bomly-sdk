@@ -233,8 +233,9 @@ func (c cycloneDXCodec) decodeJSON(data []byte) (*Document, error) {
 // match when there is one: it is the only handle the format gives. A
 // primary component without one cannot be referenced at all, so it is the
 // inventory entry that carries the same package URL, or, lacking one, the
-// same name and version; reading it as a second component would list one
-// package twice.
+// same name and version, or, lacking a version too, the one entry with that
+// bare name; reading it as a second component would list one package twice.
+// A bare name that several inventory entries share names none of them.
 func cycloneDXListedPrimary(primary cdx.Component, inventory []cdx.Component, ids []string) (string, bool) {
 	if ref := strings.TrimSpace(primary.BOMRef); ref != "" {
 		for index, comp := range inventory {
@@ -246,19 +247,24 @@ func cycloneDXListedPrimary(primary cdx.Component, inventory []cdx.Component, id
 	}
 	purl := strings.TrimSpace(primary.PackageURL)
 	name, version := strings.TrimSpace(primary.Name), strings.TrimSpace(primary.Version)
+	match, matches := "", 0
 	for index, comp := range inventory {
 		switch {
 		case purl != "":
 			if strings.TrimSpace(comp.PackageURL) == purl {
 				return ids[index], true
 			}
-		case name != "" && version != "":
+		case name != "":
 			if strings.TrimSpace(comp.PackageURL) == "" && strings.TrimSpace(comp.Name) == name && strings.TrimSpace(comp.Version) == version {
-				return ids[index], true
+				if version != "" {
+					return ids[index], true
+				}
+				match = ids[index]
+				matches++
 			}
 		}
 	}
-	return "", false
+	return match, matches == 1
 }
 
 // distributeCycloneDXVulnerabilities reads a document's vulnerabilities back

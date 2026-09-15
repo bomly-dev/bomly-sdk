@@ -769,6 +769,7 @@ func TestARefLessPrimaryComponentListedInTheInventoryIsReadOnce(t *testing.T) {
 	cases := map[string]string{
 		"by package URL":      `{"type":"application","name":"myapp","version":"2.0.0","purl":"pkg:npm/myapp@2.0.0"}`,
 		"by name and version": `{"type":"application","name":"myapp","version":"2.0.0"}`,
+		"by bare name":        `{"type":"application","name":"myapp"}`,
 	}
 	for name, component := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -794,5 +795,63 @@ func TestARefLessPrimaryComponentListedInTheInventoryIsReadOnce(t *testing.T) {
 				t.Fatalf("re-exported primary component = %+v, want myapp", bom.Metadata)
 			}
 		})
+	}
+}
+
+// A bare name that several inventory entries share names none of them, so
+// the primary component is read as its own component rather than folded into
+// an arbitrary one.
+func TestAnAmbiguousBareNamePrimaryComponentIsNotFolded(t *testing.T) {
+	raw := `{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,
+	  "metadata":{"component":{"type":"application","name":"myapp"}},
+	  "components":[{"type":"application","name":"myapp"},{"type":"library","name":"myapp"}]}`
+	doc, err := UnmarshalJSON([]byte(raw), TargetCycloneDX16JSON)
+	if err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	if len(doc.Components) != 3 {
+		t.Fatalf("components = %+v, want both inventory entries and the primary", doc.Components)
+	}
+}
+
+// An SPDX SECURITY advisory reference carries a URL. A vulnerability with no
+// advisory URL used to be written with its bare ID as the locator, which the
+// SDK's reference gate refuses, so SPDX ingest dropped it on the next hop.
+// The first advisory that passes the gate is the locator; with none, no
+// reference is written.
+func TestSPDXAdvisoryReferencesCarryOnlyURLs(t *testing.T) {
+	doc := &Document{
+		Components: []Component{{
+			ID: "a", Name: "a", Version: "1.0.0", PURL: "pkg:npm/a@1.0.0",
+			Vulnerabilities: []Vulnerability{
+				{ID: "CVE-2024-0001"},
+				{ID: "CVE-2024-0002", Advisories: []string{"not a url", "https://example.com/CVE-2024-0002"}},
+			},
+		}},
+		Roots: []string{"a"},
+	}
+	out, err := MarshalJSON(doc, TargetSPDX23JSON, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	var emitted struct {
+		Packages []struct {
+			ExternalRefs []struct {
+				ReferenceType    string `json:"referenceType"`
+				ReferenceLocator string `json:"referenceLocator"`
+			} `json:"externalRefs"`
+		} `json:"packages"`
+	}
+	if err := json.Unmarshal(out, &emitted); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	var advisories []string
+	for _, ref := range emitted.Packages[0].ExternalRefs {
+		if ref.ReferenceType == "advisory" {
+			advisories = append(advisories, ref.ReferenceLocator)
+		}
+	}
+	if len(advisories) != 1 || advisories[0] != "https://example.com/CVE-2024-0002" {
+		t.Fatalf("advisory locators = %v, want only the URL", advisories)
 	}
 }
