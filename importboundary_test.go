@@ -11,10 +11,14 @@ import (
 	"testing"
 )
 
-// boundedImports lists third-party parsing libraries that may only be
-// imported from their owning kit subpackage (ADR-0038 in bomly-cli's
-// dev-docs/adr): the kit is the single home for that behavior, and a direct
-// import elsewhere reintroduces the divergence the kit exists to end.
+// boundedImports lists parsing libraries that may only be imported from their
+// owning subpackage (ADR-0038 in bomly-cli's dev-docs/adr): that package is
+// the single home for the behavior, and a direct import elsewhere
+// reintroduces the divergence it exists to end. The strict JSON readers are
+// bounded the same way for the opposite reason (ADR-0039): the SBOM codec
+// refuses an ambiguous document on purpose, and the plugin wire in the root
+// package must keep decoding leniently, so nothing outside sbom/ may reach
+// for a reader that would tighten it by accident.
 var boundedImports = []struct {
 	module  string
 	kitDir  string            // empty means only explicitly allowed files may import it
@@ -39,6 +43,16 @@ var boundedImports = []struct {
 		// parser directly.
 		module:  "github.com/github/go-spdx",
 		kitDir:  "spdxkit",
+		allowed: map[string]string{},
+	},
+	{
+		module:  "encoding/json/v2",
+		kitDir:  "sbom",
+		allowed: map[string]string{},
+	},
+	{
+		module:  "encoding/json/jsontext",
+		kitDir:  "sbom",
 		allowed: map[string]string{},
 	},
 }
