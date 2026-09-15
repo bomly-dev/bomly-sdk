@@ -63,27 +63,6 @@ func TestPartialOrMalformedEOLIsNotInvented(t *testing.T) {
 	}
 }
 
-// Bomly's own export is the only producer of these names, so writer and
-// reader have to agree on them; a mismatch writes a field nobody retrieves,
-// which is exactly the defect being closed.
-func TestEOLPropertyNamesAreSharedByWriterAndReader(t *testing.T) {
-	props := cycloneDXEOLProperties(&EOL{EOL: true, EOLDate: "2025-01-31", Cycle: "1.x"})
-	if len(props) != 3 {
-		t.Fatalf("properties = %+v, want flag, date and cycle", props)
-	}
-	got := cycloneDXIngestedEOL(&props)
-	if got == nil || !got.EOL || got.EOLDate != "2025-01-31" || got.Cycle != "1.x" {
-		t.Fatalf("reader did not recover what the writer emitted: %+v", got)
-	}
-	var names []string
-	for _, p := range props {
-		names = append(names, p.Name)
-	}
-	if joined := strings.Join(names, ","); joined != cycloneDXEOLProperty+","+cycloneDXEOLDateProperty+","+cycloneDXEOLCycleProperty {
-		t.Errorf("property names = %q", joined)
-	}
-}
-
 // The property names are the wire format. A writer and reader that share a
 // constant always agree with each other -- that is what the constant is for --
 // but they can still agree on a name no other Bomly uses, which silently

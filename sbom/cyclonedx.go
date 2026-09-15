@@ -2,6 +2,7 @@ package sbom
 
 import (
 	"bytes"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -111,10 +112,10 @@ func (c cycloneDXCodec) decodeJSON(data []byte) (*Document, error) {
 	componentByID := make(map[string]Component)
 	var unknownScopes []string
 	if bom.Components != nil {
-		for _, comp := range *bom.Components {
+		for index, comp := range *bom.Components {
 			unknownScopes = mergeUnknownScopeTokens(unknownScopes, unknownScopeTokens(cycloneDXCarriedScopes(comp.Properties)))
 			component := Component{
-				ID:     comp.BOMRef,
+				ID:     cycloneDXComponentRef(comp, index, componentByID),
 				Name:   comp.Name,
 				Org:    comp.Group,
 				Type:   string(comp.Type),
@@ -130,7 +131,7 @@ func (c cycloneDXCodec) decodeJSON(data []byte) (*Document, error) {
 				Licenses:    parseCycloneDXLicenses(comp.Licenses),
 			}
 			applyCycloneDXAssertions(&component, comp)
-			componentByID[comp.BOMRef] = component
+			componentByID[component.ID] = component
 		}
 	}
 
@@ -170,7 +171,7 @@ func (c cycloneDXCodec) decodeJSON(data []byte) (*Document, error) {
 		root := bom.Metadata.Component
 		unknownScopes = mergeUnknownScopeTokens(unknownScopes, unknownScopeTokens(cycloneDXCarriedScopes(root.Properties)))
 		component := Component{
-			ID:          root.BOMRef,
+			ID:          cycloneDXComponentRef(*root, 0, componentByID),
 			Name:        root.Name,
 			Org:         root.Group,
 			Type:        string(root.Type),
@@ -186,7 +187,7 @@ func (c cycloneDXCodec) decodeJSON(data []byte) (*Document, error) {
 		// half the fields was a silent hole: supplier, description, hashes,
 		// CPE and references all stopped here.
 		applyCycloneDXAssertions(&component, *root)
-		componentByID[root.BOMRef] = component
+		componentByID[component.ID] = component
 	}
 
 	components := make([]Component, 0, len(componentByID))
@@ -225,6 +226,7 @@ func (c cycloneDXCodec) decodeJSON(data []byte) (*Document, error) {
 		Tools:              cycloneDXToolNames(bom.Metadata),
 		Created:            created,
 		SerialNumber:       bom.SerialNumber,
+		SerialVersion:      bom.Version,
 		Components:         components,
 		Dependencies:       dependencies,
 		Roots:              roots,
@@ -802,4 +804,33 @@ func parseCycloneDXLicenses(licenses *cdx.Licenses) []License {
 		}
 	}
 	return out
+}
+
+// cycloneDXComponentRef is the key a decoded component is held under. It is
+// the component's own bom-ref when it has one. CycloneDX makes bom-ref
+// optional, and keying every ref-less component on "" folded them into one
+// entry, so a third-party document with two such components lost inventory
+// on ingest. A ref-less component is keyed on its package URL, then on
+// name@version, then on its position, and a key already taken by another
+// component is suffixed with the position -- the reference is a document-local
+// handle and only has to be distinct; identity is minted from the coordinates
+// when the document becomes a graph.
+func cycloneDXComponentRef(comp cdx.Component, index int, taken map[string]Component) string {
+	if ref := strings.TrimSpace(comp.BOMRef); ref != "" {
+		return ref
+	}
+	candidate := strings.TrimSpace(comp.PackageURL)
+	if candidate == "" {
+		candidate = strings.TrimSpace(comp.Name)
+		if version := strings.TrimSpace(comp.Version); candidate != "" && version != "" {
+			candidate += "@" + version
+		}
+	}
+	if candidate == "" {
+		candidate = fmt.Sprintf("component-%d", index)
+	}
+	if _, clash := taken[candidate]; clash {
+		candidate = fmt.Sprintf("%s-%d", candidate, index)
+	}
+	return candidate
 }

@@ -10,7 +10,8 @@
 //
 // This package is the one home for that behaviour (bomly-cli ADR-0045). It
 // was the CLI's internal/sbom, copied into two plugin repositories and drifted
-// there; every consumer now reads this package instead. What a document may
-// name of a graph -- the questions every renderer and exporter asks of a
-// node -- is the sibling package graphview.
+// there; the plugins and then the CLI adopt this package from the release
+// that carries it and delete their copies. What a document may name of a
+// graph -- the questions every renderer and exporter asks of a node -- is the
+// sibling package graphview.
 package sbom

@@ -482,7 +482,10 @@ func TestCycloneDXCreditsAnIngestedOrganization(t *testing.T) {
 	if err := json.Unmarshal(raw, &bom); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if bom.Metadata == nil || bom.Metadata.Manufacturer == nil || bom.Metadata.Manufacturer.Name != "Acme Corp" {
+	if bom.Metadata == nil {
+		t.Fatalf("the export carries no metadata:\n%s", raw)
+	}
+	if bom.Metadata.Manufacturer == nil || bom.Metadata.Manufacturer.Name != "Acme Corp" {
 		t.Errorf("manufacturer = %+v, want the source's organization", bom.Metadata.Manufacturer)
 	}
 }

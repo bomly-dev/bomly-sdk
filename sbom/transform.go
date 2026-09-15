@@ -170,10 +170,16 @@ func FromGraphEntries(g *sdk.Graph, entries []sdk.GraphEntry, opts BuildOptions)
 	// it -- and, being exactly one ID, it also suppressed the synthesized root
 	// below that would have repaired it.
 	rootIDs := exportedRootIDs(g, componentIDs)
+	// An override that names a component the graph does not export is not
+	// an override: it used to count as one anyway and suppressed the
+	// synthesized root below, leaving a multi-root document with no primary
+	// component at all.
+	rootOverridden := false
 	if opts.RootComponentID != "" {
 		for _, c := range components {
 			if c.ID == opts.RootComponentID {
 				rootIDs = []string{opts.RootComponentID}
+				rootOverridden = true
 				break
 			}
 		}
@@ -184,7 +190,7 @@ func FromGraphEntries(g *sdk.Graph, entries []sdk.GraphEntry, opts BuildOptions)
 	// manifest node. Synthesize a pseudo root that represents the scanned
 	// project and depends on every graph root so both formats agree on the
 	// document's primary identity and the export forms one connected graph.
-	if opts.ProjectRoot != nil && strings.TrimSpace(opts.ProjectRoot.Name) != "" && opts.RootComponentID == "" && len(rootIDs) != 1 {
+	if opts.ProjectRoot != nil && strings.TrimSpace(opts.ProjectRoot.Name) != "" && !rootOverridden && len(rootIDs) != 1 {
 		root := projectRootComponent(*opts.ProjectRoot)
 		sort.Strings(rootIDs)
 		components = append(components, root)
@@ -700,62 +706,15 @@ func componentLicenses(licenses []sdk.PackageLicense) []License {
 	return out
 }
 
-// deprecatedSPDXLicenseIDs maps SPDX license identifiers that the SPDX license
-// list has deprecated onto their current replacements. Only unambiguous
-// renames are listed; anything else passes through untouched.
-var deprecatedSPDXLicenseIDs = map[string]string{
-	"AGPL-1.0":                         "AGPL-1.0-only",
-	"AGPL-3.0":                         "AGPL-3.0-only",
-	"GFDL-1.1":                         "GFDL-1.1-only",
-	"GFDL-1.2":                         "GFDL-1.2-only",
-	"GFDL-1.3":                         "GFDL-1.3-only",
-	"GPL-1.0":                          "GPL-1.0-only",
-	"GPL-1.0+":                         "GPL-1.0-or-later",
-	"GPL-2.0":                          "GPL-2.0-only",
-	"GPL-2.0+":                         "GPL-2.0-or-later",
-	"GPL-3.0":                          "GPL-3.0-only",
-	"GPL-3.0+":                         "GPL-3.0-or-later",
-	"LGPL-2.0":                         "LGPL-2.0-only",
-	"LGPL-2.0+":                        "LGPL-2.0-or-later",
-	"LGPL-2.1":                         "LGPL-2.1-only",
-	"LGPL-2.1+":                        "LGPL-2.1-or-later",
-	"LGPL-3.0":                         "LGPL-3.0-only",
-	"LGPL-3.0+":                        "LGPL-3.0-or-later",
-	"GPL-2.0-with-classpath-exception": "GPL-2.0-only WITH Classpath-exception-2.0",
-}
-
-// normalizeSPDXLicenseExpression replaces deprecated SPDX identifiers inside a
-// license expression with their current names, preserving expression
-// structure. Non-SPDX free-text values pass through unchanged.
+// normalizeSPDXLicenseExpression replaces deprecated SPDX identifiers inside
+// a license expression with their current names. It is spdxkit's rule: the
+// kit validates the whole value before rewriting anything, so free text that
+// happens to contain a deprecated identifier ("use GPL-2.0 here") is returned
+// as written rather than turned into a claim the source never made. A
+// token-by-token rewrite kept here did exactly that, from a second copy of
+// the kit's replacement table.
 func normalizeSPDXLicenseExpression(expression string) string {
-	if strings.TrimSpace(expression) == "" {
-		return expression
-	}
-	var b strings.Builder
-	b.Grow(len(expression))
-	token := strings.Builder{}
-	flush := func() {
-		if token.Len() == 0 {
-			return
-		}
-		t := token.String()
-		if replacement, ok := deprecatedSPDXLicenseIDs[t]; ok {
-			b.WriteString(replacement)
-		} else {
-			b.WriteString(t)
-		}
-		token.Reset()
-	}
-	for _, r := range expression {
-		if r == ' ' || r == '(' || r == ')' {
-			flush()
-			b.WriteRune(r)
-			continue
-		}
-		token.WriteRune(r)
-	}
-	flush()
-	return b.String()
+	return spdxkit.CanonicalExpression(expression)
 }
 
 // componentPURL returns the package URL a component publishes.

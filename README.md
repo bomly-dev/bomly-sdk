@@ -58,9 +58,10 @@ plugins reuse the same implementations Bomly's built-ins use:
 - `sbom` — the SBOM codec: projects a graph into SPDX 2.3 or CycloneDX JSON and reads such a document back into a graph, with the document model, the strict ingest preflight, and the assertions a document carries about itself.
 - `graphview` — what a document may say about a node: the package URL it publishes, which of its children a document can name, and which nodes count as top-level parents.
 
-Both moved here from the CLI's `internal/sbom` and `internal/graphview`
-(bomly-cli ADR-0045); the CLI and the Syft and Grype plugins read this one
-copy.
+Both come from the CLI's `internal/sbom` and `internal/graphview`
+(bomly-cli ADR-0045). The CLI and the Syft and Grype plugins adopt this
+package from the release that carries it, in that order -- the plugins
+first, then the CLI, which pins both -- and delete their copies as they do.
 
 ## Compatibility
 

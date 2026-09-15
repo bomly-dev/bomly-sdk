@@ -10,8 +10,9 @@ and `DependencyNode` records — `Package`, `Vulnerability`, `Finding`,
 `Graph`), plugin kinds and validation, support metadata, and the
 shared helper subpackages (`system`, `filecache`, `logkit`, `detectorkit`,
 `matcherkit`, `testkit`, `conformance`), and the SBOM codec (`sbom`, with
-`graphview` beside it) that the CLI and the Syft and Grype plugins all read
-instead of carrying a copy (bomly-cli ADR-0045).
+`graphview` beside it), which the CLI and the Syft and Grype plugins adopt
+from the release that carries it in place of the copies they carried
+(bomly-cli ADR-0045).
 
 ## This module is the source of truth
 

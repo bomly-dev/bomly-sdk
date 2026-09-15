@@ -30,11 +30,22 @@ import (
 // there.
 const syftSchemaURLMarker = "anchore/syft"
 
+// MaxDocumentBytes bounds what any ingest entry point will read. The strict
+// preflight and the codecs do work proportional to the input, and the CLI
+// bounds a file at exactly this size before it reads it; a consumer of this
+// package handing over bytes it obtained some other way gets the same bound
+// here rather than none. A dumb byte count, on purpose: the bound is a
+// resource limit, not a statement about what a document may contain.
+const MaxDocumentBytes = 256 << 20
+
 var (
 	ErrNilDocument       = errors.New("sbom document is nil")
 	ErrUnsupportedTarget = errors.New("unsupported sbom target")
 	ErrUnsupportedFormat = errors.New("unsupported sbom format")
 	ErrMalformedJSON     = errors.New("malformed sbom json")
+	// ErrDocumentTooLarge reports an input over MaxDocumentBytes, refused
+	// before any of it is parsed.
+	ErrDocumentTooLarge = errors.New("sbom document exceeds the size bound")
 
 	// ErrSyftJSONUnsupported reports that the input is a syft-format JSON SBOM,
 	// which Bomly does not ingest. Detection is kept so callers can point the
@@ -76,6 +87,9 @@ func UnmarshalJSON(data []byte, target Target) (*Document, error) {
 	c, ok := codecs[target]
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrUnsupportedTarget, target)
+	}
+	if err := requireWithinSizeBound(data); err != nil {
+		return nil, err
 	}
 	if err := requireUnambiguousJSON(data); err != nil {
 		return nil, err
@@ -127,6 +141,9 @@ func decodeDocument(c codec, data []byte) (*Document, error) {
 
 // DetectJSONTarget identifies the supported SBOM JSON format represented by data.
 func DetectJSONTarget(data []byte) (Target, error) {
+	if err := requireWithinSizeBound(data); err != nil {
+		return "", err
+	}
 	trimmed := bytes.TrimSpace(data)
 	if len(trimmed) == 0 || !json.Valid(trimmed) {
 		return "", ErrMalformedJSON
@@ -175,6 +192,9 @@ func UnmarshalAutoJSON(data []byte) (*Document, Target, error) {
 	// claims to be by the same ambiguity this check exists to refuse -- and
 	// sniffing first reported an unsupported format for exactly the input the
 	// ambiguity error was written to explain.
+	if err := requireWithinSizeBound(data); err != nil {
+		return nil, "", err
+	}
 	if err := requireUnambiguousJSON(data); err != nil {
 		return nil, "", err
 	}
@@ -210,4 +230,13 @@ func MarshalGraphEntriesJSON(g *sdk.Graph, entries []sdk.GraphEntry, target Targ
 		return nil, err
 	}
 	return MarshalJSON(doc, target, encodeOpts)
+}
+
+// requireWithinSizeBound refuses an input over MaxDocumentBytes before any
+// parser sees it.
+func requireWithinSizeBound(data []byte) error {
+	if len(data) > MaxDocumentBytes {
+		return fmt.Errorf("%w: %d bytes, more than %d", ErrDocumentTooLarge, len(data), MaxDocumentBytes)
+	}
+	return nil
 }

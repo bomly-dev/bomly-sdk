@@ -409,12 +409,19 @@ func TestFromDepGraph_StampsFirstPartyVersionFromProjectRoot(t *testing.T) {
 
 func TestNormalizeSPDXLicenseExpression(t *testing.T) {
 	cases := map[string]string{
-		"GPL-2.0":             "GPL-2.0-only",
-		"GPL-3.0+":            "GPL-3.0-or-later",
-		"(MIT OR GPL-2.0)":    "(MIT OR GPL-2.0-only)",
+		"GPL-2.0":  "GPL-2.0-only",
+		"GPL-3.0+": "GPL-3.0-or-later",
+		// spdxkit's canonical rendering drops the redundant outer parentheses
+		// of a valid expression.
+		"(MIT OR GPL-2.0)":    "MIT OR GPL-2.0-only",
 		"MIT":                 "MIT",
 		"Custom License Text": "Custom License Text",
-		"LGPL-2.1 WITH addon": "LGPL-2.1-only WITH addon",
+		// Not a valid expression -- "addon" names no exception -- so it is
+		// free text and nothing inside it is rewritten. The old token
+		// rewrite produced "LGPL-2.1-only WITH addon", a claim the source
+		// never made.
+		"LGPL-2.1 WITH addon": "LGPL-2.1 WITH addon",
+		"use GPL-2.0 here":    "use GPL-2.0 here",
 		"":                    "",
 	}
 	for in, want := range cases {

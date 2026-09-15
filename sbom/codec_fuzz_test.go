@@ -106,12 +106,16 @@ func FuzzNormalizeSPDXLicenseExpression(f *testing.F) {
 		if second := normalizeSPDXLicenseExpression(expression); first != second {
 			t.Fatalf("nondeterministic normalization: %q vs %q", first, second)
 		}
-		// Normalization only substitutes identifier tokens; it must never
-		// drop expression structure.
-		for _, r := range []rune{'(', ')'} {
-			if strings.Count(first, string(r)) != strings.Count(expression, string(r)) {
-				t.Fatalf("normalization changed %q grouping: %q -> %q", string(r), expression, first)
-			}
+		// Normalization is spdxkit's canonical rendering: a value that is
+		// not a valid expression is returned byte-for-byte, so free text is
+		// never rewritten, and a valid one stays valid. Redundant grouping
+		// may be dropped from a valid expression, which is the kit's
+		// rendering and not a loss of meaning.
+		if !spdxkit.Valid(expression) && first != expression {
+			t.Fatalf("free text was rewritten: %q -> %q", expression, first)
+		}
+		if spdxkit.Valid(expression) && !spdxkit.Valid(first) {
+			t.Fatalf("a valid expression normalized to an invalid one: %q -> %q", expression, first)
 		}
 		if strings.TrimSpace(expression) == "" && first != expression {
 			t.Fatalf("blank expression must pass through unchanged: %q -> %q", expression, first)

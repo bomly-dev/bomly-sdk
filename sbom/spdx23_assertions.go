@@ -1,7 +1,6 @@
 package sbom
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 
@@ -471,7 +470,7 @@ func spdxSourceLinks(doc *Document) []v23.ExternalDocumentRef {
 		return nil
 	}
 	refs := make([]v23.ExternalDocumentRef, 0, len(links))
-	usedIDs := make(map[string]int, len(links))
+	ids := newSPDXIDAllocator(len(links))
 	for _, link := range links {
 		if link.Checksum == nil {
 			continue
@@ -489,16 +488,10 @@ func spdxSourceLinks(doc *Document) []v23.ExternalDocumentRef {
 			// specification does not list.
 			continue
 		}
-		base := sanitizeSPDXID(link.Identity)
-		seq := usedIDs[base]
-		usedIDs[base] = seq + 1
-		if seq > 0 {
-			base = fmt.Sprintf("%s-%d", base, seq)
-		}
 		refs = append(refs, v23.ExternalDocumentRef{
 			// Without the "DocumentRef-" prefix: common.DocumentID adds it on
 			// the way out and strips it on the way in.
-			DocumentRefID: common.DocumentID(base),
+			DocumentRefID: common.DocumentID(ids.allocate(link.Identity)),
 			URI:           link.Identity,
 			Checksum: common.Checksum{
 				Algorithm: common.ChecksumAlgorithm(algorithm),

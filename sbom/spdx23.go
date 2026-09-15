@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/bomly-dev/bomly-sdk"
 	"github.com/bomly-dev/bomly-sdk/spdxkit"
@@ -19,7 +18,7 @@ type spdx23Codec struct{}
 
 func (spdx23Codec) encodeJSON(doc *Document, opts EncodeOptions) ([]byte, error) {
 	idByComponent := make(map[string]common.ElementID, len(doc.Components))
-	usedIDs := make(map[string]int, len(doc.Components))
+	ids := newSPDXIDAllocator(len(doc.Components))
 	packages := make([]*v23.Package, 0, len(doc.Components))
 
 	// Document roots are the packages SPDX DESCRIBES, i.e. the primary
@@ -37,13 +36,7 @@ func (spdx23Codec) encodeJSON(doc *Document, opts EncodeOptions) ([]byte, error)
 	var extractedLicenses []spdxkit.ExtractedText
 
 	for _, c := range doc.Components {
-		base := sanitizeSPDXID(c.ID)
-		seq := usedIDs[base]
-		usedIDs[base] = seq + 1
-		if seq > 0 {
-			base = fmt.Sprintf("%s-%d", base, seq)
-		}
-		spdxID := common.ElementID(base)
+		spdxID := common.ElementID(ids.allocate(c.ID))
 		idByComponent[c.ID] = spdxID
 
 		licenseDeclared, componentExtracted := spdxLicenseValue(c.Licenses)
@@ -249,7 +242,12 @@ func sanitizeSPDXID(raw string) string {
 	b.Grow(len(raw))
 	lastDash := false
 	for _, r := range raw {
-		ok := unicode.IsLetter(r) || unicode.IsDigit(r) || r == '.' || r == '-'
+		// ASCII only. SPDX 2.3 section 7.2 defines an identifier as
+		// "SPDXRef-[idstring] where [idstring] is a unique string
+		// containing letters, numbers, ".", and/or "-"", and the reference
+		// validator reads letters and numbers as ASCII; a Unicode letter kept
+		// here was emitted into an identifier conforming consumers reject.
+		ok := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '-'
 		if ok {
 			b.WriteRune(r)
 			lastDash = false
@@ -845,5 +843,39 @@ func parseSPDXCopyright(value string) string {
 		return ""
 	default:
 		return value
+	}
+}
+
+// spdxIDAllocator hands out distinct SPDX identifiers for the values one
+// document names. Two values that sanitize to the same idstring get a numbered
+// suffix; the allocator records every identifier it has handed out, suffixed
+// ones included, so a later value that sanitizes straight to "a-1" cannot
+// collide with the "a-1" a second "a" was given. Counting only the bases did
+// exactly that, and a document carrying two packages with one SPDXID -- or two
+// externalDocumentRefs with one id -- is invalid, with the relationships
+// pointing at whichever package the reader keeps.
+type spdxIDAllocator struct {
+	assigned map[string]struct{}
+	next     map[string]int
+}
+
+func newSPDXIDAllocator(capacity int) *spdxIDAllocator {
+	return &spdxIDAllocator{
+		assigned: make(map[string]struct{}, capacity),
+		next:     make(map[string]int, capacity),
+	}
+}
+
+// allocate returns a not-yet-issued idstring for raw.
+func (a *spdxIDAllocator) allocate(raw string) string {
+	base := sanitizeSPDXID(raw)
+	candidate := base
+	for {
+		if _, taken := a.assigned[candidate]; !taken {
+			a.assigned[candidate] = struct{}{}
+			return candidate
+		}
+		a.next[base]++
+		candidate = fmt.Sprintf("%s-%d", base, a.next[base])
 	}
 }
