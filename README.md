@@ -53,6 +53,15 @@ plugins reuse the same implementations Bomly's built-ins use:
 - `matcherkit` — matcher helpers: registry package seeding and license normalization.
 - `testkit` — test helpers: fuzz graph invariants, typed-node constructors, Go binary builders, lockfile position assertions.
 
+## The SBOM codec
+
+- `sbom` — the SBOM codec: projects a graph into SPDX 2.3 or CycloneDX JSON and reads such a document back into a graph, with the document model, the strict ingest preflight, and the assertions a document carries about itself.
+- `graphview` — what a document may say about a node: the package URL it publishes, which of its children a document can name, and which nodes count as top-level parents.
+
+Both moved here from the CLI's `internal/sbom` and `internal/graphview`
+(bomly-cli ADR-0045); the CLI and the Syft and Grype plugins read this one
+copy.
+
 ## Compatibility
 
 Two independent compatibility axes govern this module:

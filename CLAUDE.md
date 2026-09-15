@@ -9,7 +9,9 @@ managed plugins: domain types (the `GraphNode` union — manifest, module,
 and `DependencyNode` records — `Package`, `Vulnerability`, `Finding`,
 `Graph`), plugin kinds and validation, support metadata, and the
 shared helper subpackages (`system`, `filecache`, `logkit`, `detectorkit`,
-`matcherkit`, `testkit`, `conformance`).
+`matcherkit`, `testkit`, `conformance`), and the SBOM codec (`sbom`, with
+`graphview` beside it) that the CLI and the Syft and Grype plugins all read
+instead of carrying a copy (bomly-cli ADR-0045).
 
 ## This module is the source of truth
 
