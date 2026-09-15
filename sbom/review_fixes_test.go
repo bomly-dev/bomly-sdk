@@ -761,3 +761,38 @@ func TestAnUnidentifiedCycloneDXSubjectIsSteppedThrough(t *testing.T) {
 		t.Errorf("nodes = %v, want the identified subject kept as a node", names)
 	}
 }
+
+// A metadata.component without a bom-ref that the inventory also lists is
+// one component, not two: it is matched by package URL, or by name and
+// version when it has none, and named as the document's subject.
+func TestARefLessPrimaryComponentListedInTheInventoryIsReadOnce(t *testing.T) {
+	cases := map[string]string{
+		"by package URL":      `{"type":"application","name":"myapp","version":"2.0.0","purl":"pkg:npm/myapp@2.0.0"}`,
+		"by name and version": `{"type":"application","name":"myapp","version":"2.0.0"}`,
+	}
+	for name, component := range cases {
+		t.Run(name, func(t *testing.T) {
+			raw := `{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,
+			  "metadata":{"component":` + component + `},
+			  "components":[` + component + `,{"bom-ref":"a","type":"library","name":"a","version":"1.0.0"}]}`
+			doc, err := UnmarshalJSON([]byte(raw), TargetCycloneDX16JSON)
+			if err != nil {
+				t.Fatalf("ingest: %v", err)
+			}
+			if len(doc.Components) != 2 {
+				t.Fatalf("components = %+v, want myapp once and a", doc.Components)
+			}
+			out, err := MarshalJSON(doc, TargetCycloneDX16JSON, EncodeOptions{})
+			if err != nil {
+				t.Fatalf("export: %v", err)
+			}
+			var bom cdx.BOM
+			if err := json.Unmarshal(out, &bom); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if bom.Metadata == nil || bom.Metadata.Component == nil || bom.Metadata.Component.Name != "myapp" {
+				t.Fatalf("re-exported primary component = %+v, want myapp", bom.Metadata)
+			}
+		})
+	}
+}

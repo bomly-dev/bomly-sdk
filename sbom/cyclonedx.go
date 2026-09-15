@@ -121,9 +121,11 @@ func (c cycloneDXCodec) decodeJSON(data []byte) (*Document, error) {
 	componentByID := make(map[string]Component)
 	var unknownScopes []string
 	refs := newCycloneDXRefAllocator(inventory, primary)
+	inventoryIDs := make([]string, len(inventory))
 	for index, comp := range inventory {
 		unknownScopes = mergeUnknownScopeTokens(unknownScopes, unknownScopeTokens(cycloneDXCarriedScopes(comp.Properties)))
 		component := decodeCycloneDXComponent(comp, refs.allocate(comp, index))
+		inventoryIDs[index] = component.ID
 		componentByID[component.ID] = component
 	}
 
@@ -139,16 +141,15 @@ func (c cycloneDXCodec) decodeJSON(data []byte) (*Document, error) {
 	var described []string
 	if primary != nil {
 		primaryRef = strings.TrimSpace(primary.BOMRef)
-		_, listed := componentByID[primaryRef]
-		listed = listed && primaryRef != ""
+		listedID, listed := cycloneDXListedPrimary(*primary, inventory, inventoryIDs)
 		switch {
-		case len(componentByID) == 0 || (!listed && !isProjectRootID(primaryRef)):
+		case listed:
+			described = []string{listedID}
+		case len(componentByID) == 0 || !isProjectRootID(primaryRef):
 			unknownScopes = mergeUnknownScopeTokens(unknownScopes, unknownScopeTokens(cycloneDXCarriedScopes(primary.Properties)))
 			component := decodeCycloneDXComponent(*primary, refs.allocate(*primary, len(inventory)))
 			componentByID[component.ID] = component
 			described = []string{component.ID}
-		case listed:
-			described = []string{primaryRef}
 		}
 	}
 	distributeCycloneDXVulnerabilities(bom.Vulnerabilities, componentByID)
@@ -225,6 +226,39 @@ func (c cycloneDXCodec) decodeJSON(data []byte) (*Document, error) {
 		Described:          described,
 		UnknownScopeTokens: unknownScopes,
 	}, nil
+}
+
+// cycloneDXListedPrimary finds metadata.component in the inventory, returning
+// the key that inventory entry was decoded under. A stated bom-ref is the
+// match when there is one: it is the only handle the format gives. A
+// primary component without one cannot be referenced at all, so it is the
+// inventory entry that carries the same package URL, or, lacking one, the
+// same name and version; reading it as a second component would list one
+// package twice.
+func cycloneDXListedPrimary(primary cdx.Component, inventory []cdx.Component, ids []string) (string, bool) {
+	if ref := strings.TrimSpace(primary.BOMRef); ref != "" {
+		for index, comp := range inventory {
+			if strings.TrimSpace(comp.BOMRef) == ref {
+				return ids[index], true
+			}
+		}
+		return "", false
+	}
+	purl := strings.TrimSpace(primary.PackageURL)
+	name, version := strings.TrimSpace(primary.Name), strings.TrimSpace(primary.Version)
+	for index, comp := range inventory {
+		switch {
+		case purl != "":
+			if strings.TrimSpace(comp.PackageURL) == purl {
+				return ids[index], true
+			}
+		case name != "" && version != "":
+			if strings.TrimSpace(comp.PackageURL) == "" && strings.TrimSpace(comp.Name) == name && strings.TrimSpace(comp.Version) == version {
+				return ids[index], true
+			}
+		}
+	}
+	return "", false
 }
 
 // distributeCycloneDXVulnerabilities reads a document's vulnerabilities back
