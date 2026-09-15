@@ -211,6 +211,8 @@ func (c cycloneDXCodec) decodeJSON(data []byte) (*Document, error) {
 		Created:            created,
 		SerialNumber:       bom.SerialNumber,
 		SerialVersion:      bom.Version,
+		Lifecycle:          cycloneDXDecodedLifecycle(bom.Metadata),
+		Aggregate:          cycloneDXDecodedAggregate(bom.Compositions),
 		Components:         components,
 		Dependencies:       dependencies,
 		Roots:              roots,
@@ -341,6 +343,34 @@ func cycloneDXAggregate(value string) cdx.CompositionAggregate {
 	}
 }
 
+// cycloneDXDecodedLifecycle reads back the lifecycle phase the encoder writes.
+// Document holds one phase, so it is read only when the document states
+// exactly one pre-defined phase: choosing one of several would drop the rest
+// while claiming to restate them, and a custom lifecycle (name and
+// description) has no phase to hold.
+func cycloneDXDecodedLifecycle(metadata *cdx.Metadata) string {
+	if metadata == nil || metadata.Lifecycles == nil || len(*metadata.Lifecycles) != 1 {
+		return ""
+	}
+	return string(cycloneDXLifecyclePhase(string((*metadata.Lifecycles)[0].Phase)))
+}
+
+// cycloneDXDecodedAggregate reads back the completeness declaration the
+// encoder writes: one composition scoped to nothing, which is a claim about
+// the whole document. A composition that lists assemblies, dependencies or
+// vulnerabilities speaks only for those, so it is not a document-wide claim
+// and is not read as one; neither is a document with several compositions.
+func cycloneDXDecodedAggregate(compositions *[]cdx.Composition) string {
+	if compositions == nil || len(*compositions) != 1 {
+		return ""
+	}
+	composition := (*compositions)[0]
+	if composition.Assemblies != nil || composition.Dependencies != nil || composition.Vulnerabilities != nil {
+		return ""
+	}
+	return string(cycloneDXAggregate(string(composition.Aggregate)))
+}
+
 func cycloneDXMetadataProperties(p Provenance) []cdx.Property {
 	if strings.TrimSpace(p.SupportEnd) == "" {
 		return nil
@@ -439,19 +469,24 @@ func cycloneDXCarriedScopes(properties *[]cdx.Property) string {
 	return ""
 }
 
+// chooseRoot is the component metadata.component names: "the component that
+// the BOM describes", in the specification's words, and optional. Only a
+// document with exactly one root has such a component of its own -- a
+// natural single root, or the project root a projection synthesized for a
+// graph that had several. With several roots and no synthesized one, or none
+// at all (every component inside a cycle), no component is the subject, and
+// picking the first one published a claim that the BOM describes an
+// arbitrary dependency.
 func chooseRoot(doc *Document) *Component {
-	if doc == nil || len(doc.Components) == 0 {
+	if doc == nil || len(doc.Roots) != 1 {
 		return nil
 	}
-	if len(doc.Roots) > 0 {
-		rootID := doc.Roots[0]
-		for i := range doc.Components {
-			if doc.Components[i].ID == rootID {
-				return &doc.Components[i]
-			}
+	for i := range doc.Components {
+		if doc.Components[i].ID == doc.Roots[0] {
+			return &doc.Components[i]
 		}
 	}
-	return &doc.Components[0]
+	return nil
 }
 
 func toCycloneDXVersion(target Target) cdx.SpecVersion {

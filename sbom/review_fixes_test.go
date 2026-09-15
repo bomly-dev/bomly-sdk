@@ -488,3 +488,103 @@ func TestAVersionedToolIsCreditedOnce(t *testing.T) {
 		t.Fatalf("SPDX tool creators = %v, want cdxgen credited once with its version", toolLines)
 	}
 }
+
+// metadata.component names the component the BOM describes. A document with
+// several roots and no synthesized project root has no such component, and
+// the first root used to be published as the subject. A single root is still
+// named.
+func TestOnlyASingleRootIsNamedThePrimaryComponent(t *testing.T) {
+	primaryOf := func(t *testing.T, raw string) *cdx.Component {
+		t.Helper()
+		doc, err := UnmarshalJSON([]byte(raw), TargetCycloneDX16JSON)
+		if err != nil {
+			t.Fatalf("ingest: %v", err)
+		}
+		out, err := MarshalJSON(doc, TargetCycloneDX16JSON, EncodeOptions{})
+		if err != nil {
+			t.Fatalf("export: %v", err)
+		}
+		var bom cdx.BOM
+		if err := json.Unmarshal(out, &bom); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if bom.Metadata == nil {
+			return nil
+		}
+		return bom.Metadata.Component
+	}
+
+	multiRoot := `{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,"components":[
+	  {"bom-ref":"a","type":"library","name":"a","version":"1.0.0"},
+	  {"bom-ref":"b","type":"library","name":"b","version":"1.0.0"}],
+	  "dependencies":[{"ref":"a"},{"ref":"b"}]}`
+	if primary := primaryOf(t, multiRoot); primary != nil {
+		t.Errorf("multi-root document named %q as its primary component", primary.Name)
+	}
+
+	cycle := `{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,"components":[
+	  {"bom-ref":"a","type":"library","name":"a","version":"1.0.0"},
+	  {"bom-ref":"b","type":"library","name":"b","version":"1.0.0"}],
+	  "dependencies":[{"ref":"a","dependsOn":["b"]},{"ref":"b","dependsOn":["a"]}]}`
+	if primary := primaryOf(t, cycle); primary != nil {
+		t.Errorf("rootless document named %q as its primary component", primary.Name)
+	}
+
+	singleRoot := `{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,"components":[
+	  {"bom-ref":"a","type":"library","name":"a","version":"1.0.0"},
+	  {"bom-ref":"b","type":"library","name":"b","version":"1.0.0"}],
+	  "dependencies":[{"ref":"a","dependsOn":["b"]},{"ref":"b"}]}`
+	if primary := primaryOf(t, singleRoot); primary == nil || primary.Name != "a" {
+		t.Errorf("single-root document primary = %+v, want a", primary)
+	}
+}
+
+// The lifecycle phase and the unscoped completeness declaration the encoder
+// writes are read back, so a direct round trip keeps both. A composition
+// scoped to some assemblies speaks only for them and is not read as a claim
+// about the whole document.
+func TestLifecycleAndCompositionSurviveADirectRoundTrip(t *testing.T) {
+	raw := `{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,
+	  "metadata":{"lifecycles":[{"phase":"pre-build"}]},
+	  "components":[{"bom-ref":"a","type":"library","name":"a","version":"1.0.0"}],
+	  "compositions":[{"aggregate":"complete"}]}`
+	doc, err := UnmarshalJSON([]byte(raw), TargetCycloneDX16JSON)
+	if err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	if doc.Lifecycle != "pre-build" || doc.Aggregate != "complete" {
+		t.Fatalf("Lifecycle = %q, Aggregate = %q, want pre-build and complete", doc.Lifecycle, doc.Aggregate)
+	}
+	out, err := MarshalJSON(doc, TargetCycloneDX16JSON, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	var bom cdx.BOM
+	if err := json.Unmarshal(out, &bom); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if bom.Metadata == nil || bom.Metadata.Lifecycles == nil || len(*bom.Metadata.Lifecycles) != 1 || (*bom.Metadata.Lifecycles)[0].Phase != cdx.LifecyclePhasePreBuild {
+		t.Errorf("re-exported lifecycles = %+v, want pre-build", bom.Metadata)
+	}
+	if bom.Compositions == nil || len(*bom.Compositions) != 1 || (*bom.Compositions)[0].Aggregate != cdx.CompositionAggregateComplete {
+		t.Errorf("re-exported compositions = %+v, want one complete", bom.Compositions)
+	}
+
+	notDocumentWide := map[string]string{
+		"scoped composition": `{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,
+		  "components":[{"bom-ref":"a","type":"library","name":"a","version":"1.0.0"}],
+		  "compositions":[{"aggregate":"complete","assemblies":["a"]}]}`,
+		"several compositions": `{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,
+		  "components":[{"bom-ref":"a","type":"library","name":"a","version":"1.0.0"}],
+		  "compositions":[{"aggregate":"complete"},{"aggregate":"incomplete"}]}`,
+	}
+	for name, raw := range notDocumentWide {
+		doc, err := UnmarshalJSON([]byte(raw), TargetCycloneDX16JSON)
+		if err != nil {
+			t.Fatalf("%s: ingest: %v", name, err)
+		}
+		if doc.Aggregate != "" {
+			t.Errorf("%s: Aggregate = %q, want none read as a document-wide claim", name, doc.Aggregate)
+		}
+	}
+}
