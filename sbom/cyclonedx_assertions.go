@@ -490,6 +490,9 @@ func cycloneDXMetadataTools(doc *Document) *cdx.ToolsChoice {
 		if name == doc.ToolOrDefault() {
 			tool.Version = doc.ToolVersion
 		}
+		if toolIsRestatedInFull(tool, doc.Assertions.Tools) {
+			continue
+		}
 		own = append(own, tool)
 	}
 	merged := sdk.MergeDocumentAssertions(

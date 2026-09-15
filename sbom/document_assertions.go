@@ -257,3 +257,22 @@ func documentSourceLinks(doc *Document, emitted documentIdentity) []sdk.Document
 	}
 	return links
 }
+
+// toolIsRestatedInFull reports whether a tool this document names by name
+// (and maybe version) alone is one the assertions already credit with every
+// field it has. A decoded CycloneDX document holds each tool twice: by name
+// for the document's own tool list, and as the full (vendor, name, version)
+// tuple in its assertions. The union keys on the full tuple, so without this
+// the name-only copy came back as a second, vendorless and versionless tool
+// in CycloneDX, and as a second creator line in SPDX, crediting a producer the
+// source never named. The tuple is kept and the
+// copy that says less is dropped; a tool the assertions do not carry in full
+// is still written.
+func toolIsRestatedInFull(tool sdk.DocumentTool, credited []sdk.DocumentTool) bool {
+	for _, other := range credited {
+		if other.Name == tool.Name && (tool.Version == "" || other.Version == tool.Version) {
+			return true
+		}
+	}
+	return false
+}

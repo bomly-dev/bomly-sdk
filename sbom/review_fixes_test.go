@@ -262,3 +262,229 @@ func TestAnUnmatchedRootOverrideDoesNotSuppressTheSynthesizedRoot(t *testing.T) 
 		t.Fatalf("roots = %v, want the one synthesized project root", doc.Roots)
 	}
 }
+
+// metadata.component is the component the BOM describes. A producer that
+// lists it only there, and names its dependencies in the inventory, used to
+// lose it on ingest: the application vanished, its dependency entry was
+// skipped, and its direct dependencies became graph roots.
+func TestAPrimaryComponentListedOnlyInMetadataIsKept(t *testing.T) {
+	raw := `{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,
+	  "metadata":{"component":{"bom-ref":"app","type":"application","name":"myapp","version":"2.0.0","purl":"pkg:npm/myapp@2.0.0"}},
+	  "components":[
+	    {"bom-ref":"a","type":"library","name":"a","version":"1.0.0","purl":"pkg:npm/a@1.0.0"},
+	    {"bom-ref":"b","type":"library","name":"b","version":"1.0.0","purl":"pkg:npm/b@1.0.0"}],
+	  "dependencies":[{"ref":"app","dependsOn":["a"]},{"ref":"a","dependsOn":["b"]},{"ref":"b"}]}`
+	doc, err := UnmarshalJSON([]byte(raw), TargetCycloneDX16JSON)
+	if err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	if len(doc.Components) != 3 {
+		t.Fatalf("components = %+v, want the application and both dependencies", doc.Components)
+	}
+	if len(doc.Roots) != 1 || doc.Roots[0] != "app" {
+		t.Fatalf("roots = %v, want only the application", doc.Roots)
+	}
+	edge := false
+	for _, dep := range doc.Dependencies {
+		if dep.Ref == "app" && len(dep.DependsOn) == 1 && dep.DependsOn[0] == "a" {
+			edge = true
+		}
+	}
+	if !edge {
+		t.Fatalf("dependencies = %+v, want the application's edge to a", doc.Dependencies)
+	}
+
+	out, err := MarshalJSON(doc, TargetCycloneDX16JSON, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	var bom cdx.BOM
+	if err := json.Unmarshal(out, &bom); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if bom.Metadata == nil || bom.Metadata.Component == nil || bom.Metadata.Component.Name != "myapp" {
+		t.Fatalf("re-exported primary component = %+v, want myapp", bom.Metadata)
+	}
+}
+
+// Bomly's synthesized document root stands for the scan, not a package, and
+// is still not read back as one when the inventory names the real roots.
+func TestTheSynthesizedDocumentRootIsNotReadAsAComponent(t *testing.T) {
+	ref := projectRootIDPrefix + "scan"
+	raw := `{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,
+	  "metadata":{"component":{"bom-ref":"` + ref + `","type":"application","name":"scan"}},
+	  "components":[
+	    {"bom-ref":"a","type":"library","name":"a","version":"1.0.0"},
+	    {"bom-ref":"b","type":"library","name":"b","version":"1.0.0"}],
+	  "dependencies":[{"ref":"` + ref + `","dependsOn":["a","b"]},{"ref":"a"},{"ref":"b"}]}`
+	doc, err := UnmarshalJSON([]byte(raw), TargetCycloneDX16JSON)
+	if err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	if len(doc.Components) != 2 {
+		t.Fatalf("components = %+v, want only the two packages", doc.Components)
+	}
+	if len(doc.Roots) != 2 {
+		t.Fatalf("roots = %v, want both packages to stay roots", doc.Roots)
+	}
+}
+
+// Every component type cyclonedx-go defines survives a direct round trip as
+// the type cyclonedx-go itself writes for it. A type outside the first seven
+// used to be written back as library.
+//
+// The expectation is the library's own encoding, not the input token:
+// cyclonedx-go v0.12.0 omits cryptographic-asset from its version-support
+// table and writes it as application even at 1.6. That is its bug to fix,
+// and this test keeps passing on the day it does.
+func TestEveryCycloneDXComponentTypeSurvivesARoundTrip(t *testing.T) {
+	types := []cdx.ComponentType{
+		cdx.ComponentTypeApplication, cdx.ComponentTypeContainer, cdx.ComponentTypeCryptographicAsset,
+		cdx.ComponentTypeData, cdx.ComponentTypeDevice, cdx.ComponentTypeDeviceDriver,
+		cdx.ComponentTypeFile, cdx.ComponentTypeFirmware, cdx.ComponentTypeFramework,
+		cdx.ComponentTypeLibrary, cdx.ComponentTypeMachineLearningModel, cdx.ComponentTypeOS,
+		cdx.ComponentTypePlatform,
+	}
+	for _, componentType := range types {
+		raw := `{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,"components":[
+		  {"bom-ref":"x","type":"library","name":"x","version":"1.0.0"},
+		  {"bom-ref":"c","type":"` + string(componentType) + `","name":"c","version":"1.0.0"}],
+		  "dependencies":[{"ref":"x","dependsOn":["c"]},{"ref":"c"}]}`
+		doc, err := UnmarshalJSON([]byte(raw), TargetCycloneDX16JSON)
+		if err != nil {
+			t.Fatalf("%s: ingest: %v", componentType, err)
+		}
+		out, err := MarshalJSON(doc, TargetCycloneDX16JSON, EncodeOptions{})
+		if err != nil {
+			t.Fatalf("%s: export: %v", componentType, err)
+		}
+		var bom cdx.BOM
+		if err := json.Unmarshal(out, &bom); err != nil {
+			t.Fatalf("%s: decode: %v", componentType, err)
+		}
+		found := false
+		for _, comp := range *bom.Components {
+			if comp.Name == "c" {
+				found = true
+				if want := cycloneDXLibraryWrites(t, componentType); comp.Type != want {
+					t.Errorf("type %q re-exported as %q, want %q as cyclonedx-go writes it", componentType, comp.Type, want)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("%s: component c missing from %s", componentType, out)
+		}
+	}
+	if got := cycloneDXComponentType("package"); got != cdx.ComponentTypeLibrary {
+		t.Errorf("Bomly's package type = %q, want library", got)
+	}
+	if got := cycloneDXComponentType("workflow"); got != cdx.ComponentTypeLibrary {
+		t.Errorf("a domain type = %q, want library", got)
+	}
+}
+
+// cycloneDXLibraryWrites is the component type cyclonedx-go emits for a
+// CycloneDX 1.6 document carrying componentType.
+func cycloneDXLibraryWrites(t *testing.T, componentType cdx.ComponentType) cdx.ComponentType {
+	t.Helper()
+	bom := cdx.NewBOM()
+	bom.Components = &[]cdx.Component{{BOMRef: "c", Type: componentType, Name: "c"}}
+	var out strings.Builder
+	if err := cdx.NewBOMEncoder(&out, cdx.BOMFileFormatJSON).EncodeVersion(bom, cdx.SpecVersion1_6); err != nil {
+		t.Fatalf("library encode: %v", err)
+	}
+	var written cdx.BOM
+	if err := json.Unmarshal([]byte(out.String()), &written); err != nil {
+		t.Fatalf("library decode: %v", err)
+	}
+	return (*written.Components)[0].Type
+}
+
+// Every SPDX 2.3 primary package purpose (section 7.24) survives a direct
+// round trip. SOURCE, ARCHIVE and INSTALL used to be written back as OTHER.
+func TestEverySPDXPrimaryPackagePurposeSurvivesARoundTrip(t *testing.T) {
+	purposes := []string{"APPLICATION", "FRAMEWORK", "LIBRARY", "CONTAINER", "OPERATING-SYSTEM",
+		"DEVICE", "FIRMWARE", "SOURCE", "ARCHIVE", "FILE", "INSTALL", "OTHER"}
+	for _, purpose := range purposes {
+		raw := `{"spdxVersion":"SPDX-2.3","dataLicense":"CC0-1.0","SPDXID":"SPDXRef-DOCUMENT","name":"x",
+		  "documentNamespace":"https://example.com/x","creationInfo":{"created":"2024-01-01T00:00:00Z","creators":["Tool: t"]},
+		  "packages":[{"SPDXID":"SPDXRef-p","name":"p","versionInfo":"1","downloadLocation":"NOASSERTION","primaryPackagePurpose":"` + purpose + `"}]}`
+		doc, err := UnmarshalJSON([]byte(raw), TargetSPDX23JSON)
+		if err != nil {
+			t.Fatalf("%s: ingest: %v", purpose, err)
+		}
+		out, err := MarshalJSON(doc, TargetSPDX23JSON, EncodeOptions{})
+		if err != nil {
+			t.Fatalf("%s: export: %v", purpose, err)
+		}
+		var emitted struct {
+			Packages []struct {
+				Name                  string `json:"name"`
+				PrimaryPackagePurpose string `json:"primaryPackagePurpose"`
+			} `json:"packages"`
+		}
+		if err := json.Unmarshal(out, &emitted); err != nil {
+			t.Fatalf("%s: decode: %v", purpose, err)
+		}
+		if len(emitted.Packages) != 1 || emitted.Packages[0].PrimaryPackagePurpose != purpose {
+			t.Errorf("purpose %s re-exported as %+v", purpose, emitted.Packages)
+		}
+	}
+	if got := spdxPrimaryPackagePurpose("package"); got != "LIBRARY" {
+		t.Errorf("Bomly's package type = %q, want LIBRARY", got)
+	}
+	if got := spdxPrimaryPackagePurpose("workflow"); got != "OTHER" {
+		t.Errorf("a domain type = %q, want OTHER", got)
+	}
+}
+
+// A tool the source credited with a vendor and version is credited once. The
+// decoded document also holds the tool by name, and that copy used to come
+// back as a second tool with neither, in CycloneDX and in SPDX alike.
+func TestAVersionedToolIsCreditedOnce(t *testing.T) {
+	raw := `{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,
+	  "metadata":{"tools":{"components":[{"type":"application","name":"cdxgen","version":"9.1.0","manufacturer":{"name":"OWASP"}}]}},
+	  "components":[{"bom-ref":"a","type":"library","name":"a","version":"1.0.0"}]}`
+	doc, err := UnmarshalJSON([]byte(raw), TargetCycloneDX16JSON)
+	if err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+
+	out, err := MarshalJSON(doc, TargetCycloneDX16JSON, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("cyclonedx export: %v", err)
+	}
+	var bom cdx.BOM
+	if err := json.Unmarshal(out, &bom); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if bom.Metadata == nil || bom.Metadata.Tools == nil || bom.Metadata.Tools.Components == nil {
+		t.Fatalf("metadata tools missing: %s", out)
+	}
+	tools := *bom.Metadata.Tools.Components
+	if len(tools) != 1 || tools[0].Version != "9.1.0" || tools[0].Manufacturer == nil || tools[0].Manufacturer.Name != "OWASP" {
+		t.Fatalf("tools = %+v, want cdxgen 9.1.0 by OWASP once", tools)
+	}
+
+	spdxOut, err := MarshalJSON(doc, TargetSPDX23JSON, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("spdx export: %v", err)
+	}
+	var spdxDoc struct {
+		CreationInfo struct {
+			Creators []string `json:"creators"`
+		} `json:"creationInfo"`
+	}
+	if err := json.Unmarshal(spdxOut, &spdxDoc); err != nil {
+		t.Fatalf("decode spdx: %v", err)
+	}
+	var toolLines []string
+	for _, line := range spdxDoc.CreationInfo.Creators {
+		if strings.HasPrefix(line, "Tool: ") {
+			toolLines = append(toolLines, line)
+		}
+	}
+	if len(toolLines) != 1 || !strings.Contains(toolLines[0], "9.1.0") {
+		t.Fatalf("SPDX tool creators = %v, want cdxgen credited once with its version", toolLines)
+	}
+}

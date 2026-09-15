@@ -412,9 +412,16 @@ func spdxDocumentCreators(doc *Document) []common.Creator {
 	}
 
 	for _, tool := range doc.ToolNamesOrDefault() {
+		version := ""
+		if tool == doc.ToolOrDefault() {
+			version = doc.ToolVersion
+		}
+		if toolIsRestatedInFull(sdk.DocumentTool{Name: tool, Version: version}, doc.Assertions.Tools) {
+			continue
+		}
 		// SPDX creator convention appends the tool version as "name-version".
-		if tool == doc.ToolOrDefault() && doc.ToolVersion != "" {
-			tool += "-" + doc.ToolVersion
+		if version != "" {
+			tool += "-" + version
 		}
 		add(spdxToolCreatorType, tool)
 	}

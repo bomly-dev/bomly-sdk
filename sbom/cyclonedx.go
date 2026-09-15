@@ -109,36 +109,42 @@ func (c cycloneDXCodec) decodeJSON(data []byte) (*Document, error) {
 		return nil, err
 	}
 
-	componentByID := make(map[string]Component)
-	var unknownScopes []string
+	var inventory []cdx.Component
 	if bom.Components != nil {
-		refs := newCycloneDXRefAllocator(*bom.Components)
-		for index, comp := range *bom.Components {
-			unknownScopes = mergeUnknownScopeTokens(unknownScopes, unknownScopeTokens(cycloneDXCarriedScopes(comp.Properties)))
-			component := Component{
-				ID:     refs.allocate(comp, index),
-				Name:   comp.Name,
-				Org:    comp.Group,
-				Type:   string(comp.Type),
-				Scopes: sdk.ScopesFromCycloneDXComponent(string(comp.Scope), cycloneDXCarriedScopes(comp.Properties)),
-				// The word beside the set it derives, so an export can say
-				// what this document said rather than Bomly's projection of
-				// it. Gated by the SDK, which is also what refuses a value
-				// that is not a scope word at all.
-				SourceScope: sdk.NormalizeSourceScope(string(comp.Scope)),
-				Version:     comp.Version,
-				PURL:        comp.PackageURL,
-				Copyright:   comp.Copyright,
-				Licenses:    parseCycloneDXLicenses(comp.Licenses),
-			}
-			applyCycloneDXAssertions(&component, comp)
-			componentByID[component.ID] = component
-		}
+		inventory = *bom.Components
+	}
+	var primary *cdx.Component
+	if bom.Metadata != nil {
+		primary = bom.Metadata.Component
 	}
 
+	componentByID := make(map[string]Component)
+	var unknownScopes []string
+	refs := newCycloneDXRefAllocator(inventory, primary)
+	for index, comp := range inventory {
+		unknownScopes = mergeUnknownScopeTokens(unknownScopes, unknownScopeTokens(cycloneDXCarriedScopes(comp.Properties)))
+		component := decodeCycloneDXComponent(comp, refs.allocate(comp, index))
+		componentByID[component.ID] = component
+	}
+
+	// metadata.component is, in the specification's words, "the component
+	// that the BOM describes". A producer may list it in the inventory as
+	// well, or only here; either way it is part of the document, and its
+	// dependency entry is a real edge to what it depends on. Only Bomly's own
+	// synthesized document root is not a package: it stands for "this scan"
+	// when the graph had several roots, and reading it back would demote
+	// those roots under a node nothing depends on. A document whose only
+	// component is its primary one keeps that component whatever it is.
 	primaryRef := ""
-	if bom.Metadata != nil && bom.Metadata.Component != nil {
-		primaryRef = bom.Metadata.Component.BOMRef
+	if primary != nil {
+		primaryRef = strings.TrimSpace(primary.BOMRef)
+		_, listed := componentByID[primaryRef]
+		listed = listed && primaryRef != ""
+		if len(componentByID) == 0 || (!listed && !isProjectRootID(primaryRef)) {
+			unknownScopes = mergeUnknownScopeTokens(unknownScopes, unknownScopeTokens(cycloneDXCarriedScopes(primary.Properties)))
+			component := decodeCycloneDXComponent(*primary, refs.allocate(*primary, len(inventory)))
+			componentByID[component.ID] = component
+		}
 	}
 
 	dependencies := make([]Dependency, 0, len(componentByID))
@@ -146,9 +152,9 @@ func (c cycloneDXCodec) decodeJSON(data []byte) (*Document, error) {
 	if bom.Dependencies != nil {
 		for _, dep := range *bom.Dependencies {
 			if _, known := componentByID[dep.Ref]; !known && (isProjectRootID(dep.Ref) || dep.Ref == primaryRef) {
-				// The primary component lives only in metadata.component; its
-				// dependency entry links the document root to the real graph
-				// roots and must not demote those roots on re-ingestion.
+				// Bomly's synthesized document root was not read as a
+				// component above; its dependency entry links it to the real
+				// graph roots and must not demote those roots on re-ingestion.
 				continue
 			}
 			ds := make([]string, 0)
@@ -166,29 +172,6 @@ func (c cycloneDXCodec) decodeJSON(data []byte) (*Document, error) {
 				DependsOn: ds,
 			})
 		}
-	}
-
-	if len(componentByID) == 0 && bom.Metadata != nil && bom.Metadata.Component != nil {
-		root := bom.Metadata.Component
-		unknownScopes = mergeUnknownScopeTokens(unknownScopes, unknownScopeTokens(cycloneDXCarriedScopes(root.Properties)))
-		component := Component{
-			ID:          newCycloneDXRefAllocator(nil).allocate(*root, 0),
-			Name:        root.Name,
-			Org:         root.Group,
-			Type:        string(root.Type),
-			Scopes:      sdk.ScopesFromCycloneDXComponent(string(root.Scope), cycloneDXCarriedScopes(root.Properties)),
-			SourceScope: sdk.NormalizeSourceScope(string(root.Scope)),
-			Version:     root.Version,
-			PURL:        root.PackageURL,
-			Copyright:   root.Copyright,
-			Licenses:    parseCycloneDXLicenses(root.Licenses),
-		}
-		// The same assertions the inventory loop applies. A document whose
-		// only component is its primary one is legal, and reading it with
-		// half the fields was a silent hole: supplier, description, hashes,
-		// CPE and references all stopped here.
-		applyCycloneDXAssertions(&component, *root)
-		componentByID[component.ID] = component
 	}
 
 	components := make([]Component, 0, len(componentByID))
@@ -233,6 +216,32 @@ func (c cycloneDXCodec) decodeJSON(data []byte) (*Document, error) {
 		Roots:              roots,
 		UnknownScopeTokens: unknownScopes,
 	}, nil
+}
+
+// decodeCycloneDXComponent reads one component, from the inventory or from
+// metadata.component, with every assertion the format carries. Both places
+// read the same fields: reading the primary component with half of them was a
+// silent hole, where supplier, description, hashes, CPE and references all
+// stopped.
+func decodeCycloneDXComponent(comp cdx.Component, id string) Component {
+	component := Component{
+		ID:     id,
+		Name:   comp.Name,
+		Org:    comp.Group,
+		Type:   string(comp.Type),
+		Scopes: sdk.ScopesFromCycloneDXComponent(string(comp.Scope), cycloneDXCarriedScopes(comp.Properties)),
+		// The word beside the set it derives, so an export can say what this
+		// document said rather than Bomly's projection of it. Gated by the
+		// SDK, which is also what refuses a value that is not a scope word at
+		// all.
+		SourceScope: sdk.NormalizeSourceScope(string(comp.Scope)),
+		Version:     comp.Version,
+		PURL:        comp.PackageURL,
+		Copyright:   comp.Copyright,
+		Licenses:    parseCycloneDXLicenses(comp.Licenses),
+	}
+	applyCycloneDXAssertions(&component, comp)
+	return component
 }
 
 // cycloneDXSecurityReferences maps provenance contact fields onto external
@@ -369,22 +378,30 @@ func cycloneDXPrimaryToolName(metadata *cdx.Metadata) string {
 	return defaultToolName
 }
 
+// cycloneDXComponentType maps a component type onto CycloneDX's vocabulary.
+// Every type cyclonedx-go defines is kept as itself, so a type a document
+// stated survives a round trip; anything else -- Bomly's own "package", a
+// domain type such as a workflow -- is a library. The vocabulary grew across
+// specification versions (device-driver, platform, data and
+// machine-learning-model arrived in 1.5, cryptographic-asset in 1.6), and
+// writing an older version is cyclonedx-go's job: EncodeVersion rewrites a type
+// that version does not define.
 func cycloneDXComponentType(value string) cdx.ComponentType {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "application":
-		return cdx.ComponentTypeApplication
-	case "framework":
-		return cdx.ComponentTypeFramework
-	case "container":
-		return cdx.ComponentTypeContainer
-	case "operating-system":
-		return cdx.ComponentTypeOS
-	case "device":
-		return cdx.ComponentTypeDevice
-	case "file":
-		return cdx.ComponentTypeFile
-	case "firmware":
-		return cdx.ComponentTypeFirmware
+	switch componentType := cdx.ComponentType(strings.ToLower(strings.TrimSpace(value))); componentType {
+	case cdx.ComponentTypeApplication,
+		cdx.ComponentTypeContainer,
+		cdx.ComponentTypeCryptographicAsset,
+		cdx.ComponentTypeData,
+		cdx.ComponentTypeDevice,
+		cdx.ComponentTypeDeviceDriver,
+		cdx.ComponentTypeFile,
+		cdx.ComponentTypeFirmware,
+		cdx.ComponentTypeFramework,
+		cdx.ComponentTypeLibrary,
+		cdx.ComponentTypeMachineLearningModel,
+		cdx.ComponentTypeOS,
+		cdx.ComponentTypePlatform:
+		return componentType
 	default:
 		return cdx.ComponentTypeLibrary
 	}
@@ -824,12 +841,18 @@ type cycloneDXRefAllocator struct {
 	used map[string]struct{}
 }
 
-func newCycloneDXRefAllocator(components []cdx.Component) *cycloneDXRefAllocator {
-	used := make(map[string]struct{}, len(components))
-	for _, comp := range components {
+func newCycloneDXRefAllocator(inventory []cdx.Component, primary *cdx.Component) *cycloneDXRefAllocator {
+	used := make(map[string]struct{}, len(inventory)+1)
+	reserve := func(comp cdx.Component) {
 		if ref := strings.TrimSpace(comp.BOMRef); ref != "" {
 			used[ref] = struct{}{}
 		}
+	}
+	for _, comp := range inventory {
+		reserve(comp)
+	}
+	if primary != nil {
+		reserve(*primary)
 	}
 	return &cycloneDXRefAllocator{used: used}
 }

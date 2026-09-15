@@ -298,26 +298,21 @@ func parseSPDXCreated(ci *v23.CreationInfo) time.Time {
 }
 
 // spdxPrimaryPackagePurpose maps Bomly's component type onto the SPDX 2.3
-// PrimaryPackagePurpose vocabulary. Ordinary registry packages default to
-// LIBRARY; unmapped domain types (for example workflows) return OTHER.
+// PrimaryPackagePurpose vocabulary (section 7.24). Ordinary registry packages
+// default to LIBRARY; every other value the specification defines is kept as
+// itself, so a purpose a document stated survives a round trip; unmapped
+// domain types (for example workflows) return OTHER.
+//
+// The list is written out because tools-golang exports no SPDX 2.3 purpose
+// vocabulary: its tag-value and JSON readers carry the field as a free string,
+// and the only enumeration it has is an unexported switch in the RDF reader.
 func spdxPrimaryPackagePurpose(componentType string) string {
-	switch strings.ToLower(strings.TrimSpace(componentType)) {
-	case "", "package", "library":
+	switch purpose := strings.ToUpper(strings.TrimSpace(componentType)); purpose {
+	case "", "PACKAGE", "LIBRARY":
 		return "LIBRARY"
-	case "application":
-		return "APPLICATION"
-	case "framework":
-		return "FRAMEWORK"
-	case "container":
-		return "CONTAINER"
-	case "operating-system":
-		return "OPERATING-SYSTEM"
-	case "device":
-		return "DEVICE"
-	case "firmware":
-		return "FIRMWARE"
-	case "file":
-		return "FILE"
+	case "APPLICATION", "FRAMEWORK", "CONTAINER", "OPERATING-SYSTEM", "DEVICE",
+		"FIRMWARE", "SOURCE", "ARCHIVE", "FILE", "INSTALL":
+		return purpose
 	default:
 		return "OTHER"
 	}
