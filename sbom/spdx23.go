@@ -25,8 +25,9 @@ func (spdx23Codec) encodeJSON(doc *Document, opts EncodeOptions) ([]byte, error)
 	// component in either form: the synthesized project root, or the graph's
 	// own single root when no pseudo root was needed. Provenance attaches to
 	// both so the SPDX export matches CycloneDX metadata.component.
-	rootComponents := make(map[string]struct{}, len(doc.Roots))
-	for _, root := range doc.Roots {
+	described := doc.describedIDs()
+	rootComponents := make(map[string]struct{}, len(described))
+	for _, root := range described {
 		rootComponents[root] = struct{}{}
 	}
 
@@ -82,9 +83,9 @@ func (spdx23Codec) encodeJSON(doc *Document, opts EncodeOptions) ([]byte, error)
 		packages = append(packages, pkg)
 	}
 
-	relationships := make([]*v23.Relationship, 0, allocHint(len(doc.Dependencies), len(doc.Roots)))
+	relationships := make([]*v23.Relationship, 0, allocHint(len(doc.Dependencies), len(described)))
 	documentRef := common.DocElementID{ElementRefID: common.ElementID("DOCUMENT")}
-	for _, root := range doc.Roots {
+	for _, root := range described {
 		rootID, ok := idByComponent[root]
 		if !ok {
 			continue
@@ -192,6 +193,12 @@ func (spdx23Codec) decodeJSON(data []byte) (*Document, error) {
 			if a == "SPDXRef-DOCUMENT" {
 				roots = append(roots, b)
 			}
+		case common.TypeRelationshipDescribeBy:
+			// The same statement with its operands reversed (SPDX 2.3
+			// section 11.1: "A DESCRIBED_BY B" is "B DESCRIBES A").
+			if b == "SPDXRef-DOCUMENT" {
+				roots = append(roots, a)
+			}
 		case common.TypeRelationshipDependsOn:
 			depsByRef[a] = append(depsByRef[a], b)
 		case common.TypeRelationshipDependencyOf,
@@ -230,6 +237,7 @@ func (spdx23Codec) decodeJSON(data []byte) (*Document, error) {
 		Components:         components,
 		Dependencies:       dependencies,
 		Roots:              roots,
+		Described:          roots,
 		UnknownScopeTokens: unknownScopes,
 	}, nil
 }

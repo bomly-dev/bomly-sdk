@@ -136,16 +136,22 @@ func (c cycloneDXCodec) decodeJSON(data []byte) (*Document, error) {
 	// those roots under a node nothing depends on. A document whose only
 	// component is its primary one keeps that component whatever it is.
 	primaryRef := ""
+	var described []string
 	if primary != nil {
 		primaryRef = strings.TrimSpace(primary.BOMRef)
 		_, listed := componentByID[primaryRef]
 		listed = listed && primaryRef != ""
-		if len(componentByID) == 0 || (!listed && !isProjectRootID(primaryRef)) {
+		switch {
+		case len(componentByID) == 0 || (!listed && !isProjectRootID(primaryRef)):
 			unknownScopes = mergeUnknownScopeTokens(unknownScopes, unknownScopeTokens(cycloneDXCarriedScopes(primary.Properties)))
 			component := decodeCycloneDXComponent(*primary, refs.allocate(*primary, len(inventory)))
 			componentByID[component.ID] = component
+			described = []string{component.ID}
+		case listed:
+			described = []string{primaryRef}
 		}
 	}
+	distributeCycloneDXVulnerabilities(bom.Vulnerabilities, componentByID)
 
 	dependencies := make([]Dependency, 0, len(componentByID))
 	inDegree := make(map[string]int, len(componentByID))
@@ -216,8 +222,82 @@ func (c cycloneDXCodec) decodeJSON(data []byte) (*Document, error) {
 		Components:         components,
 		Dependencies:       dependencies,
 		Roots:              roots,
+		Described:          described,
 		UnknownScopeTokens: unknownScopes,
 	}, nil
+}
+
+// distributeCycloneDXVulnerabilities reads a document's vulnerabilities back
+// onto the components they affect -- the inverse of cycloneDXVulnerabilities,
+// which gathers each component's vulnerabilities into one top-level entry
+// with an affects list. Without it a direct round trip dropped every
+// vulnerability, and an affected inventory re-exported clean.
+//
+// An affects reference that names no component of this document (a BOM-Link
+// into another BOM, or a dangling ref) has nothing here to attach to and is
+// not read. The intermediate model holds one rating per vulnerability, which
+// is also all the encoder writes; the first rating the source listed is the
+// one kept.
+func distributeCycloneDXVulnerabilities(vulnerabilities *[]cdx.Vulnerability, componentByID map[string]Component) {
+	if vulnerabilities == nil {
+		return
+	}
+	for _, source := range *vulnerabilities {
+		if strings.TrimSpace(source.ID) == "" || source.Affects == nil {
+			continue
+		}
+		vuln := decodeCycloneDXVulnerability(source)
+		attached := make(map[string]struct{}, len(*source.Affects))
+		for _, affects := range *source.Affects {
+			ref := strings.TrimSpace(affects.Ref)
+			component, ok := componentByID[ref]
+			if !ok {
+				continue
+			}
+			if _, done := attached[ref]; done {
+				continue
+			}
+			attached[ref] = struct{}{}
+			component.Vulnerabilities = append(component.Vulnerabilities, vuln)
+			componentByID[ref] = component
+		}
+	}
+}
+
+// decodeCycloneDXVulnerability reads the fields cycloneDXVulnerability
+// writes.
+func decodeCycloneDXVulnerability(source cdx.Vulnerability) Vulnerability {
+	vuln := Vulnerability{
+		ID:             source.ID,
+		Description:    source.Description,
+		Recommendation: source.Recommendation,
+	}
+	if source.Source != nil {
+		vuln.Source = source.Source.Name
+	}
+	if source.Ratings != nil && len(*source.Ratings) > 0 {
+		rating := (*source.Ratings)[0]
+		vuln.Severity = string(rating.Severity)
+		vuln.Vector = rating.Vector
+		vuln.Method = string(rating.Method)
+		if rating.Score != nil {
+			vuln.Score = new(*rating.Score)
+		}
+		if vuln.Source == "" && rating.Source != nil {
+			vuln.Source = rating.Source.Name
+		}
+	}
+	if source.CWEs != nil && len(*source.CWEs) > 0 {
+		vuln.CWEs = append([]int(nil), *source.CWEs...)
+	}
+	if source.Advisories != nil {
+		for _, advisory := range *source.Advisories {
+			if url := strings.TrimSpace(advisory.URL); url != "" {
+				vuln.Advisories = append(vuln.Advisories, url)
+			}
+		}
+	}
+	return vuln
 }
 
 // decodeCycloneDXComponent reads one component, from the inventory or from
@@ -470,19 +550,24 @@ func cycloneDXCarriedScopes(properties *[]cdx.Property) string {
 }
 
 // chooseRoot is the component metadata.component names: "the component that
-// the BOM describes", in the specification's words, and optional. Only a
-// document with exactly one root has such a component of its own -- a
-// natural single root, or the project root a projection synthesized for a
-// graph that had several. With several roots and no synthesized one, or none
-// at all (every component inside a cycle), no component is the subject, and
-// picking the first one published a claim that the BOM describes an
-// arbitrary dependency.
+// the BOM describes", in the specification's words, and optional. A decoded
+// document keeps the subject its source named, even when the graph also has a
+// disconnected root the source never called its subject. Otherwise only a
+// document with exactly one root has a subject of its own -- a natural single
+// root, or the project root a projection synthesized for a graph that had
+// several. With several roots and no synthesized one, or none at all (every
+// component inside a cycle), no component is the subject, and picking the
+// first one published a claim that the BOM describes an arbitrary dependency.
 func chooseRoot(doc *Document) *Component {
-	if doc == nil || len(doc.Roots) != 1 {
+	if doc == nil {
+		return nil
+	}
+	described := doc.describedIDs()
+	if len(described) != 1 {
 		return nil
 	}
 	for i := range doc.Components {
-		if doc.Components[i].ID == doc.Roots[0] {
+		if doc.Components[i].ID == described[0] {
 			return &doc.Components[i]
 		}
 	}

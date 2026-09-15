@@ -152,7 +152,7 @@ func ToGraph(doc *Document) (*sdk.Graph, error) {
 	idMap := make(map[string]string, len(doc.Components))
 	skipped := make(map[string]struct{})
 	for _, component := range doc.Components {
-		if isDocumentRootPseudoPackage(component) {
+		if isDocumentRootPseudoPackage(component, doc.isDescribed(component.ID)) {
 			skipped[component.ID] = struct{}{}
 			continue
 		}
@@ -248,19 +248,26 @@ func ToGraph(doc *Document) (*sdk.Graph, error) {
 	return depsGraph, nil
 }
 
-func isDocumentRootPseudoPackage(component Component) bool {
-	// Bomly's synthesized project root carries a pkg:generic PURL but is
-	// still a stand-in for the scanned tree, not a resolved package.
+// isDocumentRootPseudoPackage reports whether a component stands for the
+// scanned tree rather than for a package, so the graph steps through it and
+// its children become roots.
+//
+// Bomly's synthesized project root is one, by its identifier; it carries a
+// pkg:generic PURL but is still a stand-in. Another producer's is the subject
+// its document names -- CycloneDX metadata.component, an SPDX DESCRIBES
+// target -- with neither a package URL nor a version: syft's scanned
+// directory (a file), trivy's "." (an application). Nothing identifies such a
+// subject as a package, so there is nothing to match, audit, or report it as.
+//
+// The rule is keyed on the subject, not on the type. It used to drop every
+// versionless, PURL-less component typed "file", and FILE is a valid SPDX
+// package purpose, so a real file package in the inventory vanished from the
+// graph along with its relationships.
+func isDocumentRootPseudoPackage(component Component, described bool) bool {
 	if IsProjectRootComponent(component) {
 		return true
 	}
-	if strings.TrimSpace(component.PURL) != "" {
-		return false
-	}
-	if strings.EqualFold(strings.TrimSpace(component.Type), "file") && strings.TrimSpace(component.Version) == "" {
-		return true
-	}
-	return false
+	return described && strings.TrimSpace(component.PURL) == "" && strings.TrimSpace(component.Version) == ""
 }
 
 // ingestedCoordinateOrg returns the namespace to carry on an ingested

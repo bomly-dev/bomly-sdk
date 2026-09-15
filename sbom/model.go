@@ -122,6 +122,14 @@ type Document struct {
 	Dependencies []Dependency
 	Roots        []string
 
+	// Described are the components the document names as its subject, as
+	// decoded: CycloneDX metadata.component, the targets of SPDX DESCRIBES
+	// and DESCRIBED_BY. Roots are the graph's entry points and can include a
+	// component the document never called its subject -- a disconnected
+	// package, say -- so the two are kept apart. Empty for a document
+	// projected from a graph, whose subject is its single root.
+	Described []string
+
 	// Assertions are the claims this document makes about itself: its
 	// identity, name, data license, creators, tools, and comment. A decoder
 	// fills them; ingest carries them onto the graph entry the document
@@ -390,4 +398,38 @@ func (d *Document) CreatedOrNow() time.Time {
 		return d.Created.UTC()
 	}
 	return time.Now().UTC()
+}
+
+// describedIDs returns the components this document names as its subject:
+// the ones it was decoded as describing, when those are known and present,
+// and otherwise its roots.
+func (d *Document) describedIDs() []string {
+	if len(d.Described) == 0 {
+		return d.Roots
+	}
+	present := make(map[string]struct{}, len(d.Components))
+	for _, component := range d.Components {
+		present[component.ID] = struct{}{}
+	}
+	out := make([]string, 0, len(d.Described))
+	for _, id := range d.Described {
+		if _, ok := present[id]; ok {
+			out = append(out, id)
+		}
+	}
+	if len(out) == 0 {
+		return d.Roots
+	}
+	return out
+}
+
+// isDescribed reports whether the document was decoded as naming a component
+// as its subject.
+func (d *Document) isDescribed(id string) bool {
+	for _, described := range d.Described {
+		if described == id {
+			return true
+		}
+	}
+	return false
 }

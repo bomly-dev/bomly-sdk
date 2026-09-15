@@ -588,3 +588,176 @@ func TestLifecycleAndCompositionSurviveADirectRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// Vulnerabilities in a CycloneDX document are read back onto the components
+// they affect. A direct round trip used to drop every one of them, so an
+// affected inventory re-exported clean.
+func TestCycloneDXVulnerabilitiesSurviveADirectRoundTrip(t *testing.T) {
+	raw := `{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,
+	  "components":[
+	    {"bom-ref":"a","type":"library","name":"a","version":"1.0.0","purl":"pkg:npm/a@1.0.0"},
+	    {"bom-ref":"b","type":"library","name":"b","version":"1.0.0","purl":"pkg:npm/b@1.0.0"}],
+	  "vulnerabilities":[{"id":"GHSA-xxxx-yyyy-zzzz","source":{"name":"osv"},"description":"bad",
+	    "recommendation":"upgrade to 1.0.1","cwes":[79],"advisories":[{"url":"https://example.com/advisory"}],
+	    "ratings":[{"source":{"name":"osv"},"score":9.8,"severity":"critical","method":"CVSSv31","vector":"CVSS:3.1/AV:N"}],
+	    "affects":[{"ref":"a"},{"ref":"urn:cdx:3e671687-395b-41f5-a30f-a58921a69b79/1#elsewhere"}]}]}`
+	doc, err := UnmarshalJSON([]byte(raw), TargetCycloneDX16JSON)
+	if err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	byID := map[string]Component{}
+	for _, component := range doc.Components {
+		byID[component.ID] = component
+	}
+	if got := byID["a"].Vulnerabilities; len(got) != 1 || got[0].ID != "GHSA-xxxx-yyyy-zzzz" || got[0].Severity != "critical" ||
+		got[0].Score == nil || *got[0].Score != 9.8 || got[0].Source != "osv" || len(got[0].CWEs) != 1 || len(got[0].Advisories) != 1 {
+		t.Fatalf("a's vulnerabilities = %+v, want the decoded advisory", got)
+	}
+	if got := byID["b"].Vulnerabilities; len(got) != 0 {
+		t.Fatalf("b's vulnerabilities = %+v, want none: it is not affected", got)
+	}
+
+	out, err := MarshalJSON(doc, TargetCycloneDX16JSON, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	var bom cdx.BOM
+	if err := json.Unmarshal(out, &bom); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if bom.Vulnerabilities == nil || len(*bom.Vulnerabilities) != 1 {
+		t.Fatalf("re-exported vulnerabilities = %+v, want one", bom.Vulnerabilities)
+	}
+	vuln := (*bom.Vulnerabilities)[0]
+	if vuln.Affects == nil || len(*vuln.Affects) != 1 || (*vuln.Affects)[0].Ref != "a" {
+		t.Errorf("re-exported affects = %+v, want a only", vuln.Affects)
+	}
+	if vuln.Ratings == nil || len(*vuln.Ratings) != 1 || (*vuln.Ratings)[0].Severity != cdx.SeverityCritical {
+		t.Errorf("re-exported ratings = %+v, want critical", vuln.Ratings)
+	}
+}
+
+// FILE is a valid SPDX package purpose. A versionless, PURL-less file package
+// in the inventory used to be taken for a document root and dropped from the
+// graph with its relationships. Only a subject the document describes with
+// nothing identifying it -- a scanned directory -- is stepped through.
+func TestAFilePackageInTheInventoryReachesTheGraph(t *testing.T) {
+	raw := `{"spdxVersion":"SPDX-2.3","dataLicense":"CC0-1.0","SPDXID":"SPDXRef-DOCUMENT","name":"x",
+	  "documentNamespace":"https://example.com/x","creationInfo":{"created":"2024-01-01T00:00:00Z","creators":["Tool: t"]},
+	  "packages":[
+	    {"SPDXID":"SPDXRef-dir","name":"/src","downloadLocation":"NOASSERTION","primaryPackagePurpose":"FILE"},
+	    {"SPDXID":"SPDXRef-app","name":"app","versionInfo":"1.0.0","downloadLocation":"NOASSERTION",
+	      "externalRefs":[{"referenceCategory":"PACKAGE-MANAGER","referenceType":"purl","referenceLocator":"pkg:npm/app@1.0.0"}]},
+	    {"SPDXID":"SPDXRef-config","name":"config.bin","downloadLocation":"NOASSERTION","primaryPackagePurpose":"FILE"}],
+	  "relationships":[
+	    {"spdxElementId":"SPDXRef-DOCUMENT","relationshipType":"DESCRIBES","relatedSpdxElement":"SPDXRef-dir"},
+	    {"spdxElementId":"SPDXRef-dir","relationshipType":"DEPENDS_ON","relatedSpdxElement":"SPDXRef-app"},
+	    {"spdxElementId":"SPDXRef-app","relationshipType":"DEPENDS_ON","relatedSpdxElement":"SPDXRef-config"}]}`
+	doc, err := UnmarshalJSON([]byte(raw), TargetSPDX23JSON)
+	if err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	graph, err := ToGraph(doc)
+	if err != nil {
+		t.Fatalf("graph: %v", err)
+	}
+	names := map[string]bool{}
+	for _, node := range graph.Nodes() {
+		names[sdk.NodeDisplayName(node)] = true
+	}
+	if !names["config.bin"] {
+		t.Errorf("graph nodes = %v, want the inventory file package kept", names)
+	}
+	if names["/src"] {
+		t.Errorf("graph nodes = %v, want the described directory stepped through", names)
+	}
+	if !names["app"] {
+		t.Errorf("graph nodes = %v, want app", names)
+	}
+}
+
+// A decoded CycloneDX document keeps the subject its metadata.component
+// named, even when the graph also has a disconnected root the source never
+// called its subject.
+func TestAnExplicitPrimaryComponentSurvivesAnotherRoot(t *testing.T) {
+	raw := `{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,
+	  "metadata":{"component":{"bom-ref":"app","type":"application","name":"myapp","version":"2.0.0","purl":"pkg:npm/myapp@2.0.0"}},
+	  "components":[
+	    {"bom-ref":"a","type":"library","name":"a","version":"1.0.0"},
+	    {"bom-ref":"stray","type":"library","name":"stray","version":"1.0.0"}],
+	  "dependencies":[{"ref":"app","dependsOn":["a"]},{"ref":"a"},{"ref":"stray"}]}`
+	doc, err := UnmarshalJSON([]byte(raw), TargetCycloneDX16JSON)
+	if err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	if len(doc.Roots) != 2 {
+		t.Fatalf("roots = %v, want the application and the stray package", doc.Roots)
+	}
+	out, err := MarshalJSON(doc, TargetCycloneDX16JSON, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	var bom cdx.BOM
+	if err := json.Unmarshal(out, &bom); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if bom.Metadata == nil || bom.Metadata.Component == nil || bom.Metadata.Component.Name != "myapp" {
+		t.Fatalf("re-exported primary component = %+v, want myapp", bom.Metadata)
+	}
+}
+
+// "A DESCRIBED_BY B" is "B DESCRIBES A" (SPDX 2.3 section 11.1). A document
+// that states coverage in the inverse form used to decode with no roots.
+func TestSPDXDescribedByNamesTheDescribedPackage(t *testing.T) {
+	raw := `{"spdxVersion":"SPDX-2.3","dataLicense":"CC0-1.0","SPDXID":"SPDXRef-DOCUMENT","name":"x",
+	  "documentNamespace":"https://example.com/x","creationInfo":{"created":"2024-01-01T00:00:00Z","creators":["Tool: t"]},
+	  "packages":[{"SPDXID":"SPDXRef-app","name":"app","versionInfo":"1.0.0","downloadLocation":"NOASSERTION"}],
+	  "relationships":[{"spdxElementId":"SPDXRef-app","relationshipType":"DESCRIBED_BY","relatedSpdxElement":"SPDXRef-DOCUMENT"}]}`
+	doc, err := UnmarshalJSON([]byte(raw), TargetSPDX23JSON)
+	if err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	if len(doc.Roots) != 1 || doc.Roots[0] != "SPDXRef-app" {
+		t.Fatalf("roots = %v, want SPDXRef-app", doc.Roots)
+	}
+	out, err := MarshalJSON(doc, TargetSPDX23JSON, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if !strings.Contains(string(out), `"relationshipType": "DESCRIBES"`) && !strings.Contains(string(out), `"relationshipType":"DESCRIBES"`) {
+		t.Fatalf("re-export carries no DESCRIBES relationship: %s", out)
+	}
+}
+
+// A CycloneDX subject with nothing identifying it as a package -- trivy's "."
+// for a filesystem scan is an application with no version or package URL --
+// is stepped through like a scanned directory, and its dependencies become
+// the graph's roots. A subject that is a real package stays a node.
+func TestAnUnidentifiedCycloneDXSubjectIsSteppedThrough(t *testing.T) {
+	nodesOf := func(t *testing.T, primary string) map[string]bool {
+		t.Helper()
+		raw := `{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,
+		  "metadata":{"component":` + primary + `},
+		  "components":[{"bom-ref":"pkg:npm/a@1.0.0","type":"library","name":"a","version":"1.0.0","purl":"pkg:npm/a@1.0.0"}],
+		  "dependencies":[{"ref":"subject","dependsOn":["pkg:npm/a@1.0.0"]},{"ref":"pkg:npm/a@1.0.0"}]}`
+		doc, err := UnmarshalJSON([]byte(raw), TargetCycloneDX16JSON)
+		if err != nil {
+			t.Fatalf("ingest: %v", err)
+		}
+		graph, err := ToGraph(doc)
+		if err != nil {
+			t.Fatalf("graph: %v", err)
+		}
+		names := map[string]bool{}
+		for _, node := range graph.Nodes() {
+			names[sdk.NodeDisplayName(node)] = true
+		}
+		return names
+	}
+	if names := nodesOf(t, `{"bom-ref":"subject","type":"application","name":"."}`); names["."] || !names["a"] {
+		t.Errorf("nodes = %v, want the unidentified subject stepped through and a kept", names)
+	}
+	if names := nodesOf(t, `{"bom-ref":"subject","type":"application","name":"myapp","version":"2.0.0","purl":"pkg:npm/myapp@2.0.0"}`); !names["myapp"] || !names["a"] {
+		t.Errorf("nodes = %v, want the identified subject kept as a node", names)
+	}
+}
