@@ -29,12 +29,13 @@ HTTP_RENAMES = [  # longest first so prefixes never match early
     ('NewHTTPClient', 'NewClient'),
 ]
 
-def rules_for(aliases):
-    """The rewrite rules for documents that refer to the root package by any of `aliases`."""
+def rules_for(aliases, plugin_alias='sdkplugin', http_alias='httpkit'):
+    """The rewrite rules for documents that refer to the root package by any of `aliases`,
+    spelling the destinations with the aliases the document already uses for them."""
     alt = r'(?:' + '|'.join(re.escape(a) for a in aliases) + r')'
-    rules = [(re.compile(r'\b' + alt + r'\.(' + '|'.join(PLUGIN_NAMES) + r')\b'), r'sdkplugin.\1')]
-    rules += [(re.compile(r'\b' + alt + r'\.' + old + r'\b'), 'httpkit.' + new) for old, new in HTTP_RENAMES]
-    rules.append((re.compile(r'\b' + alt + r'\.(EnvHTTP[A-Za-z]+)\b'), r'httpkit.\1'))
+    rules = [(re.compile(r'\b' + alt + r'\.(' + '|'.join(PLUGIN_NAMES) + r')\b'), plugin_alias + r'.\1')]
+    rules += [(re.compile(r'\b' + alt + r'\.' + old + r'\b'), http_alias + '.' + new) for old, new in HTTP_RENAMES]
+    rules.append((re.compile(r'\b' + alt + r'\.(EnvHTTP[A-Za-z]+)\b'), http_alias + r'.\1'))
     return rules
 
 IMPORT_BLOCK = re.compile(r'^import \((.*?)^\)', re.S | re.M)
@@ -60,16 +61,23 @@ def code_only(text):
     """`text` with every comment and string literal blanked, for usage checks."""
     return NON_CODE.sub(lambda m: ' ' * len(m.group(0)), text)
 
-def root_alias(doc):
-    """The selector this document uses for the root package: its import alias, or the package name."""
-    m = ROOT_IMPORT.search(doc)
+def import_alias(doc, path, default):
+    """The selector this document uses for `path`: its import alias, the package
+    name when imported unaliased, or None when it is not imported."""
+    m = re.search(r'^[ \t]*(?:import[ \t]+)?(\w+[ \t]+)?"' + re.escape(path) + r'"[ \t]*(//[^\n]*)?$', doc, re.M)
     if not m:
         return None
-    return (m.group(1) or 'sdk').strip()
+    return (m.group(1) or default).strip()
+
+def root_alias(doc):
+    return import_alias(doc, ROOT, 'sdk')
 
 def rewrite(doc):
     alias = root_alias(doc)
-    for pat, rep in rules_for([alias] if alias else FALLBACK_ALIASES):
+    # a document that already imports a destination keeps spelling it its own way
+    plugin_alias = import_alias(doc, ROOT + '/plugin', 'plugin') or 'sdkplugin'
+    http_alias = import_alias(doc, ROOT + '/httpkit', 'httpkit') or 'httpkit'
+    for pat, rep in rules_for([alias] if alias else FALLBACK_ALIASES, plugin_alias, http_alias):
         doc = pat.sub(rep, doc)
     return doc
 
