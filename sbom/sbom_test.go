@@ -8,10 +8,11 @@ import (
 	"time"
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
-	"github.com/bomly-dev/bomly-sdk"
 	"github.com/bomly-dev/bomly-sdk/internal/testnodes"
 	"github.com/spdx/tools-golang/spdx/v2/common"
 	v23 "github.com/spdx/tools-golang/spdx/v2/v2_3"
+
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 func TestMarshalDepGraphJSON_SPDX23(t *testing.T) {
@@ -93,11 +94,11 @@ func TestMarshalDepGraphJSON_SPDX23ToolCreators(t *testing.T) {
 }
 
 func TestMarshalDepGraphJSON_SPDX23Scope(t *testing.T) {
-	g := sdk.New()
+	g := model.New()
 	app := testnodes.Ref("app", "1.0.0")
-	react := testnodes.DepFrom(sdk.DependencyNode{Coordinates: sdk.Coordinates{Name: "react", Version: "18.2.0"}, Scopes: sdk.ScopesOf("runtime")})
-	vitest := testnodes.DepFrom(sdk.DependencyNode{Coordinates: sdk.Coordinates{Name: "vitest", Version: "2.0.0"}, Scopes: sdk.ScopesOf("development")})
-	for _, n := range []*sdk.DependencyNode{app, react, vitest} {
+	react := testnodes.DepFrom(model.DependencyNode{Coordinates: model.Coordinates{Name: "react", Version: "18.2.0"}, Scopes: model.ScopesOf("runtime")})
+	vitest := testnodes.DepFrom(model.DependencyNode{Coordinates: model.Coordinates{Name: "vitest", Version: "2.0.0"}, Scopes: model.ScopesOf("development")})
+	for _, n := range []*model.DependencyNode{app, react, vitest} {
 		if err := g.AddNode(n); err != nil {
 			t.Fatalf("add package %s: %v", n.NodeID(), err)
 		}
@@ -140,8 +141,8 @@ func TestMarshalDepGraphJSON_SPDX23Scope(t *testing.T) {
 }
 
 func TestMarshalDepGraphJSON_SPDX23PreservesPackageType(t *testing.T) {
-	g := sdk.New()
-	app := testnodes.DepFrom(sdk.DependencyNode{Coordinates: sdk.Coordinates{Ecosystem: "npm",
+	g := model.New()
+	app := testnodes.DepFrom(model.DependencyNode{Coordinates: model.Coordinates{Ecosystem: "npm",
 		Name:    "demo",
 		Version: "1.0.0",
 		Type:    "application",
@@ -179,14 +180,14 @@ func TestMarshalDepGraphJSON_SPDX23PreservesPackageType(t *testing.T) {
 }
 
 func TestMarshalDepGraphJSON_SPDX23PreservesPURLAndCopyright(t *testing.T) {
-	g := sdk.New()
-	pkg := testnodes.DepFrom(sdk.DependencyNode{Coordinates: sdk.Coordinates{Ecosystem: "npm",
+	g := model.New()
+	pkg := testnodes.DepFrom(model.DependencyNode{Coordinates: model.Coordinates{Ecosystem: "npm",
 		PackageManager: "npm",
 		Name:           "accept",
 		Version:        "1.1.0",
 		PURL:           "pkg:npm/accept@1.1.0"}, Copyright: "Copyright (c) 2014, Walmart and other contributors.",
 	})
-	sdk.SetDetectionLicenses(pkg, []sdk.PackageLicense{{SPDXExpression: "BSD-3-Clause"}})
+	model.SetDetectionLicenses(pkg, []model.PackageLicense{{SPDXExpression: "BSD-3-Clause"}})
 
 	if err := g.AddNode(pkg); err != nil {
 		t.Fatalf("add package: %v", err)
@@ -258,11 +259,11 @@ func TestMarshalDepGraphJSON_CycloneDXVersions(t *testing.T) {
 }
 
 func TestMarshalDepGraphJSON_CycloneDXScope(t *testing.T) {
-	g := sdk.New()
+	g := model.New()
 	app := testnodes.Ref("app", "1.0.0")
-	runtimeDep := testnodes.DepFrom(sdk.DependencyNode{Coordinates: sdk.Coordinates{Name: "react", Version: "18.2.0"}, Scopes: sdk.ScopesOf("runtime")})
-	devDep := testnodes.DepFrom(sdk.DependencyNode{Coordinates: sdk.Coordinates{Name: "vitest", Version: "2.0.0"}, Scopes: sdk.ScopesOf("development")})
-	for _, n := range []*sdk.DependencyNode{app, runtimeDep, devDep} {
+	runtimeDep := testnodes.DepFrom(model.DependencyNode{Coordinates: model.Coordinates{Name: "react", Version: "18.2.0"}, Scopes: model.ScopesOf("runtime")})
+	devDep := testnodes.DepFrom(model.DependencyNode{Coordinates: model.Coordinates{Name: "vitest", Version: "2.0.0"}, Scopes: model.ScopesOf("development")})
+	for _, n := range []*model.DependencyNode{app, runtimeDep, devDep} {
 		if err := g.AddNode(n); err != nil {
 			t.Fatalf("add package %s: %v", n.NodeID(), err)
 		}
@@ -366,8 +367,8 @@ func TestMarshalDepGraphJSON_IsDeterministicWithFixedMetadata(t *testing.T) {
 }
 
 func TestUnmarshalJSON_SPDX23RestoresPackageIdentityFromPURL(t *testing.T) {
-	g := sdk.New()
-	if err := g.AddNode(testnodes.DepFrom(sdk.DependencyNode{Coordinates: sdk.Coordinates{Ecosystem: "npm",
+	g := model.New()
+	if err := g.AddNode(testnodes.DepFrom(model.DependencyNode{Coordinates: model.Coordinates{Ecosystem: "npm",
 		PackageManager: "npm",
 		Name:           "accept",
 		Version:        "1.1.0",
@@ -421,8 +422,8 @@ func TestUnmarshalJSON_SPDX23RestoresPackageIdentityFromPURL(t *testing.T) {
 }
 
 func TestUnmarshalJSON_CycloneDXPreservesPURL(t *testing.T) {
-	g := sdk.New()
-	if err := g.AddNode(testnodes.DepFrom(sdk.DependencyNode{Coordinates: sdk.Coordinates{Ecosystem: "npm",
+	g := model.New()
+	if err := g.AddNode(testnodes.DepFrom(model.DependencyNode{Coordinates: model.Coordinates{Ecosystem: "npm",
 		PackageManager: "npm",
 		Name:           "accept",
 		Version:        "1.1.0",
@@ -638,15 +639,15 @@ func TestUnmarshalJSON_SPDX23ParsesDependencyOfAndPrimaryPackagePurpose(t *testi
 	}
 }
 
-func mustGraph(t *testing.T) *sdk.Graph {
+func mustGraph(t *testing.T) *model.Graph {
 	t.Helper()
 
-	g := sdk.New()
+	g := model.New()
 	app := testnodes.Ref("app", "1.0.0")
 	react := testnodes.Ref("react", "18.2.0")
 	zod := testnodes.Ref("zod", "3.23.0")
 
-	for _, n := range []*sdk.DependencyNode{app, react, zod} {
+	for _, n := range []*model.DependencyNode{app, react, zod} {
 		if err := g.AddNode(n); err != nil {
 			t.Fatalf("add package %s: %v", n.NodeID(), err)
 		}
@@ -672,16 +673,16 @@ func equalStringSlices(left, right []string) bool {
 	return true
 }
 
-func edgeCount(graph *sdk.Graph) int {
+func edgeCount(graph *model.Graph) int {
 	count := 0
-	graph.WalkEdges(func(_, _ sdk.GraphNode) bool {
+	graph.WalkEdges(func(_, _ model.GraphNode) bool {
 		count++
 		return true
 	})
 	return count
 }
 
-func idsOfPackages(packages []sdk.GraphNode) []string {
+func idsOfPackages(packages []model.GraphNode) []string {
 	ids := make([]string, 0, len(packages))
 	for _, pkg := range packages {
 		ids = append(ids, pkg.NodeID())
@@ -715,17 +716,17 @@ func TestEcosystemFromPURLTypeRoundTripsEmittedPURLs(t *testing.T) {
 	// than guessed. Everything else must round-trip.
 	ambiguous := map[string]bool{"hex": true}
 
-	for _, manager := range sdk.AllPackageManagers() {
+	for _, manager := range model.AllPackageManagers() {
 		ecosystem := manager.Ecosystem()
-		if ecosystem == sdk.EcosystemUnknown {
+		if ecosystem == model.EcosystemUnknown {
 			continue
 		}
-		purlType := sdk.PackageURLTypeForValues(ecosystem, manager)
+		purlType := model.PackageURLTypeForValues(ecosystem, manager)
 		if ambiguous[purlType] {
 			continue
 		}
 		got := ecosystemFromPURLType(purlType)
-		if got == sdk.EcosystemUnknown {
+		if got == model.EcosystemUnknown {
 			t.Errorf("ecosystemFromPURLType(%q) = unknown; %q packages would lose their ecosystem on SBOM ingest", purlType, ecosystem)
 		}
 	}
@@ -740,28 +741,28 @@ func TestEncodeDecodeRoundTripPreservesErlangIdentity(t *testing.T) {
 
 	cases := []struct {
 		name          string
-		manager       sdk.PackageManager
+		manager       model.PackageManager
 		depName       string
 		version       string
 		wantPURL      string
-		wantEcosystem sdk.Ecosystem
+		wantEcosystem model.Ecosystem
 	}{{
 		name:          "otp application",
-		manager:       sdk.PackageManagerOTP,
+		manager:       model.PackageManagerOTP,
 		depName:       "kernel",
 		version:       "9.2",
 		wantPURL:      "pkg:otp/kernel@9.2",
-		wantEcosystem: sdk.EcosystemErlang,
+		wantEcosystem: model.EcosystemErlang,
 	}, {
 		// pkg:hex cannot say whether it came from rebar or mix, so the only
 		// correct answer on the way back in is "unknown" — never a confident
 		// mislabel as Elixir.
 		name:          "rebar dependency",
-		manager:       sdk.PackageManagerRebar,
+		manager:       model.PackageManagerRebar,
 		depName:       "cowboy",
 		version:       "2.10.0",
 		wantPURL:      "pkg:hex/cowboy@2.10.0",
-		wantEcosystem: sdk.EcosystemUnknown,
+		wantEcosystem: model.EcosystemUnknown,
 	}}
 
 	for _, tc := range cases {
@@ -770,17 +771,17 @@ func TestEncodeDecodeRoundTripPreservesErlangIdentity(t *testing.T) {
 				// The identity is minted from the coordinates at
 				// construction, so the ecosystem and manager have to be
 				// stated up front rather than patched on afterwards.
-				dep := testnodes.Dep(sdk.Coordinates{
+				dep := testnodes.Dep(model.Coordinates{
 					Name:           tc.depName,
 					Version:        tc.version,
-					Ecosystem:      sdk.EcosystemErlang,
+					Ecosystem:      model.EcosystemErlang,
 					PackageManager: tc.manager,
 				})
 				if !testnodes.Is(dep, tc.wantPURL) {
 					t.Fatalf("emitted PURL = %q, want %q", dep.NodeID(), tc.wantPURL)
 				}
 
-				g := sdk.New()
+				g := model.New()
 				if err := g.AddNode(dep); err != nil {
 					t.Fatalf("add node: %v", err)
 				}
@@ -811,8 +812,8 @@ func TestEncodeDecodeRoundTripPreservesErlangIdentity(t *testing.T) {
 				if node.Ecosystem != tc.wantEcosystem {
 					t.Errorf("ecosystem = %q, want %q", node.Ecosystem, tc.wantEcosystem)
 				}
-				if tc.wantEcosystem == sdk.EcosystemUnknown && node.PackageManager == sdk.PackageManagerMix {
-					t.Errorf("ambiguous pkg:hex must not be labelled %q", sdk.PackageManagerMix)
+				if tc.wantEcosystem == model.EcosystemUnknown && node.PackageManager == model.PackageManagerMix {
+					t.Errorf("ambiguous pkg:hex must not be labelled %q", model.PackageManagerMix)
 				}
 			})
 		}
@@ -823,16 +824,16 @@ func TestEncodeDecodeRoundTripPreservesErlangIdentity(t *testing.T) {
 // document correctness: external grype mode feeds this SPDX document to the
 // grype CLI, which searches its DB by the name it reads. See issue #319.
 func TestFromDepGraph_ComponentNamesAreEcosystemNative(t *testing.T) {
-	g := sdk.New()
-	nodes := []*sdk.DependencyNode{
-		testnodes.DepFrom(sdk.DependencyNode{Coordinates: sdk.Coordinates{
-			Ecosystem: sdk.EcosystemNPM, Org: "tailwindcss", Name: "postcss", Version: "4.3.3",
+	g := model.New()
+	nodes := []*model.DependencyNode{
+		testnodes.DepFrom(model.DependencyNode{Coordinates: model.Coordinates{
+			Ecosystem: model.EcosystemNPM, Org: "tailwindcss", Name: "postcss", Version: "4.3.3",
 		}}),
-		testnodes.DepFrom(sdk.DependencyNode{Coordinates: sdk.Coordinates{
-			Ecosystem: sdk.EcosystemNPM, Name: "postcss", Version: "8.5.16",
+		testnodes.DepFrom(model.DependencyNode{Coordinates: model.Coordinates{
+			Ecosystem: model.EcosystemNPM, Name: "postcss", Version: "8.5.16",
 		}}),
-		testnodes.DepFrom(sdk.DependencyNode{Coordinates: sdk.Coordinates{
-			Ecosystem: sdk.EcosystemMaven, Org: "com.example", Name: "demo", Version: "1.2.3",
+		testnodes.DepFrom(model.DependencyNode{Coordinates: model.Coordinates{
+			Ecosystem: model.EcosystemMaven, Org: "com.example", Name: "demo", Version: "1.2.3",
 		}}),
 	}
 	for _, n := range nodes {
@@ -862,9 +863,9 @@ func TestFromDepGraph_ComponentNamesAreEcosystemNative(t *testing.T) {
 
 // mustDep narrows a graph node to the dependency node a case is asserting
 // about, failing rather than panicking when the graph holds something else.
-func mustDep(t testing.TB, node sdk.GraphNode) *sdk.DependencyNode {
+func mustDep(t testing.TB, node model.GraphNode) *model.DependencyNode {
 	t.Helper()
-	dep, ok := node.(*sdk.DependencyNode)
+	dep, ok := node.(*model.DependencyNode)
 	if !ok {
 		t.Fatalf("expected a dependency node, got %T", node)
 	}
@@ -878,19 +879,19 @@ func mustDep(t testing.TB, node sdk.GraphNode) *sdk.DependencyNode {
 func TestEcosystemFromPURLTypeDelegatesToTheSDK(t *testing.T) {
 	for _, testCase := range []struct {
 		purlType string
-		want     sdk.Ecosystem
+		want     model.Ecosystem
 	}{
-		{"golang", sdk.EcosystemGo},
-		{"npm", sdk.EcosystemNPM},
-		{"swiftpm", sdk.EcosystemSwift},
-		{"", sdk.EcosystemUnknown},
-		{"nothing-like-this", sdk.EcosystemUnknown},
+		{"golang", model.EcosystemGo},
+		{"npm", model.EcosystemNPM},
+		{"swiftpm", model.EcosystemSwift},
+		{"", model.EcosystemUnknown},
+		{"nothing-like-this", model.EcosystemUnknown},
 	} {
 		t.Run(testCase.purlType, func(t *testing.T) {
 			if got := ecosystemFromPURLType(testCase.purlType); got != testCase.want {
 				t.Errorf("ecosystem = %q, want %q", got, testCase.want)
 			}
-			if got, want := ecosystemFromPURLType(testCase.purlType), sdk.EcosystemForPURLType(testCase.purlType); got != want {
+			if got, want := ecosystemFromPURLType(testCase.purlType), model.EcosystemForPURLType(testCase.purlType); got != want {
 				t.Errorf("diverged from the SDK: %q vs %q", got, want)
 			}
 		})

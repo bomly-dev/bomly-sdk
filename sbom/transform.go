@@ -11,10 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bomly-dev/bomly-sdk"
 	"github.com/bomly-dev/bomly-sdk/graphview"
 	"github.com/bomly-dev/bomly-sdk/purlkit"
 	"github.com/bomly-dev/bomly-sdk/spdxkit"
+
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 var ErrNilGraph = errors.New("dependency graph is nil")
@@ -24,7 +25,7 @@ var ErrNilGraph = errors.New("dependency graph is nil")
 // For a graph that came from ingested SBOMs, prefer FromGraphEntries: this
 // entry point has no way to see what those documents said about themselves,
 // and so exports a document that credits only Bomly.
-func FromDepGraph(g *sdk.Graph, opts BuildOptions) (*Document, error) {
+func FromDepGraph(g *model.Graph, opts BuildOptions) (*Document, error) {
 	return FromGraphEntries(g, nil, opts)
 }
 
@@ -38,7 +39,7 @@ func FromDepGraph(g *sdk.Graph, opts BuildOptions) (*Document, error) {
 // are here for the one thing only they carry: what each source document
 // asserted about itself, which the merge into a single graph necessarily
 // discards (ADR-0037).
-func FromGraphEntries(g *sdk.Graph, entries []sdk.GraphEntry, opts BuildOptions) (*Document, error) {
+func FromGraphEntries(g *model.Graph, entries []model.GraphEntry, opts BuildOptions) (*Document, error) {
 	if g == nil {
 		return nil, ErrNilGraph
 	}
@@ -48,7 +49,7 @@ func FromGraphEntries(g *sdk.Graph, entries []sdk.GraphEntry, opts BuildOptions)
 	// declared: it is a merge with one source, and it mints its own identity
 	// and links the source. Decided here, where the entries are visible,
 	// rather than by every caller remembering to look (issue #433).
-	sources := make([]sdk.DocumentAssertions, 0, len(entries))
+	sources := make([]model.DocumentAssertions, 0, len(entries))
 	restates := opts.RestatesSource
 	for _, entry := range entries {
 		if entry.Document == nil {
@@ -68,7 +69,7 @@ func FromGraphEntries(g *sdk.Graph, entries []sdk.GraphEntry, opts BuildOptions)
 	// project's own artifacts, and an SBOM that omitted them would describe
 	// the dependencies of a project it never named. Manifests are structural
 	// and stay out.
-	graphNodes := make([]sdk.GraphNode, 0, componentCount)
+	graphNodes := make([]model.GraphNode, 0, componentCount)
 	for _, module := range g.ModuleNodes() {
 		graphNodes = append(graphNodes, module)
 	}
@@ -81,7 +82,7 @@ func FromGraphEntries(g *sdk.Graph, entries []sdk.GraphEntry, opts BuildOptions)
 			continue
 		}
 		version := coords.Version
-		if version == "" && sdk.IsProjectOwned(node) && opts.ProjectRoot != nil {
+		if version == "" && model.IsProjectOwned(node) && opts.ProjectRoot != nil {
 			// The project's own modules have no registry version; the
 			// project version is theirs.
 			version = strings.TrimSpace(opts.ProjectRoot.Version)
@@ -102,22 +103,22 @@ func FromGraphEntries(g *sdk.Graph, entries []sdk.GraphEntry, opts BuildOptions)
 			PackageManager: coords.PackageManager.Name(),
 			Type:           string(coords.Type),
 		}
-		if dep, isDep := pkg.(*sdk.DependencyNode); isDep {
-			component.Scopes = append([]sdk.Scope(nil), dep.Scopes...)
+		if dep, isDep := pkg.(*model.DependencyNode); isDep {
+			component.Scopes = append([]model.Scope(nil), dep.Scopes...)
 			component.SourceScope = dep.SourceScope
 			component.Copyright = dep.Copyright
-			component.Licenses = componentLicenses(sdk.DetectionLicenses(dep))
+			component.Licenses = componentLicenses(model.DetectionLicenses(dep))
 			component.Digests = componentDigests(dep.Digests)
 			applyNodeAssertions(&component, dep)
 			// The project's own records never take an external origin. This
 			// guard closes the one remaining path -- a plugin-supplied graph
 			// asserting an origin directly -- and module nodes cannot reach
 			// it at all now, since origins live on dependency nodes.
-			if !sdk.IsProjectOwned(pkg) && len(dep.Origins) > 0 {
+			if !model.IsProjectOwned(pkg) && len(dep.Origins) > 0 {
 				applyOrigins(&component, dep.Origins)
 			}
 		}
-		enrichComponentFromRegistry(&component, opts.Registry, pkg.NodeID(), sdk.IsProjectOwned(pkg))
+		enrichComponentFromRegistry(&component, opts.Registry, pkg.NodeID(), model.IsProjectOwned(pkg))
 		components = append(components, component)
 		depsByRef[pkg.NodeID()] = nil
 	}
@@ -323,7 +324,7 @@ func newUUIDv4() string {
 // them as schema-valid CycloneDX hashes / SPDX checksums. Digests whose value
 // cannot be normalized for a known algorithm are kept verbatim; encoders drop
 // entries with unsupported algorithms.
-func componentDigests(digests []sdk.Digest) []Digest {
+func componentDigests(digests []model.Digest) []Digest {
 	if len(digests) == 0 {
 		return nil
 	}
@@ -345,26 +346,26 @@ func componentDigests(digests []sdk.Digest) []Digest {
 // validate base64-encoded values (npm SRI integrity) before hex re-encoding.
 //
 // Keyed by the SDK's canonical token, so the spelling variants of one
-// algorithm resolve through sdk.ParseDigestAlgorithm rather than needing a row
+// algorithm resolve through model.ParseDigestAlgorithm rather than needing a row
 // each. The lengths themselves are not the SDK's to hold: it deliberately
 // records no per-algorithm value length, because ecosystems publish digests in
 // hex, in base64, and over subjects that are not files. This table exists only
 // to recognize a base64 value that is exactly one raw digest, so an algorithm
 // missing from it is left verbatim rather than mis-decoded.
-var digestHexSizes = map[sdk.DigestAlgorithm]int{
-	sdk.DigestAlgorithmMD5:     16,
-	sdk.DigestAlgorithmSHA1:    20,
-	sdk.DigestAlgorithmSHA224:  28,
-	sdk.DigestAlgorithmSHA256:  32,
-	sdk.DigestAlgorithmSHA384:  48,
-	sdk.DigestAlgorithmSHA512:  64,
-	sdk.DigestAlgorithmSHA3256: 32,
-	sdk.DigestAlgorithmSHA3384: 48,
-	sdk.DigestAlgorithmSHA3512: 64,
+var digestHexSizes = map[model.DigestAlgorithm]int{
+	model.DigestAlgorithmMD5:     16,
+	model.DigestAlgorithmSHA1:    20,
+	model.DigestAlgorithmSHA224:  28,
+	model.DigestAlgorithmSHA256:  32,
+	model.DigestAlgorithmSHA384:  48,
+	model.DigestAlgorithmSHA512:  64,
+	model.DigestAlgorithmSHA3256: 32,
+	model.DigestAlgorithmSHA3384: 48,
+	model.DigestAlgorithmSHA3512: 64,
 }
 
 func normalizeDigestValue(algorithm, value string) string {
-	canonical, err := sdk.ParseDigestAlgorithm(algorithm)
+	canonical, err := model.ParseDigestAlgorithm(algorithm)
 	if err != nil {
 		return value
 	}
@@ -406,7 +407,7 @@ func uniqueToolNames(values []string) []string {
 // scorecardRepositoryURL renders a scorecard repository, which is a canonical
 // host/owner/name identifier with no scheme, as a URL. It is held to the same
 // invariant as detector-asserted origins.
-func scorecardRepositoryURL(scorecard *sdk.PackageScorecard) (string, bool) {
+func scorecardRepositoryURL(scorecard *model.PackageScorecard) (string, bool) {
 	if scorecard == nil {
 		return "", false
 	}
@@ -417,7 +418,7 @@ func scorecardRepositoryURL(scorecard *sdk.PackageScorecard) (string, bool) {
 	if !strings.Contains(repository, "://") {
 		repository = "https://" + repository
 	}
-	return sdk.NormalizeOriginURL(repository, true)
+	return model.NormalizeOriginURL(repository, true)
 }
 
 // applyOrigin projects the origin a detector asserted onto a component. The
@@ -436,15 +437,15 @@ func scorecardRepositoryURL(scorecard *sdk.PackageScorecard) (string, bool) {
 // A structural root is replaced by the exported nodes beneath it rather than
 // dropped, so the roots the document reports are the ones a reader means: the
 // project's modules and top-level packages.
-func exportedRootIDs(g *sdk.Graph, exported map[string]struct{}) []string {
+func exportedRootIDs(g *model.Graph, exported map[string]struct{}) []string {
 	roots := g.Roots()
 	ids := make([]string, 0, len(roots))
 	seen := make(map[string]struct{}, len(roots))
 	visited := make(map[string]struct{}, len(roots))
 
-	var collect func(node sdk.GraphNode)
-	collect = func(node sdk.GraphNode) {
-		if sdk.IsNilNode(node) {
+	var collect func(node model.GraphNode)
+	collect = func(node model.GraphNode) {
+		if model.IsNilNode(node) {
 			return
 		}
 		id := node.NodeID()
@@ -481,7 +482,7 @@ func exportedRootIDs(g *sdk.Graph, exported map[string]struct{}) []string {
 // keeps deliberately -- exported as though it had come from one. Each is
 // re-normalized, so an origin that does not survive the publication gates is
 // discarded rather than published.
-func applyOrigins(component *Component, origins []sdk.DependencyOrigin) {
+func applyOrigins(component *Component, origins []model.DependencyOrigin) {
 	if component == nil {
 		return
 	}
@@ -525,7 +526,7 @@ func applyOrigins(component *Component, origins []sdk.DependencyOrigin) {
 // A rejected value is dropped rather than repaired: the gates decide what is
 // publishable, and a "fixed" contact or reference would be an assertion no
 // source made.
-func applyNodeAssertions(component *Component, dep *sdk.DependencyNode) {
+func applyNodeAssertions(component *Component, dep *model.DependencyNode) {
 	if component == nil || dep == nil {
 		return
 	}
@@ -539,8 +540,8 @@ func applyNodeAssertions(component *Component, dep *sdk.DependencyNode) {
 			component.Originator = &contact
 		}
 	}
-	component.Description = sdk.NormalizeDescription(dep.Description)
-	component.Homepage = sdk.NormalizeHomepage(dep.Homepage)
+	component.Description = model.NormalizeDescription(dep.Description)
+	component.Homepage = model.NormalizeHomepage(dep.Homepage)
 	component.ExternalReferences = publishableReferences(dep.ExternalReferences)
 	if len(dep.CPEs) > 0 && len(component.CPEs) == 0 {
 		component.CPEs = append([]string(nil), dep.CPEs...)
@@ -554,14 +555,14 @@ func applyNodeAssertions(component *Component, dep *sdk.DependencyNode) {
 // set both normalizes and dedupes -- the set merge class stated in ADR-0037,
 // applied through the one implementation of it rather than a second sort-and-
 // compare written here.
-func publishableReferences(refs []sdk.ExternalReference) []sdk.ExternalReference {
+func publishableReferences(refs []model.ExternalReference) []model.ExternalReference {
 	if len(refs) == 0 {
 		return nil
 	}
-	return sdk.MergeExternalReferences(nil, refs)
+	return model.MergeExternalReferences(nil, refs)
 }
 
-func enrichComponentFromRegistry(component *Component, registry *sdk.PackageRegistry, purl string, projectOwned bool) {
+func enrichComponentFromRegistry(component *Component, registry *model.PackageRegistry, purl string, projectOwned bool) {
 	if component == nil || registry == nil || purl == "" {
 		return
 	}
@@ -604,7 +605,7 @@ func enrichComponentFromRegistry(component *Component, registry *sdk.PackageRegi
 // vulnerabilitiesFromPackage projects matching-stage advisories into the
 // format-agnostic SBOM vulnerability model. Severity/score/vector come from the
 // first CVSS entry when present, falling back to the parsed severity band.
-func vulnerabilitiesFromPackage(packageName string, vulns []sdk.Vulnerability) []Vulnerability {
+func vulnerabilitiesFromPackage(packageName string, vulns []model.Vulnerability) []Vulnerability {
 	out := make([]Vulnerability, 0, len(vulns))
 	for _, v := range vulns {
 		vuln := Vulnerability{
@@ -691,7 +692,7 @@ func cvssMethodForVersion(version string) string {
 	}
 }
 
-func componentLicenses(licenses []sdk.PackageLicense) []License {
+func componentLicenses(licenses []model.PackageLicense) []License {
 	if len(licenses) == 0 {
 		return nil
 	}
@@ -729,8 +730,8 @@ func normalizeSPDXLicenseExpression(expression string) string {
 // copies converge here: bomly-sdk v0.9.2 took the accessor
 // (bomly-dev/bomly-sdk#43), which is where it belongs (ADR-0040), and the
 // question every surface asks of a node now has exactly one answer.
-func componentPURL(node sdk.GraphNode) string {
-	return sdk.NodePURL(node)
+func componentPURL(node model.GraphNode) string {
+	return model.NodePURL(node)
 }
 
 // componentOrg returns the namespace to publish as the component's group.
@@ -739,8 +740,8 @@ func componentPURL(node sdk.GraphNode) string {
 // value the document already carries: PURL construction derives a namespace
 // for Go modules whose coordinates leave Org empty, and it spells npm scopes
 // with their leading "@". Reading it back keeps `group` and the PURL agreeing.
-func componentOrg(node sdk.GraphNode) string {
-	coords, ok := sdk.NodeCoordinates(node)
+func componentOrg(node model.GraphNode) string {
+	coords, ok := model.NodeCoordinates(node)
 	if !ok {
 		return ""
 	}
@@ -796,13 +797,13 @@ func allValidSPDXExpressions(values []string) bool {
 // componentCoordinates returns the coordinates a node contributes to an SBOM
 // component, and whether it contributes one at all. Manifests do not: they are
 // structure, not artifacts.
-func componentCoordinates(node sdk.GraphNode) (sdk.Coordinates, bool) {
+func componentCoordinates(node model.GraphNode) (model.Coordinates, bool) {
 	switch typed := node.(type) {
-	case *sdk.DependencyNode:
+	case *model.DependencyNode:
 		return typed.Coordinates, true
-	case *sdk.ModuleNode:
+	case *model.ModuleNode:
 		return typed.Coordinates, true
 	default:
-		return sdk.Coordinates{}, false
+		return model.Coordinates{}, false
 	}
 }

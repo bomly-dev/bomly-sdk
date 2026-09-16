@@ -9,8 +9,9 @@ import (
 	"time"
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
-	"github.com/bomly-dev/bomly-sdk"
 	"github.com/bomly-dev/bomly-sdk/spdxkit"
+
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 type cycloneDXCodec struct {
@@ -351,12 +352,12 @@ func decodeCycloneDXComponent(comp cdx.Component, id string) Component {
 		Name:   comp.Name,
 		Org:    comp.Group,
 		Type:   string(comp.Type),
-		Scopes: sdk.ScopesFromCycloneDXComponent(string(comp.Scope), cycloneDXCarriedScopes(comp.Properties)),
+		Scopes: model.ScopesFromCycloneDXComponent(string(comp.Scope), cycloneDXCarriedScopes(comp.Properties)),
 		// The word beside the set it derives, so an export can say what this
 		// document said rather than Bomly's projection of it. Gated by the
 		// SDK, which is also what refuses a value that is not a scope word at
 		// all.
-		SourceScope: sdk.NormalizeSourceScope(string(comp.Scope)),
+		SourceScope: model.NormalizeSourceScope(string(comp.Scope)),
 		Version:     comp.Version,
 		PURL:        comp.PackageURL,
 		Copyright:   comp.Copyright,
@@ -568,12 +569,12 @@ func firstNonEmpty(values ...string) string {
 
 // cycloneDXScopeProperty carries the full scope set beside CycloneDX's scalar
 // scope, so the projection is not a one-way door.
-func cycloneDXScopeProperty(scopes []sdk.Scope) (cdx.Property, bool) {
-	value := sdk.EncodeScopeSet(scopes)
+func cycloneDXScopeProperty(scopes []model.Scope) (cdx.Property, bool) {
+	value := model.EncodeScopeSet(scopes)
 	if value == "" {
 		return cdx.Property{}, false
 	}
-	return cdx.Property{Name: sdk.CycloneDXScopeProperty, Value: value}, true
+	return cdx.Property{Name: model.CycloneDXScopeProperty, Value: value}, true
 }
 
 // cycloneDXCarriedScopes reads the carrier property back off a component.
@@ -582,7 +583,7 @@ func cycloneDXCarriedScopes(properties *[]cdx.Property) string {
 		return ""
 	}
 	for _, property := range *properties {
-		if property.Name == sdk.CycloneDXScopeProperty {
+		if property.Name == model.CycloneDXScopeProperty {
 			return property.Value
 		}
 	}
@@ -641,7 +642,7 @@ func cycloneDXComponent(comp Component) cdx.Component {
 		// SDK owns that decision: it is the same mapping that read the word
 		// in, and only it can say whether the word still describes the set
 		// (ADR-0037).
-		Scope:      cdx.Scope(sdk.CycloneDXScopeForExport(comp.Scopes, comp.SourceScope)),
+		Scope:      cdx.Scope(model.CycloneDXScopeForExport(comp.Scopes, comp.SourceScope)),
 		Version:    comp.Version,
 		PackageURL: comp.PURL,
 		Copyright:  comp.Copyright,
@@ -674,17 +675,17 @@ func cycloneDXComponent(comp Component) cdx.Component {
 	}
 	component.Supplier = cycloneDXEntityFor(comp.Supplier)
 	cycloneDXApplyOriginator(&component, comp.Originator)
-	component.Description = sdk.NormalizeDescription(comp.Description)
+	component.Description = model.NormalizeDescription(comp.Description)
 	return component
 }
 
 // cycloneDXComponentAssertedReferences returns the references a source
 // document asserted about a component, plus the website reference its homepage
 // is carried in.
-func cycloneDXComponentAssertedReferences(comp Component) []sdk.ExternalReference {
+func cycloneDXComponentAssertedReferences(comp Component) []model.ExternalReference {
 	refs := comp.ExternalReferences
 	if homepage, ok := cycloneDXHomepageReference(comp); ok {
-		refs = sdk.MergeExternalReferences(refs, []sdk.ExternalReference{homepage})
+		refs = model.MergeExternalReferences(refs, []model.ExternalReference{homepage})
 	}
 	return refs
 }
@@ -794,7 +795,7 @@ func cycloneDXHashes(digests []Digest) []cdx.Hash {
 // That is a real limit of the format: MD2, MD4, MD6 and ADLER32 are SPDX
 // spellings with no CycloneDX equivalent.
 func cycloneDXHashAlgorithm(algorithm string) cdx.HashAlgorithm {
-	parsed, err := sdk.ParseDigestAlgorithm(algorithm)
+	parsed, err := model.ParseDigestAlgorithm(algorithm)
 	if err != nil {
 		return ""
 	}

@@ -7,20 +7,21 @@ import (
 	"testing"
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
-	"github.com/bomly-dev/bomly-sdk"
 	"github.com/bomly-dev/bomly-sdk/internal/testnodes"
 	v23 "github.com/spdx/tools-golang/spdx/v2/v2_3"
+
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // enrichedGraphAndRegistry builds a one-node graph plus a registry entry, keyed
 // by the same PURL, carrying matching-stage enrichment (licenses, CPE, digest,
 // vulnerability, EOL).
-func enrichedGraphAndRegistry(t *testing.T) (*sdk.Graph, *sdk.PackageRegistry) {
+func enrichedGraphAndRegistry(t *testing.T) (*model.Graph, *model.PackageRegistry) {
 	t.Helper()
 	const purl = "pkg:npm/react@18.2.0"
 
-	g := sdk.New()
-	react := testnodes.DepFrom(sdk.DependencyNode{Coordinates: sdk.Coordinates{Name: "react",
+	g := model.New()
+	react := testnodes.DepFrom(model.DependencyNode{Coordinates: model.Coordinates{Name: "react",
 		Version:   "18.2.0",
 		PURL:      purl,
 		Ecosystem: "npm"},
@@ -29,24 +30,24 @@ func enrichedGraphAndRegistry(t *testing.T) (*sdk.Graph, *sdk.PackageRegistry) {
 		t.Fatalf("add node: %v", err)
 	}
 
-	registry := sdk.NewPackageRegistry()
+	registry := model.NewPackageRegistry()
 	pkg := registry.Ensure(purl)
 	pkg.Name = "react"
 	pkg.Version = "18.2.0"
 	pkg.Matched = true
-	pkg.Licenses = []sdk.PackageLicense{{SPDXExpression: "MIT"}}
+	pkg.Licenses = []model.PackageLicense{{SPDXExpression: "MIT"}}
 	pkg.CPEs = []string{"cpe:2.3:a:facebook:react:18.2.0:*:*:*:*:*:*:*"}
-	pkg.Digests = []sdk.Digest{{Algorithm: "sha256", Value: "abc123"}}
-	pkg.EOL = &sdk.PackageEOL{EOL: true, EOLDate: "2025-01-01", Cycle: "18"}
-	pkg.Vulnerabilities = []sdk.Vulnerability{{
+	pkg.Digests = []model.Digest{{Algorithm: "sha256", Value: "abc123"}}
+	pkg.EOL = &model.PackageEOL{EOL: true, EOLDate: "2025-01-01", Cycle: "18"}
+	pkg.Vulnerabilities = []model.Vulnerability{{
 		ID:             "CVE-2024-0001",
 		Source:         "osv",
 		ParsedSeverity: "high",
 		Details:        "prototype pollution",
-		CVSS:           []sdk.CVSSScore{{Score: 7.5, Vector: "CVSS:3.1/AV:N", Version: "3.1"}},
-		CWEs:           []sdk.CWE{{ID: "CWE-1321"}},
+		CVSS:           []model.CVSSScore{{Score: 7.5, Vector: "CVSS:3.1/AV:N", Version: "3.1"}},
+		CWEs:           []model.CWE{{ID: "CWE-1321"}},
 		FixedVersions:  []string{"18.3.0"},
-		References:     []sdk.Reference{{URL: "https://example.com/advisory"}},
+		References:     []model.Reference{{URL: "https://example.com/advisory"}},
 	}}
 	return g, registry
 }

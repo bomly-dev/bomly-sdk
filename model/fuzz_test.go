@@ -1,0 +1,1213 @@
+package model
+
+import (
+	"encoding/json"
+	"net/url"
+	"strings"
+	"testing"
+	"unicode/utf8"
+
+	cdx "github.com/CycloneDX/cyclonedx-go"
+
+	"github.com/bomly-dev/bomly-sdk/purlkit"
+	"github.com/bomly-dev/bomly-sdk/spdxkit"
+)
+
+const maxFuzzInputSize = 1 << 20
+
+func FuzzCanonicalizePackageURL(f *testing.F) {
+	for _, seed := range []string{
+		"pkg:npm/%40scope/name@1.0.0",
+		"pkg:golang/github.com/bomly-dev/bomly-cli@v0.1.0",
+		"pkg:pypi/requests@2.31.0",
+		"not a package url",
+	} {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, raw string) {
+		if len(raw) > maxFuzzInputSize {
+			return
+		}
+		canonical := CanonicalizePackageURL(raw)
+		if canonical == "" {
+			return
+		}
+		if _, err := purlkit.Parse(canonical); err != nil {
+			t.Fatalf("canonical package URL does not parse: %q: %v", canonical, err)
+		}
+		if again := CanonicalizePackageURL(canonical); again != canonical {
+			t.Fatalf("package URL canonicalization is not stable: %q then %q", canonical, again)
+		}
+	})
+}
+
+func FuzzGraphJSON(f *testing.F) {
+	for _, seed := range []string{
+		`null`,
+		`{"nodes":[{"id":"app","name":"app","version":"1.0.0"},{"id":"dep","name":"dep","version":"2.0.0"}],"edges":[{"fromId":"app","toId":"dep"}]}`,
+		`{"nodes":[{"id":"pkg:npm/react@18.2.0","purl":"pkg:npm/react@18.2.0","name":"react","version":"18.2.0"}]}`,
+		`{"nodes":[{"kind":"manifest","id":"manifest:package.json"},{"kind":"module","id":"module:package.json#app","name":"app","declaring_manifest_path":"package.json"},{"kind":"dependency","id":"pkg:npm/left-pad@1.3.0","purl":"pkg:npm/left-pad@1.3.0","name":"left-pad","version":"1.3.0"}],"edges":[{"fromId":"module:package.json#app","toId":"pkg:npm/left-pad@1.3.0"}]}`,
+		`{"nodes":[{"id":"a","ecosystem":"npm","name":"left-pad","version":"1.3.0"},{"id":"b","ecosystem":"npm","name":"Left-Pad","version":"1.3.0"}],"edges":[{"fromId":"a","toId":"b"}]}`,
+		`{"nodes":[{"kind":"dependency","id":"legacy-opaque","version":"1.0.0"}]}`,
+	} {
+		f.Add([]byte(seed))
+	}
+
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		if len(raw) > maxFuzzInputSize {
+			return
+		}
+		var graph Graph
+		if err := json.Unmarshal(raw, &graph); err != nil {
+			// Decode is strict under the typed union: a dependency payload
+			// that cannot mint a valid package URL legitimately errors.
+			return
+		}
+		requireFuzzGraphValid(t, &graph)
+		encoded, err := json.Marshal(&graph)
+		if err != nil {
+			t.Fatalf("marshal graph after successful unmarshal: %v", err)
+		}
+		var roundTrip Graph
+		if err := json.Unmarshal(encoded, &roundTrip); err != nil {
+			t.Fatalf("round-trip graph JSON does not unmarshal: %v", err)
+		}
+		requireFuzzGraphValid(t, &roundTrip)
+		requireStableJSON(t, "graph", &graph, &roundTrip)
+	})
+}
+
+func FuzzPackageRegistryJSON(f *testing.F) {
+	for _, seed := range []string{
+		`null`,
+		`{"pkg:npm/react@18.2.0":{"name":"react","version":"18.2.0","purl":"pkg:npm/react@18.2.0"}}`,
+		`{"pkg:golang/github.com/bomly-dev/bomly-cli@v0.1.0":{"name":"github.com/bomly-dev/bomly-cli","version":"v0.1.0"}}`,
+	} {
+		f.Add([]byte(seed))
+	}
+
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		if len(raw) > maxFuzzInputSize {
+			return
+		}
+		var registry PackageRegistry
+		if err := json.Unmarshal(raw, &registry); err != nil {
+			return
+		}
+		requireFuzzRegistryValid(t, &registry)
+		encoded, err := json.Marshal(&registry)
+		if err != nil {
+			t.Fatalf("marshal registry after successful unmarshal: %v", err)
+		}
+		var roundTrip PackageRegistry
+		if err := json.Unmarshal(encoded, &roundTrip); err != nil {
+			t.Fatalf("round-trip registry JSON does not unmarshal: %v", err)
+		}
+		requireFuzzRegistryValid(t, &roundTrip)
+		requireStableJSON(t, "package registry", &registry, &roundTrip)
+	})
+}
+
+func requireStableJSON(t *testing.T, label string, before any, after any) {
+	t.Helper()
+	beforeJSON, err := json.Marshal(before)
+	if err != nil {
+		t.Fatalf("marshal %s before comparison: %v", label, err)
+	}
+	afterJSON, err := json.Marshal(after)
+	if err != nil {
+		t.Fatalf("marshal %s after comparison: %v", label, err)
+	}
+	if string(afterJSON) != string(beforeJSON) {
+		t.Fatalf("%s changed after round trip:\nbefore: %s\nafter:  %s", label, beforeJSON, afterJSON)
+	}
+}
+
+func requireFuzzRegistryValid(t *testing.T, registry *PackageRegistry) {
+	t.Helper()
+	for _, pkg := range registry.All() {
+		if pkg == nil {
+			t.Fatal("registry contains nil package after successful unmarshal")
+		}
+		if pkg.PURL == "" {
+			t.Fatalf("registry contains package with empty PURL: %+v", pkg)
+		}
+	}
+}
+
+func requireFuzzGraphValid(t *testing.T, graph *Graph) {
+	t.Helper()
+	if graph == nil {
+		t.Fatal("nil graph")
+	}
+	graph.WalkNodes(func(node GraphNode) bool {
+		if node == nil {
+			t.Fatal("graph contains nil node")
+		}
+		if node.NodeID() == "" {
+			t.Fatalf("graph contains node with empty ID: %+v", node)
+		}
+		return true
+	})
+	graph.WalkEdges(func(from, to GraphNode) bool {
+		if from == nil || to == nil {
+			t.Fatalf("graph contains nil edge endpoint: from=%+v to=%+v", from, to)
+		}
+		if from.NodeID() == "" || to.NodeID() == "" {
+			t.Fatalf("graph contains edge with empty endpoint ID: from=%+v to=%+v", from, to)
+		}
+		return true
+	})
+}
+
+// FuzzDependencyOrigin drives the origin rule with arbitrary lockfile-derived
+// strings: detectors pass raw manifest fields straight through, so whatever a
+// repository can put in a lockfile reaches these constructors.
+func FuzzDependencyOrigin(f *testing.F) {
+	f.Add("https://registry.npmjs.org/react/-/react-18.2.0.tgz", "")
+	f.Add("https://github.com/owner/repo.git", "9f8e7d6c5b4a3928176554433221100ffeeddcc0")
+	f.Add("https://github.com/example/helper?rev=main#abc123", "v1.2.3")
+	f.Add("https://user:s3cret@nexus.corp/repo/pkg.tgz", "main")
+	f.Add("git+ssh://git@github.com/owner/repo.git#9f8e7d6", "9f8e7d6")
+	f.Add("file:///home/someone/wheels/pkg.whl", "")
+	f.Add("/Users/someone/src/project", "")
+	f.Add("http://0#0", "0")
+	f.Add("http://0/0#\x02", "\x02")
+	f.Add("%./0", "%")
+	f.Add("https://", "")
+	f.Add("https://:8080/pkg.tgz", "")
+	f.Add("https://registry.example.test/", "")
+
+	f.Fuzz(func(t *testing.T, rawURL, revision string) {
+		artifact, repository := ArtifactOrigin(rawURL), RepositoryOrigin(rawURL, revision)
+		assertPublishableOrigin(t, artifact)
+		assertPublishableOrigin(t, repository)
+		// Reading back what was written must reach the same conclusion.
+		assertPublishableOrigin(t, repository.Normalized())
+		// Normalizing an already-normalized origin must be a fixed point.
+		if once, twice := repository.Normalized(), repository.Normalized().Normalized(); !sameOrigin(once, twice) {
+			t.Fatalf("normalizing twice changed the origin: %+v then %+v", once, twice)
+		}
+	})
+}
+
+// assertPublishableOrigin fails when an origin carries anything a published
+// document must never show.
+func assertPublishableOrigin(t *testing.T, origin *DependencyOrigin) {
+	t.Helper()
+	normalized := origin.Normalized()
+	if normalized == nil {
+		return
+	}
+	if normalized.ArtifactURL != "" && normalized.Repository != "" {
+		t.Fatalf("origin names two locations at once: %+v", normalized)
+	}
+	if normalized.Revision != "" && normalized.Repository == "" {
+		t.Fatalf("revision %q recorded without a repository", normalized.Revision)
+	}
+	for _, raw := range []string{normalized.ArtifactURL, normalized.Repository} {
+		if raw == "" {
+			continue
+		}
+		parsed, err := url.Parse(raw)
+		if err != nil {
+			t.Fatalf("published URL %q does not parse: %v", raw, err)
+		}
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			t.Fatalf("published URL %q is not a web location", raw)
+		}
+		if parsed.Hostname() == "" {
+			t.Fatalf("published URL %q has no host", raw)
+		}
+		if parsed.User != nil {
+			t.Fatalf("published URL %q carries credentials", raw)
+		}
+		if parsed.Fragment != "" {
+			t.Fatalf("published URL %q carries a fragment", raw)
+		}
+		if strings.Trim(parsed.Path, "/") == "" {
+			t.Fatalf("published URL %q names a host root, not a package", raw)
+		}
+	}
+	if normalized.Repository != "" {
+		parsed, _ := url.Parse(normalized.Repository)
+		if parsed.RawQuery != "" || parsed.ForceQuery {
+			t.Fatalf("repository %q carries a query", normalized.Repository)
+		}
+	}
+	if !isValidOriginRevision(normalized.Revision) && normalized.Revision != "" {
+		t.Fatalf("revision %q would break a locator grammar", normalized.Revision)
+	}
+}
+
+// sameOrigin compares two origins that may be nil.
+func sameOrigin(left, right *DependencyOrigin) bool {
+	switch {
+	case left == nil && right == nil:
+		return true
+	case left == nil || right == nil:
+		return false
+	default:
+		return *left == *right
+	}
+}
+
+func FuzzCanonicalRepoPath(f *testing.F) {
+	for _, seed := range []string{
+		"package.json",
+		"pkg/sub/package.json",
+		"pkg\\sub\\package.json",
+		"./pkg/../pkg/package.json",
+		"/abs/package.json",
+		"C:\\repo\\package.json",
+		"../escape/package.json",
+		"a#b",
+		"",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, raw string) {
+		if len(raw) > maxFuzzInputSize {
+			return
+		}
+		canonical, err := CanonicalRepoPath(raw)
+		if again, againErr := CanonicalRepoPath(raw); again != canonical || (err == nil) != (againErr == nil) {
+			t.Fatalf("CanonicalRepoPath is not deterministic on %q", raw)
+		}
+		if err != nil {
+			return
+		}
+		// Canonical outputs are idempotent, relative, slash-separated, and
+		// free of the reserved bytes the module-ID grammar depends on.
+		if again, err := CanonicalRepoPath(canonical); err != nil || again != canonical {
+			t.Fatalf("CanonicalRepoPath is not idempotent: %q -> %q (%v)", canonical, again, err)
+		}
+		if strings.ContainsAny(canonical, "#\\") || strings.HasPrefix(canonical, "/") || strings.HasPrefix(canonical, "../") {
+			t.Fatalf("non-canonical output %q", canonical)
+		}
+	})
+}
+
+func FuzzDependencyNodeWire(f *testing.F) {
+	for _, seed := range []string{
+		`{"id":"pkg:npm/left-pad@1.3.0","purl":"pkg:npm/left-pad@1.3.0","name":"left-pad","version":"1.3.0"}`,
+		`{"kind":"dependency","id":"pkg:apk/alpine/musl@1.2.5","purl":"pkg:apk/alpine/musl@1.2.5?arch=x86_64","origins":[{"artifact_url":"https://e.com/a.tgz"}]}`,
+		`{"id":"x","version":"1"}`,
+		`{"kind":"module","id":"module:package.json#app"}`,
+		`{"kind":"bogus","id":"x"}`,
+		`null`,
+	} {
+		f.Add([]byte(seed))
+	}
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		if len(raw) > maxFuzzInputSize {
+			return
+		}
+		var node DependencyNode
+		if err := json.Unmarshal(raw, &node); err != nil {
+			return
+		}
+		// Every accepted payload yields a valid identity, and the codec is a
+		// fixed point: re-encoding and re-decoding reproduces the node.
+		if node.NodeID() == "" {
+			t.Fatalf("decoded dependency node with empty identity from %q", raw)
+		}
+		encoded, err := json.Marshal(&node)
+		if err != nil {
+			t.Fatalf("re-encode failed: %v", err)
+		}
+		var again DependencyNode
+		if err := json.Unmarshal(encoded, &again); err != nil {
+			t.Fatalf("re-decode failed for %s: %v", encoded, err)
+		}
+		if again.NodeID() != node.NodeID() {
+			t.Fatalf("identity not stable across the codec: %q -> %q", node.NodeID(), again.NodeID())
+		}
+	})
+}
+
+// FuzzDigestAlgorithm drives the algorithm registry with arbitrary strings:
+// algorithm names arrive from ingested SBOM documents and plugin payloads, so
+// whatever a document can spell reaches this parser.
+func FuzzDigestAlgorithm(f *testing.F) {
+	for _, seed := range []string{
+		"sha256", "SHA-256", "SHA256", "sha3-512", "BLAKE2b-256", "ADLER32",
+		"", "   ", "crc32", "sha-------256", "SHA_256", "s.h.a.2.5.6",
+		strings.Repeat("sha256", 200), "\x00sha256", "sha256\n",
+	} {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, value string) {
+		algorithm, err := ParseDigestAlgorithm(value)
+		if err != nil {
+			if algorithm != "" {
+				t.Fatalf("ParseDigestAlgorithm(%q) returned %q alongside an error", value, algorithm)
+			}
+			return
+		}
+		// A parsed algorithm is registered, and re-parsing its canonical token
+		// is a fixed point -- otherwise a value would change identity every
+		// time it crossed the wire.
+		if !algorithm.Valid() {
+			t.Fatalf("ParseDigestAlgorithm(%q) returned unregistered %q", value, algorithm)
+		}
+		again, err := ParseDigestAlgorithm(string(algorithm))
+		if err != nil || again != algorithm {
+			t.Fatalf("re-parsing %q gave %q, %v", algorithm, again, err)
+		}
+		// A registered algorithm names at least one format, or it could never
+		// be published and has no business in the registry.
+		if algorithm.SPDXName() == "" && algorithm.CycloneDXName() == "" {
+			t.Fatalf("%q has no format projection", algorithm)
+		}
+	})
+}
+
+// FuzzContact drives the contact gate with arbitrary supplier strings, which
+// arrive verbatim from ingested SBOM documents.
+func FuzzContact(f *testing.F) {
+	for _, seed := range []string{
+		"Organization: Acme Inc", "Person: Jane Doe", "NOASSERTION",
+		"Organization: Acme Inc (info@acme.com)", "Organization:", "Acme Inc",
+		"", "person:", "PERSON: (a@b.c)", "Organization: a\nb", "Organization: (",
+		strings.Repeat("Person: a", 100), "Organization: \x00",
+	} {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, value string) {
+		contact, ok := ParseSPDXContact(value)
+		if !ok {
+			return
+		}
+		assertPublishableContact(t, contact)
+		// Normalizing an already-normalized contact is a fixed point.
+		once, ok := contact.Normalized()
+		if !ok {
+			t.Fatalf("a parsed contact %+v failed its own gate", contact)
+		}
+		twice, ok := once.Normalized()
+		if !ok || twice != once {
+			t.Fatalf("normalizing twice changed the contact: %+v then %+v", once, twice)
+		}
+		// Rendering and re-reading must reach the same value, or a contact
+		// would drift every time it round-tripped through SPDX.
+		if rendered := contact.SPDXString(); rendered != "" {
+			reparsed, ok := ParseSPDXContact(rendered)
+			if !ok || reparsed != contact {
+				t.Fatalf("round trip of %+v through %q gave %+v (ok=%v)", contact, rendered, reparsed, ok)
+			}
+		}
+	})
+}
+
+// assertPublishableContact fails when a contact carries anything a published
+// document must never show.
+func assertPublishableContact(t *testing.T, contact Contact) {
+	t.Helper()
+	for _, r := range contact.Name {
+		if r < ' ' || r == 0x7f {
+			t.Fatalf("contact name %q carries a control character", contact.Name)
+		}
+	}
+	if len(contact.Name) > maxContactNameLength {
+		t.Fatalf("contact name is %d bytes, over the limit", len(contact.Name))
+	}
+	// An email address is deliberately not carried, wherever the document put
+	// it; see Contact's docs.
+	if strings.Contains(contact.Name, "@") {
+		t.Fatalf("contact name %q retains an address-shaped token", contact.Name)
+	}
+	if contact.URL != "" {
+		if _, ok := NormalizeURL(contact.URL, URLFormReference); !ok {
+			t.Fatalf("contact URL %q would be rejected on read", contact.URL)
+		}
+	}
+}
+
+// FuzzPackageLicense drives the license gate with arbitrary claims. License
+// values and extracted text arrive from lockfiles, registry APIs, and ingested
+// SBOM documents, all untrusted.
+func FuzzPackageLicense(f *testing.F) {
+	for _, seed := range []struct{ value, expression, text, licenseType, source string }{
+		{"MIT", "MIT", "", "declared", "external-depsdev"},
+		{"MIT", "MIT", "", "concluded", ""},
+		{"Custom", "LicenseRef-Acme-Commercial", "Custom terms.", "", "My Matcher"},
+		{"Custom", "LicenseRef-bomly-00000000000000000000000000000000", "Custom terms.", "", ""},
+		{"Custom", `LicenseRef-Acme Commercial "v2"`, "Custom terms.", "", "  spaced  "},
+		{"Custom", "LicenseRef-Acme", "", "declared", "with\ttab"},
+		{"", "", "Only text.", "", "with\nnewline"},
+		{"", "", "", "", "\x00"},
+		{"MIT", "MIT", "", "invented", strings.Repeat("s", 300)},
+	} {
+		f.Add(seed.value, seed.expression, seed.text, seed.licenseType, seed.source)
+	}
+
+	f.Fuzz(func(t *testing.T, value, expression, text, licenseType, source string) {
+		license := PackageLicense{
+			Value:          value,
+			SPDXExpression: expression,
+			ExtractedText:  text,
+			Type:           LicenseType(licenseType),
+			Source:         source,
+		}
+		normalized, ok := license.Normalized()
+		if !ok {
+			if normalized != (PackageLicense{}) {
+				t.Fatalf("a rejected license returned %+v, want the zero value", normalized)
+			}
+			return
+		}
+		// Provenance is a closed vocabulary: an unrecognized one must never
+		// survive as a published claim.
+		if _, err := ParseLicenseType(string(normalized.Type)); err != nil {
+			t.Fatalf("normalized license carries unrecognized provenance %q", normalized.Type)
+		}
+		// The source is a component name written into published output. It is
+		// bounded, valid UTF-8, free of control characters, and trimmed --
+		// whitespace inside a name is legal and kept.
+		if src := normalized.Source; src != "" {
+			if len(src) > maxLicenseSourceLength {
+				t.Fatalf("source of %d bytes survived the bound", len(src))
+			}
+			if !utf8.ValidString(src) {
+				t.Fatalf("invalid UTF-8 survived as a source: %q", src)
+			}
+			if ContainsControlChar(src) {
+				t.Fatalf("a control character survived as a source: %q", src)
+			}
+			if src != strings.TrimSpace(src) {
+				t.Fatalf("an untrimmed source survived: %q", src)
+			}
+		}
+		// Normalizing is a fixed point: the gate runs on write and again on
+		// read, so a source that changed on the second pass would drift each
+		// time it crossed a document.
+		again, ok2 := normalized.Normalized()
+		if !ok2 || again.Source != normalized.Source {
+			t.Fatalf("source is not a fixed point: %q then %q (ok=%v)", normalized.Source, again.Source, ok2)
+		}
+		// And it survives the wire, which is where it was lost before.
+		encoded, err := json.Marshal(normalized)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		var decoded PackageLicense
+		if err := json.Unmarshal(encoded, &decoded); err != nil {
+			t.Fatalf("unmarshal %s: %v", encoded, err)
+		}
+		if decoded.Source != normalized.Source {
+			t.Fatalf("source did not survive the wire: %q became %q", normalized.Source, decoded.Source)
+		}
+		// A license reference must be well formed and must have its text, or
+		// the document citing it would not validate.
+		// The text requirement applies to any cited reference, leading or
+		// embedded: HasPrefix alone let a compound such as
+		// "MIT OR LicenseRef-Acme" past both checks.
+		if strings.Contains(normalized.SPDXExpression, spdxkit.LicenseRefPrefix) {
+			if strings.TrimSpace(normalized.ExtractedText) == "" {
+				t.Fatalf("reference in %q survived without its text", normalized.SPDXExpression)
+			}
+			refs := spdxkit.LicenseRefsIn(normalized.SPDXExpression)
+			// One record carries one text, so it can cite at most one
+			// reference.
+			if len(refs) > 1 {
+				t.Fatalf("expression %q cites %d references but carries one text", normalized.SPDXExpression, len(refs))
+			}
+			// Every reference that survives is well formed, wherever it sits.
+			// Checking only a bare one left a malformed reference embedded in
+			// a compound unasserted.
+			for _, ref := range refs {
+				if !spdxkit.ValidLicenseRef(ref) {
+					t.Fatalf("expression %q publishes malformed reference %q", normalized.SPDXExpression, ref)
+				}
+				// A reference under Bomly's prefix is derived from its text.
+				if strings.HasPrefix(ref, spdxkit.BomlyLicenseRefPrefix) &&
+					ref != spdxkit.MintLicenseRef(normalized.ExtractedText).RefID {
+					t.Fatalf("reference %q does not match the text it names", ref)
+				}
+			}
+		}
+		// Normalizing twice is a fixed point.
+		twice, ok := normalized.Normalized()
+		if !ok || twice != normalized {
+			t.Fatalf("normalizing twice changed the license: %+v then %+v", normalized, twice)
+		}
+	})
+}
+
+// FuzzNormalizeURL drives all three published-URL forms with arbitrary input.
+func FuzzNormalizeURL(f *testing.F) {
+	for _, seed := range []string{
+		"https://example.test", "https://example.test/docs?page=1#anchor",
+		"https://user:pw@example.test/", "file:///etc/passwd", "/local/path",
+		"git@github.test:owner/repo.git", "https://", "https://:8080/x",
+		"http://0#0", "%./0", "https://example.test/a%2Fb", "https://EXAMPLE.test:443/x",
+	} {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, raw string) {
+		for _, form := range []URLForm{URLFormArtifact, URLFormRepository, URLFormReference} {
+			normalized, ok := NormalizeURL(raw, form)
+			if !ok {
+				if normalized != "" {
+					t.Fatalf("form %v rejected %q but returned %q", form, raw, normalized)
+				}
+				continue
+			}
+			assertPublishableURL(t, form, normalized)
+			// Reading back what was written must reach the same conclusion,
+			// and must be a fixed point: a value that changed on every pass
+			// would drift each time it crossed the wire.
+			again, ok := NormalizeURL(normalized, form)
+			if !ok || again != normalized {
+				t.Fatalf("form %v: re-normalizing %q gave %q (ok=%v)", form, normalized, again, ok)
+			}
+		}
+	})
+}
+
+// assertPublishableURL fails when a normalized URL carries anything a
+// published document must never show.
+func assertPublishableURL(t *testing.T, form URLForm, raw string) {
+	t.Helper()
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("published URL %q does not parse: %v", raw, err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		t.Fatalf("published URL %q is not a web location", raw)
+	}
+	if parsed.Hostname() == "" {
+		t.Fatalf("published URL %q has no host", raw)
+	}
+	if parsed.User != nil {
+		t.Fatalf("published URL %q carries credentials", raw)
+	}
+	switch form {
+	case URLFormArtifact:
+		if parsed.RawQuery != "" || parsed.ForceQuery {
+			t.Fatalf("artifact URL %q carries a query", raw)
+		}
+		fallthrough
+	case URLFormRepository:
+		if parsed.RawQuery != "" || parsed.ForceQuery {
+			t.Fatalf("repository URL %q carries a query", raw)
+		}
+		if strings.Trim(parsed.Path, "/") == "" {
+			t.Fatalf("origin URL %q names a host root, not a package", raw)
+		}
+		if parsed.Fragment != "" {
+			t.Fatalf("origin URL %q carries a fragment", raw)
+		}
+	}
+}
+
+// FuzzExternalReference drives the reference gate with arbitrary values.
+// References arrive verbatim from ingested SBOM documents and plugin
+// payloads, and their locator is written into a published document.
+func FuzzExternalReference(f *testing.F) {
+	for _, seed := range []struct{ category, refType, locator, comment string }{
+		{"security", "advisory", "https://advisories.test/GHSA-1", ""},
+		{"security", "cpe23Type", "cpe:2.3:a:v:p:1.0:*:*:*:*:*:*:*", ""},
+		{"security", "cpe22Type", "cpe:/a:v:p:1.0", ""},
+		{"package-manager", "purl", "pkg:npm/left-pad@1.3.0", ""},
+		{"package-manager", "maven-central", "org.apache.tomcat:tomcat:9.0.0.M4", ""},
+		{"persistent-id", "gitoid", "gitoid:blob:sha1:261eeb", ""},
+		{"other", "other", "anything", "a note"},
+		{"", "website", "https://example.test", ""},
+		{"", "", "", ""},
+		{"invented", "x", "y", "z"},
+		{"security", "advisory", "https://user:pw@x.test/a", ""},
+		{"package-manager", "purl", "https://npmjs.test/a", ""},
+	} {
+		f.Add(seed.category, seed.refType, seed.locator, seed.comment)
+	}
+
+	f.Fuzz(func(t *testing.T, category, refType, locator, comment string) {
+		reference := ExternalReference{
+			Category: ExternalReferenceCategory(category),
+			Type:     refType,
+			Locator:  locator,
+			Comment:  comment,
+		}
+		normalized, ok := reference.Normalized()
+		if !ok {
+			if normalized.Locator != "" || normalized.Type != "" || normalized.Category != "" ||
+				normalized.Comment != "" || len(normalized.Hashes) != 0 {
+				t.Fatalf("a rejected reference returned %+v, want the zero value", normalized)
+			}
+			return
+		}
+		assertPublishableReference(t, normalized)
+		// Normalizing twice is a fixed point: the gate runs on both marshal
+		// and unmarshal, so a value that changed each pass would change shape
+		// every time it crossed the wire.
+		twice, ok := normalized.Normalized()
+		if !ok || twice.referenceKey() != normalized.referenceKey() || twice.Comment != normalized.Comment {
+			t.Fatalf("normalizing twice changed the reference: %+v then %+v", normalized, twice)
+		}
+		// Merging a reference with itself is one reference, not two.
+		if merged := MergeExternalReferences([]ExternalReference{normalized}, []ExternalReference{normalized}); len(merged) != 1 {
+			t.Fatalf("a reference merged with itself gave %d records", len(merged))
+		}
+	})
+}
+
+// assertPublishableReference fails when a reference carries anything a
+// published document must never show.
+func assertPublishableReference(t *testing.T, reference ExternalReference) {
+	t.Helper()
+	if reference.Locator == "" {
+		t.Fatal("a published reference has no locator")
+	}
+	if len(reference.Locator) > maxLocatorLength {
+		t.Fatalf("locator is %d bytes, over the limit", len(reference.Locator))
+	}
+	if _, err := ParseExternalReferenceCategory(string(reference.Category)); err != nil {
+		t.Fatalf("published reference carries unrecognized category %q", reference.Category)
+	}
+	// The locator satisfies the grammar its own pair names -- never one it
+	// happens to pass.
+	switch reference.LocatorKind() {
+	case LocatorKindURL:
+		if _, ok := NormalizeURL(reference.Locator, URLFormReference); !ok {
+			t.Fatalf("url locator %q would be rejected on read", reference.Locator)
+		}
+	case LocatorKindIRI:
+		// A web URL, a BOM-Link, or another absolute IRI the policy allows.
+		// The grammar is wide here by design -- CycloneDX types the field as
+		// an IRI reference -- so what is asserted is the policy: absolute, no
+		// embedded credentials, no sensitive scheme.
+		_, isURL := NormalizeURL(reference.Locator, URLFormReference)
+		if isURL || cdx.IsBOMLink(reference.Locator) {
+			break
+		}
+		// The character and escape rules apply to every published IRI, so
+		// they are asserted here rather than only exercised through the
+		// hand-written fixtures.
+		if !hasValidPercentEscapes(reference.Locator) {
+			t.Fatalf("iri locator %q carries a malformed percent escape", reference.Locator)
+		}
+		if !hasLegalIRICharacters(reference.Locator) {
+			t.Fatalf("iri locator %q carries a character the grammar excludes", reference.Locator)
+		}
+		parsed, err := url.Parse(reference.Locator)
+		if err != nil {
+			t.Fatalf("iri locator %q does not parse", reference.Locator)
+		}
+		// A relative reference is permitted; a network-path one is not,
+		// because it names an authority other than the document's own.
+		if parsed.Scheme == "" && strings.HasPrefix(reference.Locator, "//") {
+			t.Fatalf("iri locator %q is a network-path reference", reference.Locator)
+		}
+		if parsed.User != nil {
+			t.Fatalf("iri locator %q carries credentials", reference.Locator)
+		}
+		if _, sensitive := sensitiveIRISchemes[strings.ToLower(parsed.Scheme)]; sensitive {
+			t.Fatalf("iri locator %q uses the sensitive scheme %q", reference.Locator, parsed.Scheme)
+		}
+		if strings.HasPrefix(strings.ToLower(reference.Locator), bomLinkNamespace) {
+			t.Fatalf("iri locator %q sits in the cdx namespace but is not a BOM-Link", reference.Locator)
+		}
+	case LocatorKindPURL:
+		if err := purlkit.ValidateString(reference.Locator); err != nil {
+			t.Fatalf("purl locator %q is not a valid package URL: %v", reference.Locator, err)
+		}
+	case LocatorKindCPE23:
+		if !isCPE23Locator(reference.Locator) {
+			t.Fatalf("cpe23 locator %q is not a CPE 2.3 formatted string", reference.Locator)
+		}
+	case LocatorKindCPE22:
+		if !isCPE22Locator(reference.Locator) {
+			t.Fatalf("cpe22 locator %q is not a CPE 2.2 URI", reference.Locator)
+		}
+	default:
+		if !isBoundedToken(reference.Locator) {
+			t.Fatalf("identifier locator %q is not a bounded token", reference.Locator)
+		}
+	}
+	for _, digest := range reference.Hashes {
+		if err := digest.Validate(); err != nil {
+			t.Fatalf("published reference carries an invalid hash: %v", err)
+		}
+	}
+}
+
+// FuzzDecodeScopeSet exercises the scope carrier, which is parsed from a
+// CycloneDX property and so arrives from an untrusted document.
+//
+// The invariants are the ones the round trip depends on: a value that decodes
+// must re-encode to something that decodes to the same set, and decoding is
+// deterministic. A carrier that read differently on the second pass would let
+// a scope set drift each time it crossed a document.
+func FuzzDecodeScopeSet(f *testing.F) {
+	for _, seed := range []string{
+		"", "runtime", "development", "development,runtime", "runtime,development",
+		"runtime,runtime", "runtime,", ",", "  runtime  ", "required", "runtime,production",
+		"RUNTIME", "runtime,,development", strings.Repeat("runtime,", 64),
+	} {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, raw string) {
+		if len(raw) > maxFuzzInputSize {
+			t.Skip()
+		}
+		scopes, err := DecodeScopeSet(raw)
+		again, err2 := DecodeScopeSet(raw)
+		if (err == nil) != (err2 == nil) || len(scopes) != len(again) {
+			t.Fatalf("decoding %q twice disagreed: %v/%v and %v/%v", raw, scopes, err, again, err2)
+		}
+		// The strict reading is the lenient one plus a rule: they agree
+		// exactly when no token is unknown, and the lenient reading never
+		// fails where the strict one succeeds. Unknown tokens are reported,
+		// never silently dropped, and never re-encoded as a scope.
+		lenient, lerr := DecodeScopeSetLenient(raw)
+		if lerr == nil && !isPrintableASCII(raw) {
+			t.Fatalf("a carrier that is not printable ASCII was read: %q -> %+v", raw, lenient)
+		}
+		if err == nil && (lerr != nil || len(lenient.Unknown) != 0 || EncodeScopeSet(lenient.Scopes) != EncodeScopeSet(scopes)) {
+			t.Fatalf("lenient and strict disagree on %q: %+v/%v vs %v", raw, lenient, lerr, scopes)
+		}
+		if lerr == nil && err != nil && len(lenient.Unknown) == 0 {
+			t.Fatalf("strict failed on %q without an unknown token: %v", raw, err)
+		}
+		for _, token := range lenient.Unknown {
+			if scope, perr := ParseScope(token); perr == nil && scope != ScopeUnknown {
+				t.Fatalf("a known scope %q was reported unknown for %q", token, raw)
+			}
+			// Only something shaped like a scope token is reported as a
+			// possible future scope; anything else fails the whole value.
+			// Reported tokens are ASCII by construction, so folding cannot
+			// have laundered a non-ASCII spelling into one.
+			if !isScopeTokenShaped(token) || strings.ToLower(token) != token {
+				t.Fatalf("a malformed entry %q was reported as an unknown scope for %q", token, raw)
+			}
+			for _, r := range token {
+				if r > 0x7f {
+					t.Fatalf("a non-ASCII token %q was reported as an unknown scope for %q", token, raw)
+				}
+			}
+		}
+		for i := 1; i < len(lenient.Scopes); i++ {
+			if lenient.Scopes[i-1] >= lenient.Scopes[i] {
+				t.Fatalf("lenient scopes for %q are not sorted and deduplicated: %v", raw, lenient.Scopes)
+			}
+		}
+		if err != nil {
+			if scopes != nil {
+				t.Fatalf("DecodeScopeSet(%q) failed but returned %v", raw, scopes)
+			}
+			return
+		}
+		for _, scope := range scopes {
+			if scope == ScopeUnknown {
+				t.Fatalf("DecodeScopeSet(%q) yielded an unknown scope", raw)
+			}
+		}
+		// Sorted and deduplicated, so a document built from it is stable.
+		for i := 1; i < len(scopes); i++ {
+			if scopes[i-1] >= scopes[i] {
+				t.Fatalf("DecodeScopeSet(%q) = %v, which is not sorted and deduplicated", raw, scopes)
+			}
+		}
+		// Re-encoding reaches a fixed point.
+		encoded := EncodeScopeSet(scopes)
+		reparsed, err := DecodeScopeSet(encoded)
+		if err != nil {
+			t.Fatalf("re-decoding %q (from %q) failed: %v", encoded, raw, err)
+		}
+		if EncodeScopeSet(reparsed) != encoded {
+			t.Fatalf("encoding is not a fixed point: %q then %q", encoded, EncodeScopeSet(reparsed))
+		}
+		// The projection never invents a scope the library does not declare.
+		if projected := CycloneDXScope(scopes); projected != "" {
+			switch cdx.Scope(projected) {
+			case cdx.ScopeRequired, cdx.ScopeOptional, cdx.ScopeExcluded:
+			default:
+				t.Fatalf("CycloneDXScope(%v) = %q, which cyclonedx-go does not declare", scopes, projected)
+			}
+		}
+	})
+}
+
+// FuzzParseEdgeKind exercises the edge-kind vocabulary, which is parsed from
+// a graph payload and so arrives from an untrusted plugin.
+func FuzzParseEdgeKind(f *testing.F) {
+	for _, seed := range []string{
+		"", "depends-on", "describes", "DEPENDS-ON", "  describes  ",
+		"contains", "depends on", "DEPENDS_ON", strings.Repeat("a", 300),
+	} {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, raw string) {
+		if len(raw) > maxFuzzInputSize {
+			t.Skip()
+		}
+		kind, err := ParseEdgeKind(raw)
+		again, err2 := ParseEdgeKind(raw)
+		if (err == nil) != (err2 == nil) || kind != again {
+			t.Fatalf("parsing %q twice disagreed", raw)
+		}
+		if err != nil {
+			if kind != EdgeKindUnknown {
+				t.Fatalf("ParseEdgeKind(%q) failed but returned %q", raw, kind)
+			}
+			return
+		}
+		// A parsed kind is one of the declared members, and re-parsing its own
+		// canonical form is a fixed point.
+		switch kind {
+		case EdgeKindUnknown, EdgeKindDependsOn, EdgeKindDescribes:
+		default:
+			t.Fatalf("ParseEdgeKind(%q) produced the undeclared kind %q", raw, kind)
+		}
+		round, err := ParseEdgeKind(kind.String())
+		if err != nil || round != kind {
+			t.Fatalf("re-parsing %q gave %q (err=%v)", kind, round, err)
+		}
+		// A kind that projects to SPDX projects to a non-empty spelling, and
+		// one that does not projects to nothing -- never to a partial value.
+		if kind == EdgeKindUnknown && kind.SPDXName() != "" {
+			t.Fatalf("the unknown kind projected to %q", kind.SPDXName())
+		}
+	})
+}
+
+// FuzzDocumentAssertions exercises the document-assertion gate, whose fields
+// come straight from an untrusted SBOM and are written back into a document.
+func FuzzDocumentAssertions(f *testing.F) {
+	for _, seed := range []string{
+		"", "urn:cdx:3e671687-395b-41f5-a30f-a58921a69b79/1",
+		"https://example.test/spdxdocs/app", "CC0-1.0", "2024-01-01T00:00:00Z",
+		"not an iri", "urn:cdx:broken", "file:///etc/passwd", "//host/path",
+		"LicenseRef-thing", "a\nb", "\x00", strings.Repeat("x", 5000),
+	} {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, raw string) {
+		if len(raw) > maxFuzzInputSize {
+			t.Skip()
+		}
+		// Every field takes the same untrusted value, so one input exercises
+		// each gate.
+		assertions := DocumentAssertions{
+			Identity:    raw,
+			Name:        raw,
+			DataLicense: raw,
+			Created:     raw,
+			Comment:     raw,
+			Creators:    []Contact{{Kind: ContactKindOrganization, Name: raw}},
+			Tools:       []DocumentTool{{Vendor: raw, Name: raw, Version: raw}},
+			// A signed version derived from the input, so both sides of the
+			// positive gate are reached; the checksum takes the raw value
+			// as both algorithm and digest.
+			Version:  len(raw) - 8,
+			Checksum: &Digest{Algorithm: DigestAlgorithm(raw), Value: raw},
+			// Twice, so folding is exercised; the identity itself, so the
+			// self-reference rule is; and a stated version and checksum,
+			// so the shared tuple gates run on a source too.
+			Sources: []DocumentSource{
+				{Identity: raw}, {Identity: raw, Version: len(raw) - 8, Checksum: &Digest{Algorithm: DigestAlgorithm(raw), Value: raw}},
+				{Identity: "https://example.test/spdxdocs/app"}, {Identity: raw},
+			},
+		}
+		normalized, ok := assertions.Normalized()
+		if !ok && !normalized.IsEmpty() {
+			t.Fatalf("rejected but returned %+v", normalized)
+		}
+		// Normalizing is a fixed point: the rule runs on write and again on
+		// read, so a value that changed on the second pass would drift each
+		// time it crossed a document.
+		again, ok2 := normalized.Normalized()
+		if ok != ok2 {
+			t.Fatalf("re-normalizing changed the verdict: %v then %v", ok, ok2)
+		}
+		if again.Identity != normalized.Identity || again.Name != normalized.Name ||
+			again.DataLicense != normalized.DataLicense || again.Created != normalized.Created ||
+			again.Comment != normalized.Comment || len(again.Creators) != len(normalized.Creators) ||
+			len(again.Tools) != len(normalized.Tools) || again.Version != normalized.Version ||
+			!sameDocumentSources(again.Sources, normalized.Sources) ||
+			(again.Checksum == nil) != (normalized.Checksum == nil) ||
+			(again.Checksum != nil && *again.Checksum != *normalized.Checksum) {
+			t.Fatalf("normalizing is not a fixed point:\n%+v\n%+v", normalized, again)
+		}
+		if normalized.Version < 0 {
+			t.Fatalf("a non-positive version survived the gate: %d", normalized.Version)
+		}
+		// A stated version never contradicts the version a BOM-Link identity
+		// names in its tail.
+		if normalized.Version != 0 && cdx.IsBOMLink(normalized.Identity) {
+			if link, err := cdx.ParseBOMLink(normalized.Identity); err == nil && link.Version() != normalized.Version {
+				t.Fatalf("version %d contradicts BOM-Link %q", normalized.Version, normalized.Identity)
+			}
+		}
+		if normalized.Checksum != nil {
+			if err := normalized.Checksum.Validate(); err != nil {
+				t.Fatalf("an unpublishable checksum survived the gate: %+v: %v", normalized.Checksum, err)
+			}
+		}
+		// Sources are sorted, folded by document, bounded, never the document
+		// itself, and each passes the tuple gates the document itself passes.
+		if len(normalized.Sources) > maxDocumentSources {
+			t.Fatalf("%d sources survived a bound of %d", len(normalized.Sources), maxDocumentSources)
+		}
+		for i, source := range normalized.Sources {
+			if source.Identity == "" || isSelfSource(normalized.Identity, normalized.Version, source) {
+				t.Fatalf("a source names nothing or the document itself: %+v", source)
+			}
+			if source.Version < 0 || (source.Checksum != nil && (source.Checksum.Validate() != nil || source.Checksum.Subject != DigestSubjectArtifact)) {
+				t.Fatalf("an ungated source survived: %+v", source)
+			}
+			if i > 0 {
+				prev := normalized.Sources[i-1]
+				if prev.Identity > source.Identity || (prev.Identity == source.Identity && prev.Version >= source.Version) {
+					t.Fatalf("sources are not sorted and folded by exact key: %+v", normalized.Sources)
+				}
+			}
+		}
+		// The codec applies the same gates, so the ungated value and its
+		// normalized form encode to the same bytes, and decoding gives the
+		// normalized form back.
+		fromRaw, err := json.Marshal(assertions)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		fromNormalized, err := json.Marshal(normalized)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if string(fromRaw) != string(fromNormalized) {
+			t.Fatalf("the codec let an ungated value through:\n%s\n%s", fromRaw, fromNormalized)
+		}
+		var decoded DocumentAssertions
+		if err := json.Unmarshal(fromRaw, &decoded); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if decoded.Version != normalized.Version || (decoded.Checksum == nil) != (normalized.Checksum == nil) ||
+			decoded.Identity != normalized.Identity || decoded.Name != normalized.Name {
+			t.Fatalf("decode is not the normalized form:\n%+v\n%+v", normalized, decoded)
+		}
+		// Nothing published carries a control character, which would corrupt
+		// SPDX's line-oriented tag form.
+		// The comment is exempt: both formats carry a multi-line comment in a
+		// text block, so line breaks there are a legitimate value rather than
+		// a corrupted tag.
+		for _, field := range []string{normalized.Identity, normalized.Name, normalized.DataLicense, normalized.Created} {
+			if ContainsControlChar(field) {
+				t.Fatalf("a published single-line field carries a control character: %q", field)
+			}
+		}
+		// Merging with itself is idempotent, and merging with nothing does not
+		// admit anything the gate refused.
+		if merged := MergeDocumentAssertions(normalized, normalized); merged.Identity != normalized.Identity {
+			t.Fatalf("merging with itself changed the identity: %q then %q", normalized.Identity, merged.Identity)
+		}
+		if merged := MergeDocumentAssertions(DocumentAssertions{}, assertions); ContainsControlChar(merged.Name) {
+			t.Fatalf("a merge admitted a control character: %q", merged.Name)
+		}
+	})
+}
+
+// sameDocumentSources compares two source lists element by element,
+// checksum contents included, so a pass that changed an element while
+// keeping the count is caught.
+func sameDocumentSources(a, b []DocumentSource) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Identity != b[i].Identity || a[i].Version != b[i].Version ||
+			(a[i].Checksum == nil) != (b[i].Checksum == nil) ||
+			(a[i].Checksum != nil && *a[i].Checksum != *b[i].Checksum) {
+			return false
+		}
+	}
+	return true
+}
+
+// The sources array is read by a streaming decoder written here, so it is a
+// parser of untrusted input and gets its own fuzz target over raw bytes:
+// malformed arrays, elements of the wrong type, truncation, duplicate keys,
+// and over-bound lists all reach its token loop, which the typed fuzz target
+// above never does. Whatever the bytes, decoding never panics, a decoded
+// record is within the bound, and a decoded record survives the codec as a
+// fixed point.
+func FuzzDocumentAssertionsJSON(f *testing.F) {
+	for _, seed := range []string{
+		`{}`, `null`, `{"sources":null}`, `{"sources":[]}`, `{"sources":[{}]}`,
+		`{"identity":"https://example.test/spdxdocs/app","sources":[{"identity":"urn:cdx:3e671687-395b-41f5-a30f-a58921a69b79/1","version":1,"checksum":{"algorithm":"SHA-256","value":"d1e8a70b5ccab1dc2f56bbf7e99f064a660c08e361a35751b9c483c88943d082"}}]}`,
+		`{"sources":[1,"two",null,[],{"identity":3}]}`, `{"sources":{"identity":"x"}}`, `{"sources":[{"identity":"a"`,
+		`{"sources":[{"identity":"https://a.test","identity":"https://b.test"}]}`, `{"sources":"x"}`, `[]`, ``, `{"sources":[`,
+		`{"sources":[],"sources":[]}`, `{"a":{"sources":[]},"sources":[{"identity":"https://a.test"}]}`, `{"sources":[{"identity":"https://a.test"}],"comment":"{\"sources\":[]}"}`,
+		`{"sources":[{"identity":"https://a.test/` + strings.Repeat("x", maxDocumentSourcesBytes) + `"}]}`,
+	} {
+		f.Add([]byte(seed))
+	}
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		if len(raw) > maxFuzzInputSize {
+			t.Skip("input exceeds fuzz bound")
+		}
+		var decoded DocumentAssertions
+		if err := json.Unmarshal(raw, &decoded); err != nil {
+			return
+		}
+		if len(decoded.Sources) > maxDocumentSources {
+			t.Fatalf("decoded %d sources, past the bound %d", len(decoded.Sources), maxDocumentSources)
+		}
+		encoded, err := json.Marshal(decoded)
+		if err != nil {
+			t.Fatalf("re-encode failed: %v", err)
+		}
+		var again DocumentAssertions
+		if err := json.Unmarshal(encoded, &again); err != nil {
+			t.Fatalf("re-decode failed for %s: %v", encoded, err)
+		}
+		if reencoded, _ := json.Marshal(again); string(reencoded) != string(encoded) {
+			t.Fatalf("codec is not a fixed point:\n%s\n%s", encoded, reencoded)
+		}
+		// The element decoder alone, on the same bytes, never panics either.
+		var sources boundedDocumentSources
+		_ = sources.UnmarshalJSON(raw)
+	})
+}
+
+// NormalizeDescription is a gate on untrusted text that is re-applied at every
+// hop -- wire decode, registry seeding, document ingest -- so its output must
+// be a fixed point within the bound it documents. It was not: UTF-8 repair
+// tripled invalid bytes past the bound, and the next pass emptied the value.
+func FuzzNormalizeDescription(f *testing.F) {
+	for _, seed := range []string{
+		"A tidy package.", "line one\nline two\ttabbed", "clean\x00text\x07", "a\xffb",
+		"00" + strings.Repeat("\xff", 3000) + "0000", strings.Repeat("\xff", maxDescriptionLength/3),
+		strings.Repeat("a", maxDescriptionLength+1), "", "   ", "\xff", "\xef\xbf\xbd",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, value string) {
+		if len(value) > maxFuzzInputSize {
+			t.Skip("input exceeds fuzz bound")
+		}
+		once := NormalizeDescription(value)
+		if len(once) > maxDescriptionLength {
+			t.Fatalf("output is %d bytes, past the %d bound", len(once), maxDescriptionLength)
+		}
+		if !utf8.ValidString(once) {
+			t.Fatalf("output is not valid UTF-8: %q", once)
+		}
+		for _, r := range once {
+			if (r < ' ' && r != '\n' && r != '\r' && r != '\t') || r == 0x7f {
+				t.Fatalf("output carries control character %U", r)
+			}
+		}
+		if twice := NormalizeDescription(once); twice != once {
+			t.Fatalf("not a fixed point: %d bytes, then %d bytes", len(once), len(twice))
+		}
+	})
+}
+
+// The source-scope gate is a fixed point, and the export helper only ever
+// writes a CycloneDX spelling or nothing -- whatever word the source used.
+func FuzzSourceScope(f *testing.F) {
+	for _, seed := range []string{"optional", "Excluded", "required", "compile", "", " ", "a b", "\x00", strings.Repeat("s", 65)} {
+		f.Add(seed, uint8(0))
+		f.Add(seed, uint8(1))
+		f.Add(seed, uint8(3))
+	}
+	f.Fuzz(func(t *testing.T, raw string, scopeBits uint8) {
+		if len(raw) > maxFuzzInputSize {
+			t.Skip("input exceeds fuzz bound")
+		}
+		once := NormalizeSourceScope(raw)
+		if twice := NormalizeSourceScope(once); twice != once {
+			t.Fatalf("not a fixed point: %q -> %q -> %q", raw, once, twice)
+		}
+		if once != "" && (len(once) > maxVocabularyTokenLength || ContainsControlChar(once) || strings.ContainsAny(once, " \t\n")) {
+			t.Fatalf("an unpublishable source scope survived: %q", once)
+		}
+		var scopes []Scope
+		if scopeBits&1 != 0 {
+			scopes = append(scopes, ScopeRuntime)
+		}
+		if scopeBits&2 != 0 {
+			scopes = append(scopes, ScopeDevelopment)
+		}
+		switch got := CycloneDXScopeForExport(scopes, raw); cdx.Scope(got) {
+		case "", cdx.ScopeRequired, cdx.ScopeOptional, cdx.ScopeExcluded:
+		default:
+			t.Fatalf("export wrote %q, which is not a CycloneDX scope", got)
+		}
+		// Whatever the source said, an empty set writes no scope: the word is
+		// only re-emitted when the set still means what it meant.
+		if got := CycloneDXScopeForExport(nil, raw); got != "" {
+			t.Fatalf("export for an empty set = %q", got)
+		}
+	})
+}
+
+// Root attribution decides whether an analyzer's evidence names a node at
+// all, and every string it reads -- a declared module root, a site path --
+// arrives from a decoded document. The invariants it must hold whatever
+// those strings are: it never panics, an unset root never excludes a node
+// (a whole-scan claim covers every site), a site-established answer does not
+// depend on the run's calibration, and the answer is one of the three
+// documented ones.
+func FuzzRootAttributor(f *testing.F) {
+	for _, seed := range [][4]string{
+		{"/ws/api", "/ws/api", "/ws/api/package.json", "/ws/web"},
+		{"/ws/api", "apps/api", "apps/api/package.json", "/ws/api"},
+		{"", "", "", ""},
+		{".", "..", "../../etc/passwd", "/"},
+		{"/ws/api", "", "/ws/api/..data/node_modules/left-pad/index.js", "/ws/api"},
+		{"/ws/api", "/ws/apifoo", "/ws/apifoo/node_modules/left-pad/index.js", "/ws/apifoo"},
+		{" /ws/api ", "\x00", strings.Repeat("a/", 512), "\n"},
+	} {
+		f.Add(seed[0], seed[1], seed[2], seed[3])
+	}
+
+	f.Fuzz(func(t *testing.T, root, declaredRoot, realPath, analyzedRoot string) {
+		for _, raw := range []string{root, declaredRoot, realPath, analyzedRoot} {
+			if len(raw) > maxFuzzInputSize {
+				t.Skip("input exceeds fuzz bound")
+			}
+		}
+		node, err := NewDependencyNode(Coordinates{Name: "left-pad", Version: "1.3.0", Ecosystem: EcosystemNPM})
+		if err != nil {
+			t.Fatalf("NewDependencyNode: %v", err)
+		}
+		node.Locations = []PackageLocation{{ModuleRoot: declaredRoot, RealPath: realPath}}
+		graph := New()
+		if err := graph.AddNode(node); err != nil {
+			t.Fatalf("AddNode: %v", err)
+		}
+
+		attributor := NewRootAttributor([]string{analyzedRoot}, graph)
+		got := attributor.Attribute(node, root)
+		switch got {
+		case AttributedElsewhere, AttributedToRootOnly, AttributedToSite:
+		default:
+			t.Fatalf("Attribute returned %v, which is not a documented attribution", got)
+		}
+		if again := attributor.Attribute(node, root); again != got {
+			t.Fatalf("Attribute is not deterministic: %v then %v", got, again)
+		}
+		if strings.TrimSpace(root) == "" && got == AttributedElsewhere {
+			t.Fatalf("an unset root excluded a node; a whole-scan claim covers every site")
+		}
+		// Calibration only ever licenses exclusion. A site that establishes
+		// the occurrence does so on its own, so an uncalibrated attributor
+		// must agree.
+		if got == AttributedToSite {
+			var uncalibrated RootAttributor
+			if bare := uncalibrated.Attribute(node, root); bare != AttributedToSite {
+				t.Fatalf("site attribution depends on calibration: calibrated %v, uncalibrated %v", got, bare)
+			}
+		}
+	})
+}

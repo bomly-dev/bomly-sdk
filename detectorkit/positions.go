@@ -6,9 +6,9 @@ import (
 	"os"
 	"strings"
 
-	sdk "github.com/bomly-dev/bomly-sdk"
-
 	"github.com/bomly-dev/bomly-sdk/system"
+
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // AttachPositions populates PackageLocation.Position on graph
@@ -19,15 +19,15 @@ import (
 // nameKey returns the lookup key for a graph node. Detectors
 // typically derive it from dep.Name, dep.Org+":"+dep.Name, or a
 // language-specific normalization. Returning "" skips the node.
-func AttachPositions(g *sdk.Graph, positions map[string]*sdk.SourcePosition, nameKey func(*sdk.DependencyNode) string) {
-	candidates := make(map[string][]*sdk.SourcePosition, len(positions))
+func AttachPositions(g *model.Graph, positions map[string]*model.SourcePosition, nameKey func(*model.DependencyNode) string) {
+	candidates := make(map[string][]*model.SourcePosition, len(positions))
 	for key, pos := range positions {
 		if pos == nil {
 			continue
 		}
-		candidates[key] = []*sdk.SourcePosition{pos}
+		candidates[key] = []*model.SourcePosition{pos}
 	}
-	attachPositionCandidates(g, candidates, func(dep *sdk.DependencyNode) []string {
+	attachPositionCandidates(g, candidates, func(dep *model.DependencyNode) []string {
 		if nameKey == nil {
 			return nil
 		}
@@ -38,13 +38,13 @@ func AttachPositions(g *sdk.Graph, positions map[string]*sdk.SourcePosition, nam
 // AttachPositionCandidates populates PackageLocation.Position on graph nodes
 // using one or more lookup keys per dependency. It preserves multiple
 // declaration sites and skips exact duplicate file/line/column entries.
-func AttachPositionCandidates(g *sdk.Graph, positions map[string][]*sdk.SourcePosition, keys func(*sdk.DependencyNode) []string) {
+func AttachPositionCandidates(g *model.Graph, positions map[string][]*model.SourcePosition, keys func(*model.DependencyNode) []string) {
 	attachPositionCandidates(g, positions, keys, true)
 }
 
 // AppendPosition appends pos under key unless the same file/line/column
 // position was already recorded.
-func AppendPosition(out map[string][]*sdk.SourcePosition, key string, pos *sdk.SourcePosition) {
+func AppendPosition(out map[string][]*model.SourcePosition, key string, pos *model.SourcePosition) {
 	key = strings.TrimSpace(key)
 	if key == "" || pos == nil {
 		return
@@ -57,7 +57,7 @@ func AppendPosition(out map[string][]*sdk.SourcePosition, key string, pos *sdk.S
 	out[key] = append(out[key], pos)
 }
 
-func attachPositionCandidates(g *sdk.Graph, positions map[string][]*sdk.SourcePosition, keys func(*sdk.DependencyNode) []string, exactDuplicate bool) {
+func attachPositionCandidates(g *model.Graph, positions map[string][]*model.SourcePosition, keys func(*model.DependencyNode) []string, exactDuplicate bool) {
 	if g == nil || len(positions) == 0 || keys == nil {
 		return
 	}
@@ -79,7 +79,7 @@ func attachPositionCandidates(g *sdk.Graph, positions map[string][]*sdk.SourcePo
 				if hasLocation(pkg.Locations, pos, exactDuplicate) {
 					continue
 				}
-				pkg.Locations = append(pkg.Locations, sdk.PackageLocation{
+				pkg.Locations = append(pkg.Locations, model.PackageLocation{
 					RealPath:   pos.File,
 					AccessPath: pos.File,
 					Position:   pos,
@@ -92,7 +92,7 @@ func attachPositionCandidates(g *sdk.Graph, positions map[string][]*sdk.SourcePo
 	}
 }
 
-func hasLocation(locations []sdk.PackageLocation, pos *sdk.SourcePosition, exactDuplicate bool) bool {
+func hasLocation(locations []model.PackageLocation, pos *model.SourcePosition, exactDuplicate bool) bool {
 	for _, loc := range locations {
 		if loc.RealPath != pos.File {
 			continue

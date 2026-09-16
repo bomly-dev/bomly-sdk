@@ -4,9 +4,10 @@ import (
 	"testing"
 	"time"
 
-	sdk "github.com/bomly-dev/bomly-sdk"
 	"github.com/bomly-dev/bomly-sdk/detectorkit"
 	"github.com/bomly-dev/bomly-sdk/testkit"
+
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // A lockfile can name one package more than once. The second record folds
@@ -14,20 +15,20 @@ import (
 // scope it was declared at, the place it resolved from -- because that is the
 // data the old hand-written existence checks discarded.
 func TestEnsureNodeFoldsAndKeepsBothWitnesses(t *testing.T) {
-	g := sdk.New()
-	coords := sdk.Coordinates{Ecosystem: sdk.EcosystemPython, Name: "requests", Version: "2.31.0"}
+	g := model.New()
+	coords := model.Coordinates{Ecosystem: model.EcosystemPython, Name: "requests", Version: "2.31.0"}
 
 	runtime := testkit.MustDependencyCoords(t, coords)
-	runtime.AddScope(sdk.ScopeRuntime)
-	runtime.Origins = sdk.MergeOrigins(nil, artifactOrigins("https://a.example/requests-2.31.0.tar.gz"))
+	runtime.AddScope(model.ScopeRuntime)
+	runtime.Origins = model.MergeOrigins(nil, artifactOrigins("https://a.example/requests-2.31.0.tar.gz"))
 	first, err := detectorkit.EnsureNode(g, runtime)
 	if err != nil {
 		t.Fatalf("EnsureNode(first) error = %v", err)
 	}
 
 	development := testkit.MustDependencyCoords(t, coords)
-	development.AddScope(sdk.ScopeDevelopment)
-	development.Origins = sdk.MergeOrigins(nil, artifactOrigins("https://b.example/requests-2.31.0.tar.gz"))
+	development.AddScope(model.ScopeDevelopment)
+	development.Origins = model.MergeOrigins(nil, artifactOrigins("https://b.example/requests-2.31.0.tar.gz"))
 	surviving, err := detectorkit.EnsureNode(g, development)
 	if err != nil {
 		t.Fatalf("EnsureNode(duplicate) error = %v", err)
@@ -39,7 +40,7 @@ func TestEnsureNodeFoldsAndKeepsBothWitnesses(t *testing.T) {
 	if g.Size() != 1 {
 		t.Fatalf("graph size = %d, want one node per identity", g.Size())
 	}
-	if !surviving.HasScope(sdk.ScopeRuntime) || !surviving.HasScope(sdk.ScopeDevelopment) {
+	if !surviving.HasScope(model.ScopeRuntime) || !surviving.HasScope(model.ScopeDevelopment) {
 		t.Fatalf("scopes = %v, want the union of both records", surviving.Scopes)
 	}
 	if len(surviving.Origins) != 2 {
@@ -50,9 +51,9 @@ func TestEnsureNodeFoldsAndKeepsBothWitnesses(t *testing.T) {
 // The typed return is the point: a caller inserting a module gets a module
 // back, and a nil is tolerated rather than dereferenced.
 func TestEnsureNodeIsTypedAndNilTolerant(t *testing.T) {
-	g := sdk.New()
-	module := testkit.MustModuleNode(t, "package.json", sdk.Coordinates{
-		Ecosystem: sdk.EcosystemNPM, Name: "app", Version: "1.0.0",
+	g := model.New()
+	module := testkit.MustModuleNode(t, "package.json", model.Coordinates{
+		Ecosystem: model.EcosystemNPM, Name: "app", Version: "1.0.0",
 	})
 	surviving, err := detectorkit.EnsureNode(g, module)
 	if err != nil {
@@ -62,10 +63,10 @@ func TestEnsureNodeIsTypedAndNilTolerant(t *testing.T) {
 		t.Fatalf("survivor = %+v, want the module back as a module", surviving)
 	}
 
-	if got, err := detectorkit.EnsureNode(g, (*sdk.DependencyNode)(nil)); got != nil || err != nil {
+	if got, err := detectorkit.EnsureNode(g, (*model.DependencyNode)(nil)); got != nil || err != nil {
 		t.Fatalf("EnsureNode(typed nil) = %v, %v; want a no-op", got, err)
 	}
-	if got, err := detectorkit.EnsureNode[*sdk.ModuleNode](nil, module); got != nil || err != nil {
+	if got, err := detectorkit.EnsureNode[*model.ModuleNode](nil, module); got != nil || err != nil {
 		t.Fatalf("EnsureNode(nil graph) = %v, %v; want a no-op", got, err)
 	}
 }
@@ -74,17 +75,17 @@ func TestEnsureNodeIsTypedAndNilTolerant(t *testing.T) {
 // which directory declares each one later still, so promotion has to move a
 // node that already has edges -- and report the ID it now answers to.
 func TestPromoteToModuleKeepsEdgesAndReportsTheNewID(t *testing.T) {
-	g := sdk.New()
-	root := testkit.MustDependencyCoords(t, sdk.Coordinates{
-		Ecosystem: sdk.EcosystemMaven, Org: "com.acme", Name: "app", Version: "1.0.0",
+	g := model.New()
+	root := testkit.MustDependencyCoords(t, model.Coordinates{
+		Ecosystem: model.EcosystemMaven, Org: "com.acme", Name: "app", Version: "1.0.0",
 	})
-	child := testkit.MustDependencyCoords(t, sdk.Coordinates{
-		Ecosystem: sdk.EcosystemMaven, Org: "org.slf4j", Name: "slf4j-api", Version: "2.0.13",
+	child := testkit.MustDependencyCoords(t, model.Coordinates{
+		Ecosystem: model.EcosystemMaven, Org: "org.slf4j", Name: "slf4j-api", Version: "2.0.13",
 	})
-	parent := testkit.MustDependencyCoords(t, sdk.Coordinates{
-		Ecosystem: sdk.EcosystemMaven, Org: "com.acme", Name: "aggregator", Version: "1.0.0",
+	parent := testkit.MustDependencyCoords(t, model.Coordinates{
+		Ecosystem: model.EcosystemMaven, Org: "com.acme", Name: "aggregator", Version: "1.0.0",
 	})
-	for _, node := range []sdk.GraphNode{root, child, parent} {
+	for _, node := range []model.GraphNode{root, child, parent} {
 		if err := g.AddNode(node); err != nil {
 			t.Fatal(err)
 		}
@@ -104,7 +105,7 @@ func TestPromoteToModuleKeepsEdgesAndReportsTheNewID(t *testing.T) {
 		t.Fatal("the promoted node kept its dependency ID")
 	}
 	promoted, ok := g.Node(promotedID)
-	if !ok || !sdk.IsProjectOwned(promoted) {
+	if !ok || !model.IsProjectOwned(promoted) {
 		t.Fatalf("promoted node = %v, want the project's own module", promoted)
 	}
 	if _, stillThere := g.Node(root.NodeID()); stillThere {
@@ -135,20 +136,20 @@ func TestPromoteToModuleKeepsEdgesAndReportsTheNewID(t *testing.T) {
 // terminates on a cycle -- the trap each hand-written copy of this had to
 // re-solve.
 func TestPropagateScopesPrefersRuntimeAndTerminatesOnCycles(t *testing.T) {
-	g := sdk.New()
-	root := testkit.MustModuleNode(t, "pyproject.toml", sdk.Coordinates{
-		Ecosystem: sdk.EcosystemPython, Name: "app", Version: "1.0.0",
+	g := model.New()
+	root := testkit.MustModuleNode(t, "pyproject.toml", model.Coordinates{
+		Ecosystem: model.EcosystemPython, Name: "app", Version: "1.0.0",
 	})
-	dev := testkit.MustDependencyCoords(t, sdk.Coordinates{Ecosystem: sdk.EcosystemPython, Name: "pytest", Version: "8.0.0"})
-	runtime := testkit.MustDependencyCoords(t, sdk.Coordinates{Ecosystem: sdk.EcosystemPython, Name: "requests", Version: "2.31.0"})
-	shared := testkit.MustDependencyCoords(t, sdk.Coordinates{Ecosystem: sdk.EcosystemPython, Name: "urllib3", Version: "2.2.0"})
-	cyclic := testkit.MustDependencyCoords(t, sdk.Coordinates{Ecosystem: sdk.EcosystemPython, Name: "idna", Version: "3.6"})
+	dev := testkit.MustDependencyCoords(t, model.Coordinates{Ecosystem: model.EcosystemPython, Name: "pytest", Version: "8.0.0"})
+	runtime := testkit.MustDependencyCoords(t, model.Coordinates{Ecosystem: model.EcosystemPython, Name: "requests", Version: "2.31.0"})
+	shared := testkit.MustDependencyCoords(t, model.Coordinates{Ecosystem: model.EcosystemPython, Name: "urllib3", Version: "2.2.0"})
+	cyclic := testkit.MustDependencyCoords(t, model.Coordinates{Ecosystem: model.EcosystemPython, Name: "idna", Version: "3.6"})
 	// Reachable only through the development dependency. It is the node that
 	// makes this test mean something: every other package here ends up
 	// runtime, which the closing default would produce on its own even if
 	// propagation never ran.
-	devOnly := testkit.MustDependencyCoords(t, sdk.Coordinates{Ecosystem: sdk.EcosystemPython, Name: "iniconfig", Version: "2.0.0"})
-	for _, node := range []sdk.GraphNode{root, dev, runtime, shared, cyclic, devOnly} {
+	devOnly := testkit.MustDependencyCoords(t, model.Coordinates{Ecosystem: model.EcosystemPython, Name: "iniconfig", Version: "2.0.0"})
+	for _, node := range []model.GraphNode{root, dev, runtime, shared, cyclic, devOnly} {
 		if err := g.AddNode(node); err != nil {
 			t.Fatal(err)
 		}
@@ -167,25 +168,25 @@ func TestPropagateScopesPrefersRuntimeAndTerminatesOnCycles(t *testing.T) {
 		}
 	}
 
-	seeds := map[string]sdk.Scope{dev.NodeID(): sdk.ScopeDevelopment, runtime.NodeID(): sdk.ScopeRuntime}
-	detectorkit.PropagateScopes(g, root.NodeID(), func(node *sdk.DependencyNode) sdk.Scope {
+	seeds := map[string]model.Scope{dev.NodeID(): model.ScopeDevelopment, runtime.NodeID(): model.ScopeRuntime}
+	detectorkit.PropagateScopes(g, root.NodeID(), func(node *model.DependencyNode) model.Scope {
 		return seeds[node.NodeID()]
 	})
 
-	if dev.PrimaryScope() != sdk.ScopeDevelopment {
+	if dev.PrimaryScope() != model.ScopeDevelopment {
 		t.Fatalf("pytest scope = %q, want development", dev.PrimaryScope())
 	}
-	if devOnly.PrimaryScope() != sdk.ScopeDevelopment {
+	if devOnly.PrimaryScope() != model.ScopeDevelopment {
 		t.Fatalf("iniconfig scope = %q, want development carried down the only path that reaches it",
 			devOnly.PrimaryScope())
 	}
-	if shared.PrimaryScope() != sdk.ScopeRuntime {
+	if shared.PrimaryScope() != model.ScopeRuntime {
 		t.Fatalf("urllib3 scope = %q, want runtime to win over the development path", shared.PrimaryScope())
 	}
-	if cyclic.PrimaryScope() != sdk.ScopeRuntime {
+	if cyclic.PrimaryScope() != model.ScopeRuntime {
 		t.Fatalf("idna scope = %q, want the cycle walked and scoped", cyclic.PrimaryScope())
 	}
-	if !sdk.IsProjectOwned(root) {
+	if !model.IsProjectOwned(root) {
 		t.Fatal("the root module was rewritten by scope propagation")
 	}
 }
@@ -193,12 +194,12 @@ func TestPropagateScopesPrefersRuntimeAndTerminatesOnCycles(t *testing.T) {
 // An unscoped package defaults to runtime: the resolver installed it, so it
 // is used unless something said otherwise.
 func TestPropagateScopesDefaultsOrphansToRuntime(t *testing.T) {
-	g := sdk.New()
-	root := testkit.MustModuleNode(t, "pyproject.toml", sdk.Coordinates{
-		Ecosystem: sdk.EcosystemPython, Name: "app", Version: "1.0.0",
+	g := model.New()
+	root := testkit.MustModuleNode(t, "pyproject.toml", model.Coordinates{
+		Ecosystem: model.EcosystemPython, Name: "app", Version: "1.0.0",
 	})
-	orphan := testkit.MustDependencyCoords(t, sdk.Coordinates{Ecosystem: sdk.EcosystemPython, Name: "orphan", Version: "1.0.0"})
-	for _, node := range []sdk.GraphNode{root, orphan} {
+	orphan := testkit.MustDependencyCoords(t, model.Coordinates{Ecosystem: model.EcosystemPython, Name: "orphan", Version: "1.0.0"})
+	for _, node := range []model.GraphNode{root, orphan} {
 		if err := g.AddNode(node); err != nil {
 			t.Fatal(err)
 		}
@@ -206,17 +207,17 @@ func TestPropagateScopesDefaultsOrphansToRuntime(t *testing.T) {
 
 	detectorkit.PropagateScopes(g, root.NodeID(), nil)
 
-	if orphan.PrimaryScope() != sdk.ScopeRuntime {
+	if orphan.PrimaryScope() != model.ScopeRuntime {
 		t.Fatalf("orphan scope = %q, want runtime", orphan.PrimaryScope())
 	}
 }
 
-func artifactOrigins(url string) []sdk.DependencyOrigin {
-	origin := sdk.ArtifactOrigin(url)
+func artifactOrigins(url string) []model.DependencyOrigin {
+	origin := model.ArtifactOrigin(url)
 	if origin == nil {
 		return nil
 	}
-	return []sdk.DependencyOrigin{*origin}
+	return []model.DependencyOrigin{*origin}
 }
 
 // A node the detector already marked runtime, reached only on a development
@@ -228,18 +229,18 @@ func artifactOrigins(url string) []sdk.DependencyOrigin {
 // hung rather than failed. The topology is small and specific because that is
 // what it takes: a plain cycle terminates either way.
 func TestPropagateScopesTerminatesWhenANodeOutranksItsPath(t *testing.T) {
-	g := sdk.New()
-	root := testkit.MustModuleNode(t, "pyproject.toml", sdk.Coordinates{
-		Ecosystem: sdk.EcosystemPython, Name: "app", Version: "1.0.0",
+	g := model.New()
+	root := testkit.MustModuleNode(t, "pyproject.toml", model.Coordinates{
+		Ecosystem: model.EcosystemPython, Name: "app", Version: "1.0.0",
 	})
-	dev := testkit.MustDependencyCoords(t, sdk.Coordinates{Ecosystem: sdk.EcosystemPython, Name: "pytest", Version: "8.0.0"})
-	first := testkit.MustDependencyCoords(t, sdk.Coordinates{Ecosystem: sdk.EcosystemPython, Name: "cee", Version: "1.0.0"})
-	second := testkit.MustDependencyCoords(t, sdk.Coordinates{Ecosystem: sdk.EcosystemPython, Name: "dee", Version: "1.0.0"})
+	dev := testkit.MustDependencyCoords(t, model.Coordinates{Ecosystem: model.EcosystemPython, Name: "pytest", Version: "8.0.0"})
+	first := testkit.MustDependencyCoords(t, model.Coordinates{Ecosystem: model.EcosystemPython, Name: "cee", Version: "1.0.0"})
+	second := testkit.MustDependencyCoords(t, model.Coordinates{Ecosystem: model.EcosystemPython, Name: "dee", Version: "1.0.0"})
 	// Marked runtime by the detector, and reachable only through the
 	// development dependency.
-	first.AddScope(sdk.ScopeRuntime)
-	second.AddScope(sdk.ScopeRuntime)
-	for _, node := range []sdk.GraphNode{root, dev, first, second} {
+	first.AddScope(model.ScopeRuntime)
+	second.AddScope(model.ScopeRuntime)
+	for _, node := range []model.GraphNode{root, dev, first, second} {
 		if err := g.AddNode(node); err != nil {
 			t.Fatal(err)
 		}
@@ -258,8 +259,8 @@ func TestPropagateScopesTerminatesWhenANodeOutranksItsPath(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		detectorkit.PropagateScopes(g, root.NodeID(), func(*sdk.DependencyNode) sdk.Scope {
-			return sdk.ScopeDevelopment
+		detectorkit.PropagateScopes(g, root.NodeID(), func(*model.DependencyNode) model.Scope {
+			return model.ScopeDevelopment
 		})
 	}()
 	select {
@@ -270,7 +271,7 @@ func TestPropagateScopesTerminatesWhenANodeOutranksItsPath(t *testing.T) {
 
 	// And the stronger scope still wins: a package marked runtime is
 	// reachable at runtime whichever path found it.
-	if first.PrimaryScope() != sdk.ScopeRuntime || second.PrimaryScope() != sdk.ScopeRuntime {
+	if first.PrimaryScope() != model.ScopeRuntime || second.PrimaryScope() != model.ScopeRuntime {
 		t.Fatalf("scopes = %q and %q, want runtime to survive the development path",
 			first.PrimaryScope(), second.PrimaryScope())
 	}
@@ -280,11 +281,11 @@ func TestPropagateScopesTerminatesWhenANodeOutranksItsPath(t *testing.T) {
 // learned before it discovered ownership has to travel across. Locations and
 // metadata are what a dependency and a module both hold.
 func TestPromoteToModuleCarriesLocationsAndMetadata(t *testing.T) {
-	g := sdk.New()
-	root := testkit.MustDependencyCoords(t, sdk.Coordinates{
-		Ecosystem: sdk.EcosystemMaven, Org: "com.acme", Name: "app", Version: "1.0.0",
+	g := model.New()
+	root := testkit.MustDependencyCoords(t, model.Coordinates{
+		Ecosystem: model.EcosystemMaven, Org: "com.acme", Name: "app", Version: "1.0.0",
 	})
-	root.Locations = []sdk.PackageLocation{{RealPath: "app/pom.xml", AccessPath: "app/pom.xml"}}
+	root.Locations = []model.PackageLocation{{RealPath: "app/pom.xml", AccessPath: "app/pom.xml"}}
 	root.Metadata = map[string]any{"maven": "reactor"}
 	if err := g.AddNode(root); err != nil {
 		t.Fatal(err)
@@ -298,7 +299,7 @@ func TestPromoteToModuleCarriesLocationsAndMetadata(t *testing.T) {
 	if !ok {
 		t.Fatalf("no node at %q after promotion", promotedID)
 	}
-	module, ok := sdk.AsModuleNode(promoted)
+	module, ok := model.AsModuleNode(promoted)
 	if !ok {
 		t.Fatalf("promoted node is a %s node, want a module", promoted.Kind())
 	}
@@ -315,17 +316,17 @@ func TestPromoteToModuleCarriesLocationsAndMetadata(t *testing.T) {
 // describes the moment its target became a module, changing the relationship
 // the graph exports.
 func TestPromoteToModuleKeepsExplicitEdgeKinds(t *testing.T) {
-	g := sdk.New()
-	manifest := testkit.MustManifestNode(t, "pom.xml", sdk.ManifestKindPomXML)
-	dependency := testkit.MustDependencyCoords(t, sdk.Coordinates{
-		Ecosystem: sdk.EcosystemMaven, Org: "com.acme", Name: "app", Version: "1.0.0",
+	g := model.New()
+	manifest := testkit.MustManifestNode(t, "pom.xml", model.ManifestKindPomXML)
+	dependency := testkit.MustDependencyCoords(t, model.Coordinates{
+		Ecosystem: model.EcosystemMaven, Org: "com.acme", Name: "app", Version: "1.0.0",
 	})
-	for _, node := range []sdk.GraphNode{manifest, dependency} {
+	for _, node := range []model.GraphNode{manifest, dependency} {
 		if err := g.AddNode(node); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := g.AddTypedEdge(manifest.NodeID(), dependency.NodeID(), sdk.EdgeKindDependsOn); err != nil {
+	if err := g.AddTypedEdge(manifest.NodeID(), dependency.NodeID(), model.EdgeKindDependsOn); err != nil {
 		t.Fatal(err)
 	}
 
@@ -333,7 +334,7 @@ func TestPromoteToModuleKeepsExplicitEdgeKinds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PromoteToModule() error = %v", err)
 	}
-	if got := g.EdgeKindOf(manifest.NodeID(), promotedID); got != sdk.EdgeKindDependsOn {
+	if got := g.EdgeKindOf(manifest.NodeID(), promotedID); got != model.EdgeKindDependsOn {
 		t.Fatalf("edge kind = %q, want the depends-on the edge was recorded with", got)
 	}
 }
@@ -344,16 +345,16 @@ func TestPromoteToModuleKeepsExplicitEdgeKinds(t *testing.T) {
 // Seeding development alone sent development down every edge out of it, one
 // step earlier than the child-side merge that was fixed first.
 func TestPropagateScopesMergesADirectDependencysStoredScope(t *testing.T) {
-	g := sdk.New()
-	root := testkit.MustModuleNode(t, "pyproject.toml", sdk.Coordinates{
-		Ecosystem: sdk.EcosystemPython, Name: "app", Version: "1.0.0",
+	g := model.New()
+	root := testkit.MustModuleNode(t, "pyproject.toml", model.Coordinates{
+		Ecosystem: model.EcosystemPython, Name: "app", Version: "1.0.0",
 	})
 	// Declared in the development group, but the resolver already marked it
 	// runtime -- it is reachable both ways.
-	direct := testkit.MustDependencyCoords(t, sdk.Coordinates{Ecosystem: sdk.EcosystemPython, Name: "requests", Version: "2.31.0"})
-	direct.AddScope(sdk.ScopeRuntime)
-	child := testkit.MustDependencyCoords(t, sdk.Coordinates{Ecosystem: sdk.EcosystemPython, Name: "urllib3", Version: "2.2.0"})
-	for _, node := range []sdk.GraphNode{root, direct, child} {
+	direct := testkit.MustDependencyCoords(t, model.Coordinates{Ecosystem: model.EcosystemPython, Name: "requests", Version: "2.31.0"})
+	direct.AddScope(model.ScopeRuntime)
+	child := testkit.MustDependencyCoords(t, model.Coordinates{Ecosystem: model.EcosystemPython, Name: "urllib3", Version: "2.2.0"})
+	for _, node := range []model.GraphNode{root, direct, child} {
 		if err := g.AddNode(node); err != nil {
 			t.Fatal(err)
 		}
@@ -367,11 +368,11 @@ func TestPropagateScopesMergesADirectDependencysStoredScope(t *testing.T) {
 		}
 	}
 
-	detectorkit.PropagateScopes(g, root.NodeID(), func(*sdk.DependencyNode) sdk.Scope {
-		return sdk.ScopeDevelopment
+	detectorkit.PropagateScopes(g, root.NodeID(), func(*model.DependencyNode) model.Scope {
+		return model.ScopeDevelopment
 	})
 
-	if child.PrimaryScope() != sdk.ScopeRuntime {
+	if child.PrimaryScope() != model.ScopeRuntime {
 		t.Fatalf("urllib3 scope = %q, want the runtime its parent already carried", child.PrimaryScope())
 	}
 }
@@ -384,8 +385,8 @@ func TestPropagateScopesMergesADirectDependencysStoredScope(t *testing.T) {
 // PromoteToModule replaced it -- got no signal, and development-only
 // packages presented as shipped.
 func TestPropagateScopesIsANoOpForARootAbsentFromTheGraph(t *testing.T) {
-	g := sdk.New()
-	dev := testkit.MustDependencyCoords(t, sdk.Coordinates{Ecosystem: sdk.EcosystemNPM, Name: "only-dev", Version: "1.0.0"})
+	g := model.New()
+	dev := testkit.MustDependencyCoords(t, model.Coordinates{Ecosystem: model.EcosystemNPM, Name: "only-dev", Version: "1.0.0"})
 	dev.Scopes = nil
 	if err := g.AddNode(dev); err != nil {
 		t.Fatal(err)
@@ -393,7 +394,7 @@ func TestPropagateScopesIsANoOpForARootAbsentFromTheGraph(t *testing.T) {
 
 	detectorkit.PropagateScopes(g, "module:does/not#exist", nil)
 
-	if got := dev.PrimaryScope(); got != sdk.ScopeUnknown {
+	if got := dev.PrimaryScope(); got != model.ScopeUnknown {
 		t.Fatalf("only-dev scope = %q, want it left unscoped when no root could seed it", got)
 	}
 
@@ -401,14 +402,14 @@ func TestPropagateScopesIsANoOpForARootAbsentFromTheGraph(t *testing.T) {
 	// with no direct dependencies is not an error, and the runtime default
 	// still applies to it (TestPropagateScopesDefaultsOrphansToRuntime pins
 	// that side).
-	root := testkit.MustModuleNode(t, "package.json", sdk.Coordinates{
-		Ecosystem: sdk.EcosystemNPM, Name: "app", Version: "1.0.0",
+	root := testkit.MustModuleNode(t, "package.json", model.Coordinates{
+		Ecosystem: model.EcosystemNPM, Name: "app", Version: "1.0.0",
 	})
 	if err := g.AddNode(root); err != nil {
 		t.Fatal(err)
 	}
 	detectorkit.PropagateScopes(g, root.NodeID(), nil)
-	if got := dev.PrimaryScope(); got != sdk.ScopeRuntime {
+	if got := dev.PrimaryScope(); got != model.ScopeRuntime {
 		t.Fatalf("only-dev scope = %q, want the runtime default once a present root ran the pass", got)
 	}
 }

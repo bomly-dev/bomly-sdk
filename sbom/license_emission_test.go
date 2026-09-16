@@ -6,31 +6,32 @@ import (
 	"testing"
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
-	"github.com/bomly-dev/bomly-sdk"
 	"github.com/bomly-dev/bomly-sdk/internal/testnodes"
 	"github.com/bomly-dev/bomly-sdk/spdxkit"
 	v23 "github.com/spdx/tools-golang/spdx/v2/v2_3"
+
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // licensedGraph builds a one-node graph whose single component declares the
 // given licenses at detection time.
-func licensedGraph(t *testing.T, licenses ...sdk.PackageLicense) *sdk.Graph {
+func licensedGraph(t *testing.T, licenses ...model.PackageLicense) *model.Graph {
 	t.Helper()
-	g := sdk.New()
-	dep := testnodes.DepFrom(sdk.DependencyNode{Coordinates: sdk.Coordinates{
+	g := model.New()
+	dep := testnodes.DepFrom(model.DependencyNode{Coordinates: model.Coordinates{
 		Name:      "left-pad",
 		Version:   "1.3.0",
 		PURL:      "pkg:npm/left-pad@1.3.0",
 		Ecosystem: "npm",
 	}})
-	sdk.SetDetectionLicenses(dep, licenses)
+	model.SetDetectionLicenses(dep, licenses)
 	if err := g.AddNode(dep); err != nil {
 		t.Fatalf("add node: %v", err)
 	}
 	return g
 }
 
-func cycloneDXComponentLicenses(t *testing.T, g *sdk.Graph) cdx.Licenses {
+func cycloneDXComponentLicenses(t *testing.T, g *model.Graph) cdx.Licenses {
 	t.Helper()
 	out, err := MarshalDepGraphJSON(g, TargetCycloneDX16JSON, BuildOptions{}, EncodeOptions{})
 	if err != nil {
@@ -50,7 +51,7 @@ func cycloneDXComponentLicenses(t *testing.T, g *sdk.Graph) cdx.Licenses {
 	return *comp.Licenses
 }
 
-func spdxPackageLicense(t *testing.T, g *sdk.Graph) *v23.Package {
+func spdxPackageLicense(t *testing.T, g *model.Graph) *v23.Package {
 	t.Helper()
 	out, err := MarshalDepGraphJSON(g, TargetSPDX23JSON, BuildOptions{}, EncodeOptions{})
 	if err != nil {
@@ -73,7 +74,7 @@ func spdxPackageLicense(t *testing.T, g *sdk.Graph) *v23.Package {
 func TestCycloneDXLicenseShapes(t *testing.T) {
 	tests := []struct {
 		name       string
-		licenses   []sdk.PackageLicense
+		licenses   []model.PackageLicense
 		wantID     string
 		wantExpr   string
 		wantName   string
@@ -81,31 +82,31 @@ func TestCycloneDXLicenseShapes(t *testing.T) {
 	}{
 		{
 			name:       "plain identifier becomes license.id",
-			licenses:   []sdk.PackageLicense{{Value: "MIT"}},
+			licenses:   []model.PackageLicense{{Value: "MIT"}},
 			wantID:     "MIT",
 			wantLength: 1,
 		},
 		{
 			name:       "identifier casing is canonicalized",
-			licenses:   []sdk.PackageLicense{{Value: "mit"}},
+			licenses:   []model.PackageLicense{{Value: "mit"}},
 			wantID:     "MIT",
 			wantLength: 1,
 		},
 		{
 			name:       "compound value stays an expression",
-			licenses:   []sdk.PackageLicense{{SPDXExpression: "MIT OR Apache-2.0"}},
+			licenses:   []model.PackageLicense{{SPDXExpression: "MIT OR Apache-2.0"}},
 			wantExpr:   "MIT OR Apache-2.0",
 			wantLength: 1,
 		},
 		{
 			name:       "or-later operator stays an expression",
-			licenses:   []sdk.PackageLicense{{SPDXExpression: "LGPL-2.1-only+"}},
+			licenses:   []model.PackageLicense{{SPDXExpression: "LGPL-2.1-only+"}},
 			wantExpr:   "LGPL-2.1-only+",
 			wantLength: 1,
 		},
 		{
 			name:       "unrecognized text stays free text",
-			licenses:   []sdk.PackageLicense{{Value: "see LICENSE file"}},
+			licenses:   []model.PackageLicense{{Value: "see LICENSE file"}},
 			wantName:   "see LICENSE file",
 			wantLength: 1,
 		},
@@ -114,7 +115,7 @@ func TestCycloneDXLicenseShapes(t *testing.T) {
 			// real expressions into. Publishing it as `expression` produced a
 			// document that fails CycloneDX expression validation.
 			name:       "unrecognized expression is demoted to free text",
-			licenses:   []sdk.PackageLicense{{Value: "non-standard", SPDXExpression: "non-standard"}},
+			licenses:   []model.PackageLicense{{Value: "non-standard", SPDXExpression: "non-standard"}},
 			wantName:   "non-standard",
 			wantLength: 1,
 		},
@@ -162,8 +163,8 @@ func TestCycloneDXMultipleLicenses(t *testing.T) {
 	// with AND would claim a package offered under either is bound by both.
 	t.Run("several identifiers are listed, not composed", func(t *testing.T) {
 		licenses := cycloneDXComponentLicenses(t, licensedGraph(t,
-			sdk.PackageLicense{Value: "MIT"},
-			sdk.PackageLicense{Value: "Apache-2.0"},
+			model.PackageLicense{Value: "MIT"},
+			model.PackageLicense{Value: "Apache-2.0"},
 		))
 		if len(licenses) != 2 {
 			t.Fatalf("expected 2 license entries, got %#v", licenses)
@@ -182,8 +183,8 @@ func TestCycloneDXMultipleLicenses(t *testing.T) {
 	// one, so a compound member leaves composition as the only way to keep it.
 	t.Run("a compound member forces composition", func(t *testing.T) {
 		licenses := cycloneDXComponentLicenses(t, licensedGraph(t,
-			sdk.PackageLicense{SPDXExpression: "Apache-2.0 OR MIT"},
-			sdk.PackageLicense{Value: "Unicode-DFS-2016"},
+			model.PackageLicense{SPDXExpression: "Apache-2.0 OR MIT"},
+			model.PackageLicense{Value: "Unicode-DFS-2016"},
 		))
 		if len(licenses) != 1 {
 			t.Fatalf("expected a single composed entry, got %#v", licenses)
@@ -195,8 +196,8 @@ func TestCycloneDXMultipleLicenses(t *testing.T) {
 
 	t.Run("mixed validity falls back to per-license objects", func(t *testing.T) {
 		licenses := cycloneDXComponentLicenses(t, licensedGraph(t,
-			sdk.PackageLicense{Value: "MIT"},
-			sdk.PackageLicense{Value: "non-standard"},
+			model.PackageLicense{Value: "MIT"},
+			model.PackageLicense{Value: "non-standard"},
 		))
 		if len(licenses) != 2 {
 			t.Fatalf("expected 2 license entries, got %#v", licenses)
@@ -221,7 +222,7 @@ func TestCycloneDXMultipleLicenses(t *testing.T) {
 func TestSPDXLicenseComposition(t *testing.T) {
 	tests := []struct {
 		name     string
-		licenses []sdk.PackageLicense
+		licenses []model.PackageLicense
 		want     string
 	}{
 		{
@@ -230,12 +231,12 @@ func TestSPDXLicenseComposition(t *testing.T) {
 		},
 		{
 			name:     "single value passes through",
-			licenses: []sdk.PackageLicense{{Value: "MIT"}},
+			licenses: []model.PackageLicense{{Value: "MIT"}},
 			want:     "MIT",
 		},
 		{
 			name: "multiple licenses compose with AND",
-			licenses: []sdk.PackageLicense{
+			licenses: []model.PackageLicense{
 				{Value: "MIT"},
 				{Value: "Apache-2.0"},
 			},
@@ -243,7 +244,7 @@ func TestSPDXLicenseComposition(t *testing.T) {
 		},
 		{
 			name: "compound elements are parenthesized",
-			licenses: []sdk.PackageLicense{
+			licenses: []model.PackageLicense{
 				{Value: "MIT"},
 				{SPDXExpression: "MIT OR GPL-2.0-only"},
 			},
@@ -255,7 +256,7 @@ func TestSPDXLicenseComposition(t *testing.T) {
 			// nothing is dropped -- this used to keep "MIT" alone and lose
 			// the fact that a second license was declared at all.
 			name: "an unrecognized member composes as a reference",
-			licenses: []sdk.PackageLicense{
+			licenses: []model.PackageLicense{
 				{Value: "MIT"},
 				{Value: "non-standard"},
 			},
@@ -265,7 +266,7 @@ func TestSPDXLicenseComposition(t *testing.T) {
 			// A lone unrecognized value is a reference rather than free text
 			// in a field SPDX says must hold an expression.
 			name: "a single unrecognized value becomes a reference",
-			licenses: []sdk.PackageLicense{
+			licenses: []model.PackageLicense{
 				{Value: "see LICENSE file"},
 			},
 			want: spdxkit.MintLicenseRef("see LICENSE file").RefID,
@@ -288,7 +289,7 @@ func TestSPDXLicenseComposition(t *testing.T) {
 // contents, so SPDX's NOASSERTION is the honest value. The declared field
 // still carries what the source said.
 func TestSPDXLicenseConcludedIsNeverAsserted(t *testing.T) {
-	for _, licenses := range [][]sdk.PackageLicense{
+	for _, licenses := range [][]model.PackageLicense{
 		nil,
 		{{Value: "MIT"}},
 		{{SPDXExpression: "MIT OR Apache-2.0"}},
@@ -306,7 +307,7 @@ func TestSPDXLicenseConcludedIsNeverAsserted(t *testing.T) {
 // whose concluded field is NOASSERTION must still yield the declared license
 // when read back, not a literal "NOASSERTION" license.
 func TestSPDXConcludedNoAssertionSurvivesIngest(t *testing.T) {
-	out, err := MarshalDepGraphJSON(licensedGraph(t, sdk.PackageLicense{Value: "MIT"}),
+	out, err := MarshalDepGraphJSON(licensedGraph(t, model.PackageLicense{Value: "MIT"}),
 		TargetSPDX23JSON, BuildOptions{}, EncodeOptions{})
 	if err != nil {
 		t.Fatalf("marshal spdx: %v", err)
@@ -330,7 +331,7 @@ func TestSPDXConcludedNoAssertionSurvivesIngest(t *testing.T) {
 // that expression unchanged rather than reinterpreting it.
 func TestSourceStatedRelationshipSurvivesBothFormats(t *testing.T) {
 	const expression = "Apache-2.0 OR MIT"
-	licenses := []sdk.PackageLicense{{SPDXExpression: expression}}
+	licenses := []model.PackageLicense{{SPDXExpression: expression}}
 
 	cdxLicenses := cycloneDXComponentLicenses(t, licensedGraph(t, licenses...))
 	if len(cdxLicenses) != 1 || cdxLicenses[0].Expression != expression {
@@ -346,7 +347,7 @@ func TestSourceStatedRelationshipSurvivesBothFormats(t *testing.T) {
 // holds a single expression and has no such form, so it must compose. Both are
 // the most faithful thing each format can say.
 func TestMultipleLicensesDivergeByFormat(t *testing.T) {
-	licenses := []sdk.PackageLicense{{Value: "MIT"}, {Value: "Apache-2.0"}}
+	licenses := []model.PackageLicense{{Value: "MIT"}, {Value: "Apache-2.0"}}
 
 	cdxLicenses := cycloneDXComponentLicenses(t, licensedGraph(t, licenses...))
 	if len(cdxLicenses) != 2 {
@@ -407,7 +408,7 @@ func TestLicenseExpressionsAreEmittedCanonically(t *testing.T) {
 // algorithm added upstream fails this test rather than disappearing.
 func TestEverySPDXKnownDigestAlgorithmIsEmitted(t *testing.T) {
 	var checked int
-	for _, algorithm := range sdk.DigestAlgorithms() {
+	for _, algorithm := range model.DigestAlgorithms() {
 		spdxName := algorithm.SPDXName()
 		if spdxName == "" {
 			continue // SPDX does not define this one; the format's limit, not ours.
@@ -434,7 +435,7 @@ func TestEverySPDXKnownDigestAlgorithmIsEmitted(t *testing.T) {
 // compile error and says nothing about an addition.
 func TestEveryCycloneDXKnownDigestAlgorithmIsEmitted(t *testing.T) {
 	var checked int
-	for _, algorithm := range sdk.DigestAlgorithms() {
+	for _, algorithm := range model.DigestAlgorithms() {
 		name := algorithm.CycloneDXName()
 		if name == "" {
 			continue // CycloneDX does not define this one; the format's limit.
@@ -452,9 +453,9 @@ func TestEveryCycloneDXKnownDigestAlgorithmIsEmitted(t *testing.T) {
 // An algorithm CycloneDX has no name for is omitted rather than written in a
 // spelling the schema rejects.
 func TestUnmappableDigestIsOmittedFromCycloneDXReferences(t *testing.T) {
-	hashes := cycloneDXEmittedHashes([]sdk.Digest{
-		{Algorithm: sdk.DigestAlgorithmADLER32, Value: "0badf00d"},
-		{Algorithm: sdk.DigestAlgorithmSHA256, Value: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"},
+	hashes := cycloneDXEmittedHashes([]model.Digest{
+		{Algorithm: model.DigestAlgorithmADLER32, Value: "0badf00d"},
+		{Algorithm: model.DigestAlgorithmSHA256, Value: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"},
 	})
 	if hashes == nil {
 		t.Fatal("the sha-256 hash was dropped along with the unmappable one")

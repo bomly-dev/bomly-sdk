@@ -22,19 +22,21 @@
 // (bomly-cli ADR-0045): the package that names a document's children is the
 // one that has to agree with the renderers about which children exist.
 //
-// PurlFor is a one-line delegation to sdk.NodePURL, kept so callers read one
+// PurlFor is a one-line delegation to model.NodePURL, kept so callers read one
 // name alongside ChildrenAmong and TopLevelParentIDs.
 package graphview
 
-import sdk "github.com/bomly-dev/bomly-sdk"
+import (
+	"github.com/bomly-dev/bomly-sdk/model"
+)
 
 // PurlFor returns the package URL a node publishes, or "" when it has none.
 //
-// It delegates to sdk.NodePURL: the root package owns what a node means, and
+// It delegates to model.NodePURL: the root package owns what a node means, and
 // the three kinds answer this differently. The wrapper stays only so callers
 // read one name alongside ChildrenAmong and TopLevelParentIDs.
-func PurlFor(node sdk.GraphNode) string {
-	return sdk.NodePURL(node)
+func PurlFor(node model.GraphNode) string {
+	return model.NodePURL(node)
 }
 
 // ChildrenAmong names a node's children among the IDs a document actually
@@ -52,7 +54,7 @@ func PurlFor(node sdk.GraphNode) string {
 // Order follows the graph's own child order, which is sorted by ID. The
 // visited set bounds a graph whose structural nodes form a cycle; a child that
 // is present is recorded, never traversed.
-func ChildrenAmong(g *sdk.Graph, nodeID string, present map[string]struct{}) []string {
+func ChildrenAmong(g *model.Graph, nodeID string, present map[string]struct{}) []string {
 	resolved := make([]string, 0)
 	if g == nil {
 		return resolved
@@ -67,7 +69,7 @@ func ChildrenAmong(g *sdk.Graph, nodeID string, present map[string]struct{}) []s
 			return
 		}
 		for _, child := range children {
-			if sdk.IsNilNode(child) {
+			if model.IsNilNode(child) {
 				continue
 			}
 			childID := child.NodeID()
@@ -99,13 +101,13 @@ func ChildrenAmong(g *sdk.Graph, nodeID string, present map[string]struct{}) []s
 // a member is a module node, which is why reading application-typed
 // dependency nodes alone stopped finding them; that spelling is kept for a
 // root a detector has not promoted yet.
-func TopLevelParentIDs(g *sdk.Graph) map[string]struct{} {
+func TopLevelParentIDs(g *model.Graph) map[string]struct{} {
 	parents := make(map[string]struct{})
 	if g == nil {
 		return parents
 	}
 	for _, root := range g.Roots() {
-		if !sdk.IsNilNode(root) {
+		if !model.IsNilNode(root) {
 			parents[root.NodeID()] = struct{}{}
 		}
 	}
@@ -115,7 +117,7 @@ func TopLevelParentIDs(g *sdk.Graph) map[string]struct{} {
 		}
 	}
 	for _, pkg := range g.DependencyNodes() {
-		if pkg != nil && pkg.Type == sdk.PackageTypeApplication {
+		if pkg != nil && pkg.Type == model.PackageTypeApplication {
 			parents[pkg.NodeID()] = struct{}{}
 		}
 	}

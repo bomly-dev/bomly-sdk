@@ -6,7 +6,7 @@ package testkit
 import (
 	"testing"
 
-	sdk "github.com/bomly-dev/bomly-sdk"
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // MaxFuzzInputSize is the shared upper bound for parser fuzz payloads.
@@ -14,12 +14,12 @@ const MaxFuzzInputSize = 1 << 20
 
 // RequireFuzzGraphValid verifies the minimum invariants of a successfully
 // parsed dependency graph.
-func RequireFuzzGraphValid(t *testing.T, graph *sdk.Graph) {
+func RequireFuzzGraphValid(t *testing.T, graph *model.Graph) {
 	t.Helper()
 	if graph == nil {
 		t.Fatal("successful parse returned nil graph")
 	}
-	graph.WalkNodes(func(node sdk.GraphNode) bool {
+	graph.WalkNodes(func(node model.GraphNode) bool {
 		if node == nil {
 			t.Fatal("graph contains nil node")
 		}
@@ -28,7 +28,7 @@ func RequireFuzzGraphValid(t *testing.T, graph *sdk.Graph) {
 		}
 		return true
 	})
-	graph.WalkEdges(func(from, to sdk.GraphNode) bool {
+	graph.WalkEdges(func(from, to model.GraphNode) bool {
 		if from == nil || to == nil {
 			t.Fatalf("graph contains nil edge endpoint: from=%+v to=%+v", from, to)
 		}

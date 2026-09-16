@@ -3,7 +3,7 @@ package sbom
 import (
 	"testing"
 
-	"github.com/bomly-dev/bomly-sdk"
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // The digest algorithm enumerations belong to the SDK's registry, which is
@@ -17,7 +17,7 @@ import (
 // hand-written table -- or an SDK bump that drops a member -- fails here
 // rather than silently discarding digests at runtime.
 func TestSPDXChecksumAlgorithmCoversTheSDKRegistry(t *testing.T) {
-	for _, algorithm := range sdk.DigestAlgorithms() {
+	for _, algorithm := range model.DigestAlgorithms() {
 		name := algorithm.SPDXName()
 		if name == "" {
 			// SPDX genuinely has no member for it; dropping is correct.
@@ -30,7 +30,7 @@ func TestSPDXChecksumAlgorithmCoversTheSDKRegistry(t *testing.T) {
 }
 
 func TestCycloneDXHashAlgorithmCoversTheSDKRegistry(t *testing.T) {
-	for _, algorithm := range sdk.DigestAlgorithms() {
+	for _, algorithm := range model.DigestAlgorithms() {
 		name := algorithm.CycloneDXName()
 		if name == "" {
 			// CycloneDX genuinely has no member for it; dropping is correct.
@@ -46,10 +46,10 @@ func TestCycloneDXHashAlgorithmCoversTheSDKRegistry(t *testing.T) {
 // what neither format defines.
 func TestDigestAlgorithmSpellingsAndRejection(t *testing.T) {
 	for _, spelling := range []string{"SHA-256", "sha256", "SHA256", " sha-256 "} {
-		if got := string(spdxChecksumAlgorithm(spelling)); got != sdk.DigestAlgorithmSHA256.SPDXName() {
+		if got := string(spdxChecksumAlgorithm(spelling)); got != model.DigestAlgorithmSHA256.SPDXName() {
 			t.Errorf("spdxChecksumAlgorithm(%q) = %q, want the SHA256 member", spelling, got)
 		}
-		if got := string(cycloneDXHashAlgorithm(spelling)); got != sdk.DigestAlgorithmSHA256.CycloneDXName() {
+		if got := string(cycloneDXHashAlgorithm(spelling)); got != model.DigestAlgorithmSHA256.CycloneDXName() {
 			t.Errorf("cycloneDXHashAlgorithm(%q) = %q, want the SHA256 member", spelling, got)
 		}
 	}

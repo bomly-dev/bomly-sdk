@@ -4,8 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bomly-dev/bomly-sdk"
 	"github.com/bomly-dev/bomly-sdk/testkit"
+
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // FuzzDocumentAssertions drives arbitrary document-level claims through the
@@ -36,13 +37,13 @@ func FuzzDocumentAssertions(f *testing.F) {
 			}
 		}
 
-		hostile := sdk.DocumentAssertions{
+		hostile := model.DocumentAssertions{
 			Identity:    identity,
 			Name:        name,
 			DataLicense: dataLicense,
 			Created:     created,
-			Creators:    []sdk.Contact{{Kind: sdk.ContactKindOrganization, Name: creator}},
-			Tools:       []sdk.DocumentTool{{Name: tool}},
+			Creators:    []model.Contact{{Kind: model.ContactKindOrganization, Name: creator}},
+			Tools:       []model.DocumentTool{{Name: tool}},
 			Comment:     comment,
 			// The documents this one claims to be built from, asserted just
 			// as hostilely: they become external references and SPDX
@@ -50,15 +51,15 @@ func FuzzDocumentAssertions(f *testing.F) {
 			// path or a digest that is not one must not reach a document.
 			// The self-reference -- the same identity this record claims --
 			// is the cycle the SDK's gate drops.
-			Sources: []sdk.DocumentSource{
+			Sources: []model.DocumentSource{
 				{Identity: identity},
-				{Identity: name, Checksum: &sdk.Digest{Algorithm: sdk.DigestAlgorithm(dataLicense), Value: tool}},
+				{Identity: name, Checksum: &model.Digest{Algorithm: model.DigestAlgorithm(dataLicense), Value: tool}},
 			},
 		}
 
 		g := mustFuzzGraph(t)
-		entry := sdk.GraphEntry{Graph: g, Document: &hostile}
-		doc, err := FromGraphEntries(g, []sdk.GraphEntry{entry}, BuildOptions{RestatesSource: true})
+		entry := model.GraphEntry{Graph: g, Document: &hostile}
+		doc, err := FromGraphEntries(g, []model.GraphEntry{entry}, BuildOptions{RestatesSource: true})
 		if err != nil {
 			t.Fatalf("export: %v", err)
 		}
@@ -70,7 +71,7 @@ func FuzzDocumentAssertions(f *testing.F) {
 		// Every value the document now carries must clear its own gate: an
 		// unpublishable claim must not become publishable by being written
 		// onto an entry instead of parsed from a document.
-		if _, ok := (sdk.DocumentAssertions{Identity: doc.Namespace}).Normalized(); !ok {
+		if _, ok := (model.DocumentAssertions{Identity: doc.Namespace}).Normalized(); !ok {
 			t.Fatalf("document namespace %q does not clear the identity gate", doc.Namespace)
 		}
 		stored, _ := doc.Assertions.Normalized()
@@ -100,7 +101,7 @@ func FuzzDocumentAssertions(f *testing.F) {
 		// source, the same entry is exported as a merge of one: the source's
 		// identity is never adopted, and it is linked whenever it clears the
 		// gate (issue #433).
-		transformed, err := FromGraphEntries(g, []sdk.GraphEntry{entry}, BuildOptions{})
+		transformed, err := FromGraphEntries(g, []model.GraphEntry{entry}, BuildOptions{})
 		if err != nil {
 			t.Fatalf("transformed export: %v", err)
 		}
@@ -120,7 +121,7 @@ func FuzzDocumentAssertions(f *testing.F) {
 		}
 
 		// Feeding the projection back its own output changes nothing.
-		second := sdk.GraphEntry{Graph: g, Document: &sdk.DocumentAssertions{
+		second := model.GraphEntry{Graph: g, Document: &model.DocumentAssertions{
 			Identity:    doc.Namespace,
 			Name:        doc.Name,
 			DataLicense: doc.Assertions.DataLicense,
@@ -129,7 +130,7 @@ func FuzzDocumentAssertions(f *testing.F) {
 			Tools:       doc.Assertions.Tools,
 			Comment:     doc.Assertions.Comment,
 		}}
-		again, err := FromGraphEntries(g, []sdk.GraphEntry{second}, BuildOptions{RestatesSource: true})
+		again, err := FromGraphEntries(g, []model.GraphEntry{second}, BuildOptions{RestatesSource: true})
 		if err != nil {
 			t.Fatalf("second export: %v", err)
 		}
@@ -152,10 +153,10 @@ func FuzzDocumentAssertions(f *testing.F) {
 // mustFuzzGraph returns the smallest graph an export accepts, so the fuzzer
 // spends its budget on the document claims rather than on graph shapes the
 // component target already covers.
-func mustFuzzGraph(t *testing.T) *sdk.Graph {
+func mustFuzzGraph(t *testing.T) *model.Graph {
 	t.Helper()
-	g := sdk.New()
-	node, err := sdk.NewDependencyNode(sdk.Coordinates{Ecosystem: "npm", Name: "widget", Version: "1.0.0"})
+	g := model.New()
+	node, err := model.NewDependencyNode(model.Coordinates{Ecosystem: "npm", Name: "widget", Version: "1.0.0"})
 	if err != nil {
 		t.Fatalf("construct node: %v", err)
 	}

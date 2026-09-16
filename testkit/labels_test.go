@@ -3,8 +3,9 @@ package testkit_test
 import (
 	"testing"
 
-	sdk "github.com/bomly-dev/bomly-sdk"
 	"github.com/bomly-dev/bomly-sdk/testkit"
+
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // Maven versions are case sensitive, so 1.0-SNAPSHOT and 1.0-snapshot are two
@@ -12,9 +13,9 @@ import (
 // dependency and let it assert happily against it -- the worst failure a test
 // helper can have, because it makes a green run meaningless.
 func TestFindNodeDoesNotFoldVersionCase(t *testing.T) {
-	g := sdk.New()
-	upper := testkit.MustDependencyCoords(t, sdk.Coordinates{
-		Ecosystem: sdk.EcosystemMaven, Org: "com.acme", Name: "app", Version: "1.0-SNAPSHOT",
+	g := model.New()
+	upper := testkit.MustDependencyCoords(t, model.Coordinates{
+		Ecosystem: model.EcosystemMaven, Org: "com.acme", Name: "app", Version: "1.0-SNAPSHOT",
 	})
 	if err := g.AddNode(upper); err != nil {
 		t.Fatal(err)
@@ -34,15 +35,15 @@ func TestFindNodeDoesNotFoldVersionCase(t *testing.T) {
 // The loose spellings exist for pre-ADR-0041 labels that detectors minted with
 // their own separators and kind prefixes. They resolve names, never versions.
 func TestFindNodeResolvesDetectorLabelSpellings(t *testing.T) {
-	g := sdk.New()
-	composer := testkit.MustDependencyCoords(t, sdk.Coordinates{
-		Ecosystem: sdk.EcosystemPHP, Org: "vendor", Name: "shared", Version: "3.4.5",
+	g := model.New()
+	composer := testkit.MustDependencyCoords(t, model.Coordinates{
+		Ecosystem: model.EcosystemPHP, Org: "vendor", Name: "shared", Version: "3.4.5",
 	})
-	module := testkit.MustModuleNode(t, "apps/web/package.json", sdk.Coordinates{
-		Ecosystem: sdk.EcosystemNPM, Name: "web", Version: "1.0.0",
+	module := testkit.MustModuleNode(t, "apps/web/package.json", model.Coordinates{
+		Ecosystem: model.EcosystemNPM, Name: "web", Version: "1.0.0",
 	})
-	manifest := testkit.MustManifestNode(t, "package-lock.json", sdk.ManifestKindPackageLockJSON)
-	for _, node := range []sdk.GraphNode{composer, module, manifest} {
+	manifest := testkit.MustManifestNode(t, "package-lock.json", model.ManifestKindPackageLockJSON)
+	for _, node := range []model.GraphNode{composer, module, manifest} {
 		if err := g.AddNode(node); err != nil {
 			t.Fatal(err)
 		}

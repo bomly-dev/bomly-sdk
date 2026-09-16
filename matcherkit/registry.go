@@ -1,6 +1,8 @@
 package matcherkit
 
-import sdk "github.com/bomly-dev/bomly-sdk"
+import (
+	"github.com/bomly-dev/bomly-sdk/model"
+)
 
 // RegistryPackagesForGraph seeds the PURL-keyed package registry from the
 // graph's dependency nodes and returns the registry packages that matchers
@@ -12,18 +14,18 @@ import sdk "github.com/bomly-dev/bomly-sdk"
 // many dependency records reference it.
 //
 // When a target is set, only the target dependency is considered.
-func RegistryPackagesForGraph(g *sdk.Graph, reg *sdk.PackageRegistry, target *sdk.DependencyNode) []*sdk.Package {
+func RegistryPackagesForGraph(g *model.Graph, reg *model.PackageRegistry, target *model.DependencyNode) []*model.Package {
 	if g == nil || reg == nil {
 		return nil
 	}
 
 	deps := g.DependencyNodes()
 	if target != nil {
-		deps = []*sdk.DependencyNode{target}
+		deps = []*model.DependencyNode{target}
 	}
 
 	seen := make(map[string]struct{}, len(deps))
-	out := make([]*sdk.Package, 0, len(deps))
+	out := make([]*model.Package, 0, len(deps))
 	for _, dep := range deps {
 		if dep == nil {
 			continue
@@ -41,7 +43,7 @@ func RegistryPackagesForGraph(g *sdk.Graph, reg *sdk.PackageRegistry, target *sd
 		// GraphEntry.Packages, say) still receives this node's detected
 		// origins — the repository signal that replaced the URL-valued purl
 		// qualifiers.
-		pkg := reg.Add(sdk.PackageFromDependencyNode(dep))
+		pkg := reg.Add(model.PackageFromDependencyNode(dep))
 		if pkg != nil {
 			out = append(out, pkg)
 		}

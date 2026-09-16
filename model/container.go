@@ -1,0 +1,174 @@
+package model
+
+// ManifestKind identifies the manifest family represented by one graph entry.
+type ManifestKind string
+
+const (
+	// ManifestKindPackageLockJSON identifies npm package-lock.json manifests.
+	ManifestKindPackageLockJSON ManifestKind = "package-lock.json"
+	// ManifestKindNPMLockfile identifies generic npm lockfile manifests.
+	ManifestKindNPMLockfile ManifestKind = "npm-lockfile"
+	// ManifestKindPackageJSON identifies npm package.json manifests.
+	ManifestKindPackageJSON ManifestKind = "package.json"
+	// ManifestKindBunLock identifies Bun text lockfiles.
+	ManifestKindBunLock ManifestKind = "bun.lock"
+	// ManifestKindGoMod identifies Go module manifests.
+	ManifestKindGoMod ManifestKind = "go.mod"
+	// ManifestKindGoModule identifies normalized Go module manifests.
+	ManifestKindGoModule ManifestKind = "go-module"
+	// ManifestKindPomXML identifies Maven POM manifests.
+	ManifestKindPomXML ManifestKind = "pom.xml"
+	// ManifestKindRequirementsTXT identifies Python requirements manifests.
+	ManifestKindRequirementsTXT ManifestKind = "requirements.txt"
+	// ManifestKindSPDX identifies SPDX SBOM manifests.
+	ManifestKindSPDX ManifestKind = "spdx"
+	// ManifestKindSBOM identifies generic SBOM manifests.
+	ManifestKindSBOM ManifestKind = "sbom"
+	// ManifestKindGitHubSPDX identifies GitHub-produced SPDX SBOM manifests.
+	ManifestKindGitHubSPDX ManifestKind = "github.spdx"
+	// ManifestKindBomlySPDX identifies Bomly-produced SPDX SBOM manifests.
+	ManifestKindBomlySPDX ManifestKind = "bomly.spdx"
+	// ManifestKindGitHubActions identifies GitHub Actions manifests.
+	ManifestKindGitHubActions ManifestKind = "github-actions"
+	// ManifestKindGitHubActionsWorkflow identifies GitHub Actions workflow files.
+	ManifestKindGitHubActionsWorkflow ManifestKind = "github-actions-workflow"
+	// ManifestKindGitHubActionsAction identifies GitHub Actions action metadata files.
+	ManifestKindGitHubActionsAction ManifestKind = "github-actions-action"
+)
+
+// ManifestMetadata describes the manifest or evidence file associated with one graph.
+type ManifestMetadata struct {
+	Path       string              `json:"path,omitempty"`
+	Kind       ManifestKind        `json:"kind,omitempty"`
+	Resolution *ResolutionMetadata `json:"resolution,omitempty"`
+}
+
+// ResolutionMethod identifies how a detector produced a manifest graph.
+type ResolutionMethod string
+
+const (
+	// ResolutionMethodLockfile means the graph came from a deterministic lockfile parser.
+	ResolutionMethodLockfile ResolutionMethod = "lockfile"
+	// ResolutionMethodIsolatedInstall means Bomly installed dependencies into its own isolated environment.
+	ResolutionMethodIsolatedInstall ResolutionMethod = "isolated-install"
+	// ResolutionMethodProjectEnvironment means Bomly inspected an existing project-managed environment.
+	ResolutionMethodProjectEnvironment ResolutionMethod = "project-environment"
+	// ResolutionMethodManifestOnly means Bomly parsed a manifest without transitive install metadata.
+	ResolutionMethodManifestOnly ResolutionMethod = "manifest-only"
+)
+
+// ResolutionMetadata describes how a detector resolved a manifest graph.
+type ResolutionMetadata struct {
+	Method            ResolutionMethod `json:"method,omitempty"`
+	InstallExecuted   bool             `json:"install_executed"`
+	InstallCommand    []string         `json:"install_command,omitempty"`
+	InstallWorkingDir string           `json:"install_working_dir,omitempty"`
+	// Fallback records that a fallback detector produced this graph after the
+	// planned primary detector failed (not routine applicability hand-off).
+	Fallback *ResolutionFallback `json:"fallback,omitempty"`
+}
+
+// ResolutionFallback identifies the primary detector that failed before a
+// fallback detector produced the graph, and why it failed.
+type ResolutionFallback struct {
+	From   string `json:"from"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// GraphEntry describes one manifest-scoped dependency graph. Detection-time
+// package facts discovered alongside the graph (licenses, digests, copyright
+// pulled from lockfiles) are carried in Packages for folding into the global
+// package registry during consolidation.
+type GraphEntry struct {
+	Graph    *Graph           `json:"graph,omitempty"`
+	Manifest ManifestMetadata `json:"manifest"`
+	Packages []*Package       `json:"packages,omitempty"`
+	// Document carries the claims the source SBOM made about itself, when
+	// this entry came from one. It lives here rather than on the scan because
+	// an entry is what a document maps to: a scan that read three SBOMs read
+	// three sets of these, and collapsing them loses which claim came from
+	// where -- which is what a merged export links back to.
+	Document *DocumentAssertions `json:"document,omitempty"`
+}
+
+// GraphContainer groups one or more manifest-scoped dependency graphs.
+type GraphContainer struct {
+	Entries []GraphEntry `json:"entries,omitempty"`
+}
+
+// SingleGraphContainer wraps a single graph entry.
+func SingleGraphContainer(g *Graph, manifest ManifestMetadata) *GraphContainer {
+	if g == nil {
+		return &GraphContainer{}
+	}
+	return &GraphContainer{
+		Entries: []GraphEntry{{
+			Graph:    g,
+			Manifest: manifest,
+		}},
+	}
+}
+
+// Len returns the number of graph entries.
+func (c *GraphContainer) Len() int {
+	if c == nil {
+		return 0
+	}
+	return len(c.Entries)
+}
+
+// ConsolidatedGraph materializes a single graph view for the container.
+func (c *GraphContainer) ConsolidatedGraph() (*Graph, error) {
+	if c == nil || len(c.Entries) == 0 {
+		return nil, nil
+	}
+	if len(c.Entries) == 1 {
+		return c.Entries[0].Graph, nil
+	}
+
+	merged := New()
+	for _, entry := range c.Entries {
+		if entry.Graph == nil {
+			continue
+		}
+		if err := MergeGraph(merged, entry.Graph); err != nil {
+			return nil, err
+		}
+	}
+	return merged, nil
+}
+
+// MergeGraph adds all nodes and relationships from src into dst.
+func MergeGraph(dst, src *Graph) error {
+	if dst == nil || src == nil {
+		return nil
+	}
+	var mergeErr error
+	src.WalkNodes(func(node GraphNode) bool {
+		if _, err := dst.InsertNode(node.CloneNode()); err != nil {
+			mergeErr = err
+			return false
+		}
+		return true
+	})
+	if mergeErr != nil {
+		return mergeErr
+	}
+	// Through the shared primitive, so an edge's kind survives the merge.
+	return CopyEdgesInto(dst, src, nil)
+}
+
+func sourcePositionsEqual(a, b *SourcePosition) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+// ConsolidateGraphContainerEntry ensures one entry is present.
+func ConsolidateGraphContainerEntry(container *GraphContainer) (*Graph, error) {
+	if container == nil {
+		return nil, nil
+	}
+	return container.ConsolidatedGraph()
+}

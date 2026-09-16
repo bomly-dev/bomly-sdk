@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/bomly-dev/bomly-sdk"
 	spdxcommon "github.com/spdx/tools-golang/spdx/v2/common"
+
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // applyIngestedAssertions carries a source document's own claims onto the
@@ -27,7 +28,7 @@ import (
 // What is deliberately not set here is Source. It feeds
 // RegistryMatchEligible, and an ingested component must stay eligible for
 // enrichment so `bomly scan --sbom --enrich` keeps working.
-func applyIngestedAssertions(pkg *sdk.DependencyNode, component Component) {
+func applyIngestedAssertions(pkg *model.DependencyNode, component Component) {
 	if pkg == nil {
 		return
 	}
@@ -41,9 +42,9 @@ func applyIngestedAssertions(pkg *sdk.DependencyNode, component Component) {
 			pkg.Originator = &contact
 		}
 	}
-	pkg.Description = sdk.NormalizeDescription(component.Description)
-	pkg.Homepage = sdk.NormalizeHomepage(component.Homepage)
-	pkg.ExternalReferences = sdk.MergeExternalReferences(nil, component.ExternalReferences)
+	pkg.Description = model.NormalizeDescription(component.Description)
+	pkg.Homepage = model.NormalizeHomepage(component.Homepage)
+	pkg.ExternalReferences = model.MergeExternalReferences(nil, component.ExternalReferences)
 	pkg.Digests = ingestedDigests(component.Digests)
 	pkg.CPEs = ingestedCPEs(component.CPEs)
 }
@@ -57,15 +58,15 @@ func applyIngestedAssertions(pkg *sdk.DependencyNode, component Component) {
 // SDK's -- a length check written here would go stale in the direction of
 // silently dropping a real hash, which is precisely how a transcribed digest
 // table lost CycloneDX's Streebog entries once already.
-func ingestedDigests(digests []Digest) []sdk.Digest {
+func ingestedDigests(digests []Digest) []model.Digest {
 	if len(digests) == 0 {
 		return nil
 	}
-	admitted := make([]sdk.Digest, 0, len(digests))
-	seen := make(map[sdk.Digest]struct{}, len(digests))
+	admitted := make([]model.Digest, 0, len(digests))
+	seen := make(map[model.Digest]struct{}, len(digests))
 	for _, digest := range digests {
-		normalized, ok := sdk.Digest{
-			Algorithm: sdk.DigestAlgorithm(digest.Algorithm),
+		normalized, ok := model.Digest{
+			Algorithm: model.DigestAlgorithm(digest.Algorithm),
 			Value:     digest.Value,
 		}.Normalized()
 		if !ok {
@@ -104,8 +105,8 @@ func ingestedCPEs(values []string) []string {
 	seen := make(map[string]struct{}, len(values))
 	for _, value := range values {
 		for _, cpeType := range cpeTypes {
-			reference, ok := sdk.ExternalReference{
-				Category: sdk.ExternalReferenceCategorySecurity,
+			reference, ok := model.ExternalReference{
+				Category: model.ExternalReferenceCategorySecurity,
 				Type:     cpeType,
 				Locator:  value,
 			}.Normalized()
@@ -143,12 +144,12 @@ func componentIdentityHint(component Component) string {
 }
 
 // ToGraph converts a neutral SBOM document back into a dependency graph.
-func ToGraph(doc *Document) (*sdk.Graph, error) {
+func ToGraph(doc *Document) (*model.Graph, error) {
 	if doc == nil {
 		return nil, ErrNilDocument
 	}
 
-	depsGraph := sdk.New()
+	depsGraph := model.New()
 	idMap := make(map[string]string, len(doc.Components))
 	skipped := make(map[string]struct{})
 	for _, component := range doc.Components {
@@ -157,23 +158,23 @@ func ToGraph(doc *Document) (*sdk.Graph, error) {
 			continue
 		}
 		ecosystem := ComponentEcosystem(component)
-		packageManager := sdk.PackageManagerUnknown
-		if manager, err := sdk.ParsePackageManager(component.PackageManager); err == nil {
+		packageManager := model.PackageManagerUnknown
+		if manager, err := model.ParsePackageManager(component.PackageManager); err == nil {
 			packageManager = manager
 		}
-		if packageManager == sdk.PackageManagerUnknown {
+		if packageManager == model.PackageManagerUnknown {
 			packageManager = packageManagerForPURL(component.PURL, string(ecosystem), component.PackageManager)
 		}
 		// Identity is minted by the constructor (ADR-0041): a node's ID is
 		// its canonical package URL, so the ingested component ID is not
 		// carried in.
-		pkg, err := sdk.NewDependencyNode(sdk.Coordinates{
+		pkg, err := model.NewDependencyNode(model.Coordinates{
 			Name:           component.Name,
 			Version:        component.Version,
 			Org:            ingestedCoordinateOrg(component),
 			Ecosystem:      ecosystem,
 			PackageManager: packageManager,
-			Type:           sdk.ParsePackageType(component.Type),
+			Type:           model.ParsePackageType(component.Type),
 			PURL:           strings.TrimSpace(component.PURL),
 		})
 		if err != nil {
@@ -193,17 +194,17 @@ func ToGraph(doc *Document) (*sdk.Graph, error) {
 			// find it, since the fix is in their document rather than here.
 			return nil, fmt.Errorf("sbom component %q (%s): %w", component.ID, componentIdentityHint(component), err)
 		}
-		pkg.Scopes = append([]sdk.Scope(nil), component.Scopes...)
+		pkg.Scopes = append([]model.Scope(nil), component.Scopes...)
 		// Through the gate, not copied: the field crosses the same trust
 		// boundary every other ingested assertion does.
-		pkg.SourceScope = sdk.NormalizeSourceScope(component.SourceScope)
+		pkg.SourceScope = model.NormalizeSourceScope(component.SourceScope)
 		pkg.Copyright = component.Copyright
 		applyIngestedAssertions(pkg, component)
 		// The document's own component ID does not survive: the node answers
 		// to the identity its coordinates mint, and idMap below is what
 		// re-points the document's relationships onto it.
 		packageID := pkg.NodeID()
-		sdk.SetDetectionLicenses(pkg, graphLicenses(component.Licenses))
+		model.SetDetectionLicenses(pkg, graphLicenses(component.Licenses))
 
 		// Through the SDK's fold, not a lookup followed by an insert. Two
 		// components can mint one canonical package URL -- the same package
@@ -318,16 +319,16 @@ func ingestedCoordinateOrg(component Component) string {
 	return namespace
 }
 
-func graphLicenses(licenses []License) []sdk.PackageLicense {
+func graphLicenses(licenses []License) []model.PackageLicense {
 	if len(licenses) == 0 {
 		return nil
 	}
-	out := make([]sdk.PackageLicense, 0, len(licenses))
+	out := make([]model.PackageLicense, 0, len(licenses))
 	for _, license := range licenses {
-		out = append(out, sdk.PackageLicense{
+		out = append(out, model.PackageLicense{
 			Value:          license.Value,
 			SPDXExpression: license.SPDXExpression,
-			Type:           sdk.LicenseType(license.Type),
+			Type:           model.LicenseType(license.Type),
 		})
 	}
 	return out

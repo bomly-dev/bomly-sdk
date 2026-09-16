@@ -5,8 +5,9 @@ import (
 	"testing"
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
-	"github.com/bomly-dev/bomly-sdk"
 	"github.com/bomly-dev/bomly-sdk/internal/testnodes"
+
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // TestOrgSurvivesACycloneDXRoundTripOnlyWhereItExists pins done-criterion 2
@@ -18,19 +19,19 @@ import (
 // repository holds `go4.org`, a module with no organization to preserve, and
 // counting it as a loss made a correct round trip look like a defect.
 func TestOrgSurvivesACycloneDXRoundTripOnlyWhereItExists(t *testing.T) {
-	g := sdk.New()
-	withOrg := testnodes.Dep(sdk.Coordinates{
-		Ecosystem: sdk.EcosystemGo,
+	g := model.New()
+	withOrg := testnodes.Dep(model.Coordinates{
+		Ecosystem: model.EcosystemGo,
 		Org:       "github.com/spf13",
 		Name:      "cobra",
 		Version:   "v1.8.0",
 	})
-	withoutOrg := testnodes.Dep(sdk.Coordinates{
-		Ecosystem: sdk.EcosystemGo,
+	withoutOrg := testnodes.Dep(model.Coordinates{
+		Ecosystem: model.EcosystemGo,
 		Name:      "go4.org",
 		Version:   "v0.0.0-20230225012048-214862532bf5",
 	})
-	for _, node := range []*sdk.DependencyNode{withOrg, withoutOrg} {
+	for _, node := range []*model.DependencyNode{withOrg, withoutOrg} {
 		if err := g.AddNode(node); err != nil {
 			t.Fatalf("add node: %v", err)
 		}
@@ -50,7 +51,7 @@ func TestOrgSurvivesACycloneDXRoundTripOnlyWhereItExists(t *testing.T) {
 	}
 
 	cases := []struct {
-		node     *sdk.DependencyNode
+		node     *model.DependencyNode
 		wantOrg  string
 		wantName string
 	}{

@@ -4,7 +4,8 @@ import (
 	"strings"
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
-	"github.com/bomly-dev/bomly-sdk"
+
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // This file carries a CycloneDX document's own component assertions in and
@@ -21,12 +22,12 @@ import (
 // does not survive Contact.Normalized -- a control character that would
 // corrupt the SPDX projection, an embedded address -- is dropped rather than
 // repaired.
-func cycloneDXSupplier(entity *cdx.OrganizationalEntity) *sdk.Contact {
+func cycloneDXSupplier(entity *cdx.OrganizationalEntity) *model.Contact {
 	if entity == nil {
 		return nil
 	}
-	contact := sdk.Contact{
-		Kind: sdk.ContactKindOrganization,
+	contact := model.Contact{
+		Kind: model.ContactKindOrganization,
 		Name: entity.Name,
 	}
 	if entity.URL != nil && len(*entity.URL) > 0 {
@@ -45,27 +46,27 @@ func cycloneDXSupplier(entity *cdx.OrganizationalEntity) *sdk.Contact {
 // the deprecated `author`, and `authors`. Publisher is preferred because it
 // is the field 1.5 and 1.6 documents actually carry; the others are read only
 // when it is absent, so an older document is not silently less preserved.
-func cycloneDXOriginator(comp cdx.Component) *sdk.Contact {
+func cycloneDXOriginator(comp cdx.Component) *model.Contact {
 	candidates := []struct {
-		kind  sdk.ContactKind
+		kind  model.ContactKind
 		value string
 	}{
-		{sdk.ContactKindOrganization, comp.Publisher},
-		{sdk.ContactKindPerson, comp.Author},
+		{model.ContactKindOrganization, comp.Publisher},
+		{model.ContactKindPerson, comp.Author},
 	}
 	if comp.Authors != nil {
 		for _, author := range *comp.Authors {
 			candidates = append(candidates, struct {
-				kind  sdk.ContactKind
+				kind  model.ContactKind
 				value string
-			}{sdk.ContactKindPerson, author.Name})
+			}{model.ContactKindPerson, author.Name})
 		}
 	}
 	for _, candidate := range candidates {
 		if strings.TrimSpace(candidate.value) == "" {
 			continue
 		}
-		contact := sdk.Contact{Kind: candidate.kind, Name: candidate.value}
+		contact := model.Contact{Kind: candidate.kind, Name: candidate.value}
 		if normalized, ok := contact.Normalized(); ok {
 			return &normalized
 		}
@@ -93,23 +94,23 @@ func cycloneDXComponentDigests(hashes *[]cdx.Hash) []Digest {
 // one. The type is the document's own token, kept verbatim: both
 // specifications keep adding types, and a reference this build does not
 // recognize still round-trips.
-func cycloneDXIngestedReferences(refs *[]cdx.ExternalReference) []sdk.ExternalReference {
+func cycloneDXIngestedReferences(refs *[]cdx.ExternalReference) []model.ExternalReference {
 	if refs == nil {
 		return nil
 	}
-	converted := make([]sdk.ExternalReference, 0, len(*refs))
+	converted := make([]model.ExternalReference, 0, len(*refs))
 	for _, ref := range *refs {
 		if isOriginDerivedReferenceType(string(ref.Type)) {
 			continue
 		}
-		converted = append(converted, sdk.ExternalReference{
+		converted = append(converted, model.ExternalReference{
 			Type:    string(ref.Type),
 			Locator: ref.URL,
 			Comment: ref.Comment,
 			Hashes:  cycloneDXReferenceHashes(ref.Hashes),
 		})
 	}
-	return sdk.MergeExternalReferences(nil, converted)
+	return model.MergeExternalReferences(nil, converted)
 }
 
 // isOriginDerivedReferenceType reports whether a reference type is one Bomly
@@ -144,14 +145,14 @@ func isOriginDerivedReferenceType(referenceType string) bool {
 
 // cycloneDXReferenceHashes reads a reference's own integrity claims, which
 // CycloneDX carries natively and SPDX 2.3 has no slot for.
-func cycloneDXReferenceHashes(hashes *[]cdx.Hash) []sdk.Digest {
+func cycloneDXReferenceHashes(hashes *[]cdx.Hash) []model.Digest {
 	if hashes == nil {
 		return nil
 	}
-	converted := make([]sdk.Digest, 0, len(*hashes))
+	converted := make([]model.Digest, 0, len(*hashes))
 	for _, hash := range *hashes {
-		converted = append(converted, sdk.Digest{
-			Algorithm: sdk.DigestAlgorithm(hash.Algorithm),
+		converted = append(converted, model.Digest{
+			Algorithm: model.DigestAlgorithm(hash.Algorithm),
 			Value:     hash.Value,
 		})
 	}
@@ -167,7 +168,7 @@ func applyCycloneDXAssertions(component *Component, comp cdx.Component) {
 	component.EOL = cycloneDXIngestedEOL(comp.Properties)
 	component.Supplier = cycloneDXSupplier(comp.Supplier)
 	component.Originator = cycloneDXOriginator(comp)
-	component.Description = sdk.NormalizeDescription(comp.Description)
+	component.Description = model.NormalizeDescription(comp.Description)
 	component.ExternalReferences = cycloneDXIngestedReferences(comp.ExternalReferences)
 	component.Homepage = cycloneDXIngestedHomepage(component.ExternalReferences)
 	if digests := cycloneDXComponentDigests(comp.Hashes); len(digests) > 0 {
@@ -186,12 +187,12 @@ func applyCycloneDXAssertions(component *Component, comp cdx.Component) {
 // on the way out and where it is read on the way in -- otherwise converting
 // SPDX to CycloneDX and back dropped PackageHomePage, since the value survived
 // as a reference nobody read as a homepage.
-func cycloneDXIngestedHomepage(refs []sdk.ExternalReference) string {
+func cycloneDXIngestedHomepage(refs []model.ExternalReference) string {
 	for _, ref := range refs {
 		if !strings.EqualFold(ref.Type, string(cdx.ERTypeWebsite)) {
 			continue
 		}
-		if homepage := sdk.NormalizeHomepage(ref.Locator); homepage != "" {
+		if homepage := model.NormalizeHomepage(ref.Locator); homepage != "" {
 			return homepage
 		}
 	}
@@ -201,17 +202,17 @@ func cycloneDXIngestedHomepage(refs []sdk.ExternalReference) string {
 // cycloneDXHomepageReference renders a component's homepage as the website
 // reference CycloneDX carries it in, or nothing when the component already
 // states the same website itself.
-func cycloneDXHomepageReference(comp Component) (sdk.ExternalReference, bool) {
-	homepage := sdk.NormalizeHomepage(comp.Homepage)
+func cycloneDXHomepageReference(comp Component) (model.ExternalReference, bool) {
+	homepage := model.NormalizeHomepage(comp.Homepage)
 	if homepage == "" {
-		return sdk.ExternalReference{}, false
+		return model.ExternalReference{}, false
 	}
 	for _, ref := range comp.ExternalReferences {
 		if strings.EqualFold(ref.Type, string(cdx.ERTypeWebsite)) && ref.Locator == homepage {
-			return sdk.ExternalReference{}, false
+			return model.ExternalReference{}, false
 		}
 	}
-	return sdk.ExternalReference{Type: string(cdx.ERTypeWebsite), Locator: homepage}.Normalized()
+	return model.ExternalReference{Type: string(cdx.ERTypeWebsite), Locator: homepage}.Normalized()
 }
 
 // cycloneDXApplyOriginator writes the party that authored a component into the
@@ -227,12 +228,12 @@ func cycloneDXHomepageReference(comp Component) (sdk.ExternalReference, bool) {
 // Both author fields are set for a person. `authors` is the 1.6 form and
 // `author` the older one; cyclonedx-go emits whichever the target spec version
 // defines, so a 1.4 document still carries the claim.
-func cycloneDXApplyOriginator(component *cdx.Component, originator *sdk.Contact) {
+func cycloneDXApplyOriginator(component *cdx.Component, originator *model.Contact) {
 	entity := cycloneDXEntityFor(originator)
 	if entity == nil {
 		return
 	}
-	if originator.Kind == sdk.ContactKindPerson {
+	if originator.Kind == model.ContactKindPerson {
 		component.Author = entity.Name
 		component.Authors = &[]cdx.OrganizationalContact{{Name: entity.Name}}
 		return
@@ -241,7 +242,7 @@ func cycloneDXApplyOriginator(component *cdx.Component, originator *sdk.Contact)
 }
 
 // cycloneDXEntityFor renders a contact as a CycloneDX organizational entity.
-func cycloneDXEntityFor(contact *sdk.Contact) *cdx.OrganizationalEntity {
+func cycloneDXEntityFor(contact *model.Contact) *cdx.OrganizationalEntity {
 	if contact == nil {
 		return nil
 	}
@@ -263,7 +264,7 @@ func cycloneDXEntityFor(contact *sdk.Contact) *cdx.OrganizationalEntity {
 // The gate runs again on the way out. The node these came from is not a
 // trusted carrier -- a detector or an external plugin can write the field
 // directly, and such a value never passed an ingest gate at all.
-func cycloneDXEmittedReferences(refs []sdk.ExternalReference) []cdx.ExternalReference {
+func cycloneDXEmittedReferences(refs []model.ExternalReference) []cdx.ExternalReference {
 	if len(refs) == 0 {
 		return nil
 	}
@@ -287,7 +288,7 @@ func cycloneDXEmittedReferences(refs []sdk.ExternalReference) []cdx.ExternalRefe
 }
 
 // cycloneDXEmittedHashes renders a reference's integrity claims.
-func cycloneDXEmittedHashes(digests []sdk.Digest) *[]cdx.Hash {
+func cycloneDXEmittedHashes(digests []model.Digest) *[]cdx.Hash {
 	if len(digests) == 0 {
 		return nil
 	}
@@ -323,11 +324,11 @@ func cycloneDXEmittedHashes(digests []sdk.Digest) *[]cdx.Hash {
 // version rather than formatted here: the URN's shape is the library's to
 // own, down to stripping the "urn:uuid:" prefix. A document without a serial
 // has no identity to state, which is legal -- serialNumber is optional.
-func cycloneDXDocumentAssertions(bom *cdx.BOM) sdk.DocumentAssertions {
+func cycloneDXDocumentAssertions(bom *cdx.BOM) model.DocumentAssertions {
 	if bom == nil {
-		return sdk.DocumentAssertions{}
+		return model.DocumentAssertions{}
 	}
-	var assertions sdk.DocumentAssertions
+	var assertions model.DocumentAssertions
 	version := bom.Version
 	// Kept as an if instead of max(bom.Version, 1) so the reason below stays
 	// attached to the default it explains; go fix will offer the rewrite
@@ -355,8 +356,8 @@ func cycloneDXDocumentAssertions(bom *cdx.BOM) sdk.DocumentAssertions {
 		}
 		if bom.Metadata.Authors != nil {
 			for _, author := range *bom.Metadata.Authors {
-				assertions.Creators = appendContact(assertions.Creators, sdk.Contact{
-					Kind: sdk.ContactKindPerson,
+				assertions.Creators = appendContact(assertions.Creators, model.Contact{
+					Kind: model.ContactKindPerson,
 					Name: author.Name,
 				})
 			}
@@ -365,37 +366,37 @@ func cycloneDXDocumentAssertions(bom *cdx.BOM) sdk.DocumentAssertions {
 	}
 	normalized, ok := assertions.Normalized()
 	if !ok {
-		return sdk.DocumentAssertions{}
+		return model.DocumentAssertions{}
 	}
 	return normalized
 }
 
 // cycloneDXIngestedTools reads both shapes of the tools field: the component
 // list CycloneDX 1.5 introduced and the deprecated flat list before it.
-func cycloneDXIngestedTools(tools *cdx.ToolsChoice) []sdk.DocumentTool {
+func cycloneDXIngestedTools(tools *cdx.ToolsChoice) []model.DocumentTool {
 	if tools == nil {
 		return nil
 	}
-	var ingested []sdk.DocumentTool
+	var ingested []model.DocumentTool
 	if tools.Components != nil {
 		for _, tool := range *tools.Components {
 			vendor := ""
 			if tool.Manufacturer != nil {
 				vendor = tool.Manufacturer.Name
 			}
-			ingested = append(ingested, sdk.DocumentTool{Vendor: vendor, Name: tool.Name, Version: tool.Version})
+			ingested = append(ingested, model.DocumentTool{Vendor: vendor, Name: tool.Name, Version: tool.Version})
 		}
 	}
 	if tools.Tools != nil {
 		for _, tool := range *tools.Tools {
-			ingested = append(ingested, sdk.DocumentTool{Vendor: tool.Vendor, Name: tool.Name, Version: tool.Version})
+			ingested = append(ingested, model.DocumentTool{Vendor: tool.Vendor, Name: tool.Name, Version: tool.Version})
 		}
 	}
 	return ingested
 }
 
-func appendEntityContact(contacts []sdk.Contact, entity cdx.OrganizationalEntity) []sdk.Contact {
-	contact := sdk.Contact{Kind: sdk.ContactKindOrganization, Name: entity.Name}
+func appendEntityContact(contacts []model.Contact, entity cdx.OrganizationalEntity) []model.Contact {
+	contact := model.Contact{Kind: model.ContactKindOrganization, Name: entity.Name}
 	if entity.URL != nil && len(*entity.URL) > 0 {
 		contact.URL = (*entity.URL)[0]
 	}
@@ -404,7 +405,7 @@ func appendEntityContact(contacts []sdk.Contact, entity cdx.OrganizationalEntity
 
 // appendContact keeps only what the SDK's contact gate passes. A name that
 // arrived with an email address loses the address there, not here.
-func appendContact(contacts []sdk.Contact, contact sdk.Contact) []sdk.Contact {
+func appendContact(contacts []model.Contact, contact model.Contact) []model.Contact {
 	normalized, ok := contact.Normalized()
 	if !ok {
 		return contacts
@@ -426,7 +427,7 @@ func cycloneDXDocumentManufacturer(doc *Document) *cdx.OrganizationalEntity {
 		return &cdx.OrganizationalEntity{Name: doc.Provenance.Manufacturer}
 	}
 	for _, creator := range doc.Assertions.Creators {
-		if creator.Kind != sdk.ContactKindOrganization {
+		if creator.Kind != model.ContactKindOrganization {
 			continue
 		}
 		entity := &cdx.OrganizationalEntity{Name: creator.Name}
@@ -467,7 +468,7 @@ func cycloneDXDocumentAuthors(doc *Document) []cdx.OrganizationalContact {
 		add(author)
 	}
 	for _, creator := range doc.Assertions.Creators {
-		if creator.Kind != sdk.ContactKindPerson {
+		if creator.Kind != model.ContactKindPerson {
 			continue
 		}
 		add(cdx.OrganizationalContact{Name: creator.Name})
@@ -484,9 +485,9 @@ func cycloneDXDocumentAuthors(doc *Document) []cdx.OrganizationalContact {
 // silently suppressed by a vendorless entry of the same name and version,
 // discarding the one field the source added.
 func cycloneDXMetadataTools(doc *Document) *cdx.ToolsChoice {
-	own := make([]sdk.DocumentTool, 0, len(doc.ToolNamesOrDefault()))
+	own := make([]model.DocumentTool, 0, len(doc.ToolNamesOrDefault()))
 	for _, name := range doc.ToolNamesOrDefault() {
-		tool := sdk.DocumentTool{Name: name}
+		tool := model.DocumentTool{Name: name}
 		if name == doc.ToolOrDefault() {
 			tool.Version = doc.ToolVersion
 		}
@@ -495,9 +496,9 @@ func cycloneDXMetadataTools(doc *Document) *cdx.ToolsChoice {
 		}
 		own = append(own, tool)
 	}
-	merged := sdk.MergeDocumentAssertions(
-		sdk.DocumentAssertions{Tools: own},
-		sdk.DocumentAssertions{Tools: doc.Assertions.Tools},
+	merged := model.MergeDocumentAssertions(
+		model.DocumentAssertions{Tools: own},
+		model.DocumentAssertions{Tools: doc.Assertions.Tools},
 	)
 	if len(merged.Tools) == 0 {
 		return nil
@@ -537,7 +538,7 @@ func cycloneDXSourceLinks(doc *Document) []cdx.ExternalReference {
 	for _, link := range links {
 		// Category stays unset: this is CycloneDX's axis, and the reference
 		// is written from the link tuple rather than from a stored reference.
-		ref, ok := sdk.ExternalReference{
+		ref, ok := model.ExternalReference{
 			Type:    string(cdx.ERTypeBOM),
 			Locator: link.Identity,
 		}.Normalized()
@@ -549,7 +550,7 @@ func cycloneDXSourceLinks(doc *Document) []cdx.ExternalReference {
 			URL:  ref.Locator,
 		}
 		if link.Checksum != nil {
-			emitted.Hashes = cycloneDXEmittedHashes([]sdk.Digest{*link.Checksum})
+			emitted.Hashes = cycloneDXEmittedHashes([]model.Digest{*link.Checksum})
 		}
 		refs = append(refs, emitted)
 	}
@@ -568,23 +569,23 @@ func cycloneDXSourceLinks(doc *Document) []cdx.ExternalReference {
 // library's constant, and every field is gated by DocumentSource.Normalized
 // when the parent record is normalized, so a reference naming nothing
 // publishable drops rather than becoming an empty link.
-func cycloneDXIngestedSources(refs *[]cdx.ExternalReference) []sdk.DocumentSource {
+func cycloneDXIngestedSources(refs *[]cdx.ExternalReference) []model.DocumentSource {
 	if refs == nil {
 		return nil
 	}
-	sources := make([]sdk.DocumentSource, 0, len(*refs))
+	sources := make([]model.DocumentSource, 0, len(*refs))
 	for _, ref := range *refs {
 		if !strings.EqualFold(strings.TrimSpace(string(ref.Type)), string(cdx.ERTypeBOM)) {
 			continue
 		}
-		source := sdk.DocumentSource{Identity: ref.URL}
+		source := model.DocumentSource{Identity: ref.URL}
 		// The first hash that clears the digest gate. A reference may carry
 		// several; the record holds one, and the SPDX projection it feeds has
 		// one slot too.
 		if ref.Hashes != nil {
 			for _, hash := range *ref.Hashes {
-				checksum, ok := (sdk.Digest{
-					Algorithm: sdk.DigestAlgorithm(hash.Algorithm),
+				checksum, ok := (model.Digest{
+					Algorithm: model.DigestAlgorithm(hash.Algorithm),
 					Value:     hash.Value,
 				}).Normalized()
 				if !ok {

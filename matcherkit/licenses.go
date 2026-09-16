@@ -5,13 +5,14 @@ package matcherkit
 import (
 	"strings"
 
-	sdk "github.com/bomly-dev/bomly-sdk"
 	"github.com/bomly-dev/bomly-sdk/spdxkit"
+
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // MissingLicensePackages returns the packages eligible for external license lookup.
-func MissingLicensePackages(packages []*sdk.Package) []*sdk.Package {
-	eligible := make([]*sdk.Package, 0, len(packages))
+func MissingLicensePackages(packages []*model.Package) []*model.Package {
+	eligible := make([]*model.Package, 0, len(packages))
 	for _, pkg := range packages {
 		if pkg == nil || len(pkg.Licenses) > 0 {
 			continue
@@ -39,7 +40,7 @@ func MissingLicensePackages(packages []*sdk.Package) []*sdk.Package {
 // supplied the claim wants NormalizeLicenseSetFrom instead. The two are
 // independent facts, and one argument carrying both is what let a matcher name
 // reach a field that turned out to be a closed vocabulary.
-func NormalizeLicenseSet(values []string, sourceType string) []sdk.PackageLicense {
+func NormalizeLicenseSet(values []string, sourceType string) []model.PackageLicense {
 	return NormalizeLicenseSetFrom(values, sourceType, "")
 }
 
@@ -50,7 +51,7 @@ func NormalizeLicenseSet(values []string, sourceType string) []sdk.PackageLicens
 // It exists as a second entry point rather than a wider signature because
 // NormalizeLicenseSet is exported and its meaning is not this release's to
 // change. Passing "" for source is exactly NormalizeLicenseSet.
-func NormalizeLicenseSetFrom(values []string, licenseType, source string) []sdk.PackageLicense {
+func NormalizeLicenseSetFrom(values []string, licenseType, source string) []model.PackageLicense {
 	// Blanks and duplicates are dropped before anything is parsed, so the
 	// aggregate parsing gate below measures the values classification will
 	// actually see — a raw slice padded with blanks or repeats must not
@@ -73,9 +74,9 @@ func NormalizeLicenseSetFrom(values []string, licenseType, source string) []sdk.
 	// dropped and nothing masquerades: every value keeps its trimmed Value
 	// and stays unclassified free text (SPDXExpression empty).
 	classify := spdxkit.BatchWithinBounds(unique)
-	out := make([]sdk.PackageLicense, 0, len(unique))
+	out := make([]model.PackageLicense, 0, len(unique))
 	for _, normalized := range unique {
-		license := sdk.PackageLicense{
+		license := model.PackageLicense{
 			Value: normalized,
 			// Two independent facts, two fields. The matcher name is
 			// provenance; the license type is the kind of claim. They shared
@@ -83,7 +84,7 @@ func NormalizeLicenseSetFrom(values []string, licenseType, source string) []sdk.
 			// model gate silently dropped the matcher name and emptied the
 			// "licenses[].source" field the CLI documents.
 			Source: source,
-			Type:   sdk.LicenseType(licenseType),
+			Type:   model.LicenseType(licenseType),
 		}
 		if !classify {
 			out = append(out, license)

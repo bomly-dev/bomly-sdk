@@ -1,0 +1,59 @@
+package plugin
+
+// PluginAPIVersion is the current managed plugin API contract version.
+const PluginAPIVersion = "bomly.plugin.v1"
+
+// PackageManifestSchemaVersion is the package manifest schema version.
+const PackageManifestSchemaVersion = "bomly.plugin.package.v1"
+
+// InstalledPluginsSchemaVersion is the installed plugin database schema version.
+const InstalledPluginsSchemaVersion = "bomly.installed-plugins.v1"
+
+// RuntimeDescriptorSnapshotSchemaVersion is Bomly's internal installed descriptor snapshot schema.
+const RuntimeDescriptorSnapshotSchemaVersion = "bomly.plugin.runtime-descriptor.v1"
+
+// RuntimeHashiCorpGRPC identifies the supported external plugin runtime.
+const RuntimeHashiCorpGRPC = "hashicorp-grpc"
+
+// PluginKind identifies the runtime role implemented by a plugin.
+type PluginKind string
+
+const (
+	// PluginKindDetector resolves dependency graphs.
+	PluginKindDetector PluginKind = "detector"
+	// PluginKindMatcher enriches resolved packages.
+	PluginKindMatcher PluginKind = "matcher"
+	// PluginKindAuditor evaluates findings and risk.
+	PluginKindAuditor PluginKind = "auditor"
+	// PluginKindAnalyzer runs code analysis (e.g. reachability) over the
+	// matched graph and annotates registry vulnerability entries.
+	PluginKindAnalyzer PluginKind = "analyzer"
+)
+
+// PluginTargetType identifies the discovery target families a plugin supports.
+type PluginTargetType string
+
+// CapabilityPackageUpdates is advertised in a matcher's or analyzer's
+// descriptor Capabilities to signal that it can return
+// MatchResult.PackageUpdates / AnalyzeResult.PackageUpdates deltas when the
+// request sets AcceptPackageUpdates. Hosts and plugins that do not know this
+// capability keep exchanging full registries — the protocol v1 baseline.
+const CapabilityPackageUpdates = "package-updates-v1"
+
+// ReadyResponse reports whether a plugin is ready to run.
+type ReadyResponse struct {
+	Ready bool `json:"ready"`
+	// Reason explains why the plugin is not ready. It is ignored when Ready is
+	// true and surfaced to users (and resolution errors) when Ready is false.
+	Reason string `json:"reason,omitempty"`
+}
+
+// ApplicableResponse reports whether a plugin should run for the given request.
+type ApplicableResponse struct {
+	Applicable bool `json:"applicable"`
+}
+
+// InstallResponse reports install-first execution details.
+type InstallResponse struct {
+	Performed bool `json:"performed,omitempty"`
+}

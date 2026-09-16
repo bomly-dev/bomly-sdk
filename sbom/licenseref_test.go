@@ -5,17 +5,18 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bomly-dev/bomly-sdk"
 	"github.com/bomly-dev/bomly-sdk/internal/testnodes"
 	"github.com/bomly-dev/bomly-sdk/spdxkit"
+
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // licenseGraph builds a one-package graph whose licenses a case chooses.
-func licenseGraph(t *testing.T, licenses ...sdk.PackageLicense) *sdk.Graph {
+func licenseGraph(t *testing.T, licenses ...model.PackageLicense) *model.Graph {
 	t.Helper()
-	g := sdk.New()
-	pkg := testnodes.Dep(sdk.Coordinates{Ecosystem: "npm", Name: "widget", Version: "1.0.0"})
-	sdk.SetDetectionLicenses(pkg, licenses)
+	g := model.New()
+	pkg := testnodes.Dep(model.Coordinates{Ecosystem: "npm", Name: "widget", Version: "1.0.0"})
+	model.SetDetectionLicenses(pkg, licenses)
 	if _, err := g.InsertNode(pkg); err != nil {
 		t.Fatalf("InsertNode: %v", err)
 	}
@@ -24,7 +25,7 @@ func licenseGraph(t *testing.T, licenses ...sdk.PackageLicense) *sdk.Graph {
 
 // spdxDocOf marshals a graph to SPDX and decodes the raw document, so a test
 // can assert on the fields SPDX defines rather than on our model.
-func spdxDocOf(t *testing.T, g *sdk.Graph) map[string]any {
+func spdxDocOf(t *testing.T, g *model.Graph) map[string]any {
 	t.Helper()
 	out, err := MarshalDepGraphJSON(g, TargetSPDX23JSON, BuildOptions{}, EncodeOptions{})
 	if err != nil {
@@ -42,7 +43,7 @@ func spdxDocOf(t *testing.T, g *sdk.Graph) map[string]any {
 // verbatim produced a document a strict consumer can reject (#410).
 func TestUnrecognizedLicenseBecomesAReferenceWithItsText(t *testing.T) {
 	const raw = "see LICENSE file"
-	doc := spdxDocOf(t, licenseGraph(t, sdk.PackageLicense{Value: raw}))
+	doc := spdxDocOf(t, licenseGraph(t, model.PackageLicense{Value: raw}))
 
 	packages, _ := doc["packages"].([]any)
 	if len(packages) == 0 {
@@ -79,7 +80,7 @@ func TestUnrecognizedLicenseBecomesAReferenceWithItsText(t *testing.T) {
 // A recognized license is untouched: the reference machinery applies only
 // where SPDX cannot hold the value.
 func TestRecognizedLicenseMintsNoReference(t *testing.T) {
-	doc := spdxDocOf(t, licenseGraph(t, sdk.PackageLicense{SPDXExpression: "Apache-2.0"}))
+	doc := spdxDocOf(t, licenseGraph(t, model.PackageLicense{SPDXExpression: "Apache-2.0"}))
 	packages, _ := doc["packages"].([]any)
 	pkg, _ := packages[0].(map[string]any)
 	if declared, _ := pkg["licenseDeclared"].(string); declared != "Apache-2.0" {
@@ -95,10 +96,10 @@ func TestRecognizedLicenseMintsNoReference(t *testing.T) {
 // across a document assembled from independent sources.
 func TestIdenticalTextsShareOneReference(t *testing.T) {
 	const raw = "internal use only"
-	g := sdk.New()
+	g := model.New()
 	for _, name := range []string{"alpha", "beta"} {
-		pkg := testnodes.Dep(sdk.Coordinates{Ecosystem: "npm", Name: name, Version: "1.0.0"})
-		sdk.SetDetectionLicenses(pkg, []sdk.PackageLicense{{Value: raw}})
+		pkg := testnodes.Dep(model.Coordinates{Ecosystem: "npm", Name: name, Version: "1.0.0"})
+		model.SetDetectionLicenses(pkg, []model.PackageLicense{{Value: raw}})
 		if _, err := g.InsertNode(pkg); err != nil {
 			t.Fatalf("InsertNode(%s): %v", name, err)
 		}
@@ -149,7 +150,7 @@ func TestReferencesAreDistinctAndWellFormed(t *testing.T) {
 // return "LicenseRef-<hash>" where the source said "see LICENSE file".
 func TestReferenceRoundTripRecoversTheOriginalText(t *testing.T) {
 	const raw = "see LICENSE file"
-	out, err := MarshalDepGraphJSON(licenseGraph(t, sdk.PackageLicense{Value: raw}),
+	out, err := MarshalDepGraphJSON(licenseGraph(t, model.PackageLicense{Value: raw}),
 		TargetSPDX23JSON, BuildOptions{}, EncodeOptions{})
 	if err != nil {
 		t.Fatalf("marshal spdx: %v", err)
@@ -179,7 +180,7 @@ func TestReferenceRoundTripRecoversTheOriginalText(t *testing.T) {
 // the declared one: the codec writes the same value into licenseConcluded,
 // and a consumer validating the document reads both.
 func TestEveryEmittedLicenseFieldIsAValidSPDXExpression(t *testing.T) {
-	doc := spdxDocOf(t, licenseGraph(t, sdk.PackageLicense{Value: "see LICENSE file"}))
+	doc := spdxDocOf(t, licenseGraph(t, model.PackageLicense{Value: "see LICENSE file"}))
 	packages, _ := doc["packages"].([]any)
 	if len(packages) == 0 {
 		t.Fatalf("no packages in document")
@@ -202,8 +203,8 @@ func TestEveryEmittedLicenseFieldIsAValidSPDXExpression(t *testing.T) {
 func TestMixedLicenseSetComposesRatherThanDropping(t *testing.T) {
 	const raw = "see LICENSE file"
 	doc := spdxDocOf(t, licenseGraph(t,
-		sdk.PackageLicense{SPDXExpression: "MIT"},
-		sdk.PackageLicense{Value: raw},
+		model.PackageLicense{SPDXExpression: "MIT"},
+		model.PackageLicense{Value: raw},
 	))
 	packages, _ := doc["packages"].([]any)
 	pkg, _ := packages[0].(map[string]any)

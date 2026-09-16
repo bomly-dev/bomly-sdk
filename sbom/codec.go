@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/bomly-dev/bomly-sdk"
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // syftSchemaURLMarker is what makes a JSON document a syft-json one: syft
@@ -130,8 +130,8 @@ func decodeDocument(c codec, data []byte) (*Document, error) {
 	sum := sha256.Sum256(data)
 	// The gate runs here rather than at the export site, so a checksum that
 	// could not be published never reaches the model at all.
-	if checksum, ok := (sdk.Digest{
-		Algorithm: sdk.DigestAlgorithmSHA256,
+	if checksum, ok := (model.Digest{
+		Algorithm: model.DigestAlgorithmSHA256,
 		Value:     hex.EncodeToString(sum[:]),
 	}).Normalized(); ok {
 		doc.Assertions.Checksum = &checksum
@@ -218,13 +218,13 @@ func UnmarshalAutoJSON(data []byte) (*Document, Target, error) {
 //
 // For a graph built from ingested SBOMs, prefer MarshalGraphEntriesJSON: see
 // FromDepGraph for what this entry point cannot see.
-func MarshalDepGraphJSON(g *sdk.Graph, target Target, buildOpts BuildOptions, encodeOpts EncodeOptions) ([]byte, error) {
+func MarshalDepGraphJSON(g *model.Graph, target Target, buildOpts BuildOptions, encodeOpts EncodeOptions) ([]byte, error) {
 	return MarshalGraphEntriesJSON(g, nil, target, buildOpts, encodeOpts)
 }
 
 // MarshalGraphEntriesJSON converts the prepared graph entries and the graph
 // they consolidated into directly into a target JSON SBOM.
-func MarshalGraphEntriesJSON(g *sdk.Graph, entries []sdk.GraphEntry, target Target, buildOpts BuildOptions, encodeOpts EncodeOptions) ([]byte, error) {
+func MarshalGraphEntriesJSON(g *model.Graph, entries []model.GraphEntry, target Target, buildOpts BuildOptions, encodeOpts EncodeOptions) ([]byte, error) {
 	doc, err := FromGraphEntries(g, entries, buildOpts)
 	if err != nil {
 		return nil, err

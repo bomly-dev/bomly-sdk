@@ -7,8 +7,9 @@ import (
 	"testing"
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
-	"github.com/bomly-dev/bomly-sdk"
 	"github.com/bomly-dev/bomly-sdk/internal/testnodes"
+
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // Every ingest entry point refuses an input over MaxDocumentBytes before
@@ -200,10 +201,10 @@ func TestSPDXIDAllocatorNeverRepeatsAnIdentifier(t *testing.T) {
 // The same rule at both sites that mint SPDX identifiers: packages, and the
 // external document references a merged export writes for its sources.
 func TestCollidingIdentifiersStayDistinctAcrossThreeSources(t *testing.T) {
-	checksum := sdk.Digest{Algorithm: sdk.DigestAlgorithmSHA256, Value: strings.Repeat("0", 64)}
+	checksum := model.Digest{Algorithm: model.DigestAlgorithmSHA256, Value: strings.Repeat("0", 64)}
 	doc := &Document{
 		Namespace: "https://bomly.dev/spdx/merged",
-		Sources: []sdk.DocumentAssertions{
+		Sources: []model.DocumentAssertions{
 			{Identity: "https://acme.example/a_b", Checksum: &checksum},
 			{Identity: "https://acme.example/a+b", Checksum: &checksum},
 			{Identity: "https://acme.example/a-b-1", Checksum: &checksum},
@@ -221,9 +222,9 @@ func TestCollidingIdentifiersStayDistinctAcrossThreeSources(t *testing.T) {
 		seen[string(ref.DocumentRefID)] = true
 	}
 
-	g := sdk.New()
+	g := model.New()
 	for _, name := range []string{"a_b", "a+b", "a-b-1"} {
-		if err := g.AddNode(testnodes.Dep(sdk.Coordinates{Ecosystem: sdk.EcosystemNPM, Name: name, Version: "1.0.0"})); err != nil {
+		if err := g.AddNode(testnodes.Dep(model.Coordinates{Ecosystem: model.EcosystemNPM, Name: name, Version: "1.0.0"})); err != nil {
 			t.Fatalf("add node: %v", err)
 		}
 	}
@@ -663,7 +664,7 @@ func TestAFilePackageInTheInventoryReachesTheGraph(t *testing.T) {
 	}
 	names := map[string]bool{}
 	for _, node := range graph.Nodes() {
-		names[sdk.NodeDisplayName(node)] = true
+		names[model.NodeDisplayName(node)] = true
 	}
 	if !names["config.bin"] {
 		t.Errorf("graph nodes = %v, want the inventory file package kept", names)
@@ -750,7 +751,7 @@ func TestAnUnidentifiedCycloneDXSubjectIsSteppedThrough(t *testing.T) {
 		}
 		names := map[string]bool{}
 		for _, node := range graph.Nodes() {
-			names[sdk.NodeDisplayName(node)] = true
+			names[model.NodeDisplayName(node)] = true
 		}
 		return names
 	}
