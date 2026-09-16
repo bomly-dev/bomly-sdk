@@ -8,11 +8,11 @@ Bomly CLI (`bomly-dev/bomly-cli`), its built-in components, and external
 managed plugins: domain types (the `GraphNode` union — manifest, module,
 and `DependencyNode` records — `Package`, `Vulnerability`, `Finding`,
 `Graph`), plugin kinds and validation, support metadata, and the
-shared helper subpackages (`system`, `filecache`, `logkit`, `detectorkit`,
-`matcherkit`, `testkit`, `conformance`), and the SBOM codec (`sbom`, with
-`graphview` beside it), which the CLI and the Syft and Grype plugins adopt
-from the release that carries it in place of the copies they carried
-(bomly-cli ADR-0045).
+shared helper subpackages (`plugin`, `httpkit`, `purlkit`, `spdxkit`,
+`system`, `filecache`, `logkit`, `detectorkit`, `matcherkit`, `testkit`,
+`conformance`), and the SBOM codec (`sbom`, with `graphview` beside it),
+which the CLI and the Syft and Grype plugins adopt from the release that
+carries it in place of the copies they carried (bomly-cli ADR-0045).
 
 ## This module is the source of truth
 
@@ -191,6 +191,43 @@ branch.
   fix or a mature alternative before writing a bespoke parser or semantic
   algorithm. Any unavoidable custom implementation documents why the upstream
   path is insufficient and ships differential or fixture tests plus fuzzing.
+
+### Layout
+
+The root is one flat package. A file is named for the concept it owns, and a
+test file pairs with the source file of the same stem (`contact.go` /
+`contact_test.go`); add to the owner rather than starting a new file for a
+type that already has a home. What lives where:
+
+- Domain model: `node.go`, `node_access.go`, `dependency.go`,
+  `coordinates.go`, `graph.go`, `edge.go`, `relationship.go`, `container.go`,
+  `package.go`, `registry.go`, `vulnerability.go`, `contact.go`, `digest.go`,
+  `external_reference.go`, `document.go`, `origin.go`, `usage.go`,
+  `attestation.go`, `scorecard.go`, `metadata.go`.
+- Vocabularies and identity: `ecosystem.go`, `package_manager.go`,
+  `language.go`, `purl.go`, `normalization.go`, with `purlkit/` and
+  `spdxkit/` owning the grammars behind them.
+- Wire codecs and format adapters: `json.go`, `scope_cyclonedx.go`.
+- Component contract: `component.go` (descriptors, the `Base*` defaults, the
+  `Validate*Descriptor` gates), `detector.go`, `matcher.go`, `auditor.go`,
+  `analyzer.go`, `scan.go`, `module.go`, `plugin.go` (manifest and wire
+  vocabulary), `config_schema.go`.
+- Merge primitives: `merge.go`. Policy and filtering: `policy.go`,
+  `scope_filter.go`.
+- Guards with no source pair: `repo_guards_test.go` (the import boundary and
+  the AGENTS.md/CLAUDE.md mirror), `wire_compat_test.go`,
+  `wire_omitempty_coverage_test.go`, `vocabulary_registry_test.go`,
+  `purlkit_delegation_test.go`, `provenance_test.go`, `idn_test.go`, and
+  `fuzz_test.go` (every root `Fuzz*` target; corpora under
+  `testdata/fuzz/<Name>/`). Shared fixture constructors live in
+  `helpers_test.go`.
+
+Two things deliberately do not live in the root. The managed-plugin
+transport (go-plugin, gRPC, protobuf) lives only in `plugin/`, and outbound
+HTTP policy lives only in `httpkit/`; `repo_guards_test.go` fails an import
+of those libraries anywhere else. Every wire payload type stays in the root,
+where the omitempty coverage walk can see it -- nothing in `plugin/` is a
+payload.
 
 ### The modernizer, and the analyzers we decline
 

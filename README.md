@@ -11,8 +11,9 @@
 `github.com/bomly-dev/bomly-sdk` is the contract module for building Bomly
 components: detectors, matchers, auditors, and analyzers. It contains the
 neutral domain types (dependencies, packages, vulnerabilities, findings, the
-package registry), the component interfaces, and the managed-plugin serving
-adapters and gRPC protocol used by external plugin binaries.
+package registry) and the component interfaces; the `plugin` subpackage is the
+managed-plugin runtime (serving adapters and gRPC protocol) used by external
+plugin binaries and by the host that launches them.
 
 ```sh
 go get github.com/bomly-dev/bomly-sdk@latest
@@ -26,10 +27,16 @@ one component over the managed-plugin runtime:
 ```go
 package main
 
-import sdk "github.com/bomly-dev/bomly-sdk"
+import (
+	sdk "github.com/bomly-dev/bomly-sdk"
+	"github.com/bomly-dev/bomly-sdk/plugin"
+)
 
 func main() {
-	sdk.ServeDetector(myDetector{})
+	plugin.ServeModule(sdk.Module{
+		Kind:     sdk.PluginKindDetector,
+		Detector: &sdk.DetectorModule{Descriptor: descriptor, Support: support, New: newDetector},
+	})
 }
 ```
 
@@ -52,6 +59,37 @@ plugins reuse the same implementations Bomly's built-ins use:
 - `detectorkit` — detector helpers: manifest metadata, source positions, remediation hints, subgraphs, build-tool readiness and timeouts.
 - `matcherkit` — matcher helpers: registry package seeding and license normalization.
 - `testkit` — test helpers: fuzz graph invariants, typed-node constructors, Go binary builders, lockfile position assertions.
+- `plugin` — the managed-plugin runtime: `ServeModule` and the `Serve*` entrypoints for plugin binaries, `Client`, `HandshakeConfig`, and `ClientPluginMap` for the host, and the per-process plugin environment (`DecodePluginConfigFromEnv`).
+- `httpkit` — proxy- and CA-aware outbound HTTP clients from explicit configuration or the `BOMLY_HTTP_*` environment; `HostContext.HTTPClient()` returns its `ClientProvider`.
+- `purlkit` — the single home for package-URL behavior: parsing, building, canonicalizing, the purl-type mapping table, and the per-ecosystem name split, over packageurl-go and go-pep440-version.
+- `spdxkit` — the single home for SPDX license behavior: expression validation, classification, deprecated-identifier canonicalization, and deterministic `LicenseRef` minting, containing go-spdx's panics on untrusted input.
+- `conformance` — the reusable plugin-contract test suite: run it against your `sdk.Module` for descriptor validity, JSON round-trip stability, host-context construction, the Ready/Applicable lifecycle, role capabilities, and optionally a transport probe of the built binary.
+
+The root package is one flat package. Files are named for the concept they
+own and every test file pairs with the source file of the same stem;
+`AGENTS.md` carries the map.
+
+## Migrating to v0.13
+
+v0.13.0 moved the managed-plugin runtime and the HTTP client provider out of
+the root package. The wire protocol is unchanged; only import paths and a few
+spellings move:
+
+| Before (`sdk.`) | After |
+|---|---|
+| `ServeModule`, `ServeDetector`, `ServeMatcher`, `ServeAuditor`, `ServeAnalyzer` | `plugin.` (same names) |
+| `Client`, `HandshakeConfig`, `ClientPluginMap`, `EnvVerbosity` | `plugin.` (same names) |
+| `EnvPluginConfigFile`, `EnvPluginID`, `RawPluginConfigFromEnv`, `DecodePluginConfigFromEnv` | `plugin.` (same names) |
+| `HTTPClientProvider`, `HTTPClientConfig` | `httpkit.ClientProvider`, `httpkit.ClientConfig` |
+| `NewHTTPClientProvider`, `NewHTTPClientProviderFromEnv` | `httpkit.NewClientProvider`, `httpkit.NewClientProviderFromEnv` |
+| `HTTPClientConfigFromEnv`, `NewHTTPClient` | `httpkit.ClientConfigFromEnv`, `httpkit.NewClient` |
+| `EnvHTTP*` constants | `httpkit.EnvHTTP*` (same names) |
+
+`HostContext.HTTPClient()` now returns `*httpkit.ClientProvider`, so every
+implementer of the interface changes that one return type. `ConfigSchemaFor`
+and `MustConfigSchemaFor` stay in the root. Import the runtime as
+`sdkplugin "github.com/bomly-dev/bomly-sdk/plugin"` in a file whose own
+package is called `plugin`.
 
 ## The SBOM codec
 
