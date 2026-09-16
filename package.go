@@ -56,7 +56,7 @@ const maxVocabularyTokenLength = 64
 // written into published documents, and an unbounded field there costs more
 // than any name a component would carry. It is a resource limit and stays a
 // dumb one.
-const maxLicenseSourceLength = maxComponentNameLength
+const maxLicenseSourceLength = MaxComponentNameLength
 
 // LicenseType identifies license provenance: who is making the claim. Both
 // SBOM formats draw the same distinction -- SPDX as licenseDeclared versus
@@ -1168,3 +1168,18 @@ func qualifiedName(org, name string) string {
 	}
 	return org + ":" + name
 }
+
+// MaxComponentNameLength bounds a component descriptor name, in bytes.
+//
+// A component name is not only a registry key: it is written verbatim into
+// published output as the source of a license claim (PackageLicense.Source),
+// so its domain is what publication can carry. The two gates used to disagree
+// -- descriptor validation asked only that a name be non-blank, while the
+// license source was bounded -- so a 257-byte matcher was a valid component
+// whose provenance the source gate silently erased. maxLicenseSourceLength
+// references this constant so the two cannot drift again.
+//
+// 256 bytes: a real component name is a few dozen characters, and the
+// allowance covers a long descriptive one without admitting a value that is
+// really a payload. The bound is a resource limit and stays a dumb one.
+const MaxComponentNameLength = 256

@@ -23,14 +23,12 @@ var wireRoots = []any{
 	MatcherDescriptor{}, AnalyzerDescriptor{},
 	DetectorDescriptor{}, AuditorDescriptor{},
 
-	// The structs a custom MarshalJSON emits, registered because nothing
-	// reaches them by exported field. Graph holds its nodes and edges
-	// unexported and encodes them through graphJSON, so a zero Graph emits
-	// {} and the walk sees nothing -- while a populated one puts every
-	// nodeWire and DependencyEdge key on the wire. Naming them here is
-	// possible because this test lives in package sdk; a consumer could not
-	// write this rule, which is the argument for it living in the SDK.
-	graphJSON{}, nodeWire{}, DependencyEdge{},
+	// A struct a custom MarshalJSON emits, registered because nothing
+	// reaches it by exported field: Graph holds its edges unexported and
+	// encodes them through DependencyEdge. Its unexported companions
+	// (graphJSON, nodeWire) are checked by the model package's own
+	// TestWireCodecStructsDeclareOmitEmpty, which can name them.
+	DependencyEdge{},
 }
 
 // alwaysSentKeys are the wire keys a zero value still emits, by "Type.key".
@@ -66,7 +64,6 @@ var alwaysSentKeys = map[string]string{
 	"AuditorDescriptor.name":               "a descriptor without a name cannot be routed to",
 	"PackageManagerSupport.packageManager": "the key the support row is about",
 	"DependencyNode.id":                    "the canonical package URL is the node's identity (ADR-0041)",
-	"nodeWire.id":                          "the encoded form of that same identity",
 	"DependencyEdge.fromId":                "an edge without both endpoints joins nothing",
 	"DependencyEdge.toId":                  "an edge without both endpoints joins nothing",
 	"DependencyNode.kind":                  "the sealed union's discriminator (ADR-0041)",
@@ -143,7 +140,6 @@ var alwaysSentKeys = map[string]string{
 // field from the tag rule, and those are exactly the fields whose marker can be
 // dropped without moving a byte -- the regression that started this thread.
 var intentionallyRequired = map[string]string{
-	"nodeWire.id":                                           "the encoded node identity",
 	"DependencyEdge.fromId":                                 "an edge without both endpoints joins nothing",
 	"DependencyEdge.toId":                                   "an edge without both endpoints joins nothing",
 	"AnalyzeRequest.analyzerFilter":                         "the field carries no marker today",
@@ -330,11 +326,15 @@ func TestAlwaysSentKeysAreAllEmitted(t *testing.T) {
 // from a v1 wire root, roots included.
 //
 // Reachability is by exported field, through pointer, slice, array and map
-// element types. Types from other modules are not followed: their fields are
-// not ours to tag, and walking into them would recurse through the standard
-// library forever.
+// element types, across the two packages that declare wire types: the
+// contract here and the model beneath it. Types from other modules are not
+// followed: their fields are not ours to tag, and walking into them would
+// recurse through the standard library forever.
 func reachableWireTypes() []reflect.Type {
-	sdkPackage := reflect.TypeOf(MatchRequest{}).PkgPath()
+	modulePackages := map[string]bool{
+		reflect.TypeOf(MatchRequest{}).PkgPath(): true,
+		reflect.TypeOf(Graph{}).PkgPath():        true,
+	}
 	visited := map[reflect.Type]bool{}
 	var found []reflect.Type
 
@@ -348,7 +348,7 @@ func reachableWireTypes() []reflect.Type {
 			}
 			break
 		}
-		if typ.Kind() != reflect.Struct || typ.PkgPath() != sdkPackage || visited[typ] {
+		if typ.Kind() != reflect.Struct || !modulePackages[typ.PkgPath()] || visited[typ] {
 			return
 		}
 		visited[typ] = true

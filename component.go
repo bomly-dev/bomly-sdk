@@ -8,25 +8,10 @@ import (
 	"unicode/utf8"
 )
 
-// maxComponentNameLength bounds a component descriptor name, in bytes.
-//
-// A component name is not only a registry key: it is written verbatim into
-// published output as the source of a license claim (PackageLicense.Source),
-// so its domain is what publication can carry. The two gates used to disagree
-// -- descriptor validation asked only that a name be non-blank, while the
-// license source was bounded -- so a 257-byte matcher was a valid component
-// whose provenance the source gate silently erased. maxLicenseSourceLength
-// references this constant so the two cannot drift again.
-//
-// 256 bytes: a real component name is a few dozen characters, and the
-// allowance covers a long descriptive one without admitting a value that is
-// really a payload. The bound is a resource limit and stays a dumb one.
-const maxComponentNameLength = 256
-
 // ComponentDescriptor describes the common identity and selection fields shared
 // by detectors, matchers, auditors, and analyzers.
 //
-// Name is required and bounded by maxComponentNameLength; it must be valid
+// Name is required and bounded by MaxComponentNameLength; it must be valid
 // UTF-8 with no control characters, because it reaches published documents
 // where a newline would corrupt SPDX's line-oriented tag form. Whitespace
 // inside a name is legal. The checks apply to the value as stored --
@@ -217,8 +202,8 @@ func validateComponentDescriptor(kind string, descriptor ComponentDescriptor) er
 	// unbounded padding would otherwise ride through a gate that claims to
 	// refuse them. The source gate trims before it measures, which only
 	// shrinks, so every name accepted here still survives there.
-	if len(descriptor.Name) > maxComponentNameLength {
-		return fmt.Errorf("%s descriptor name exceeds %d bytes", kind, maxComponentNameLength)
+	if len(descriptor.Name) > MaxComponentNameLength {
+		return fmt.Errorf("%s descriptor name exceeds %d bytes", kind, MaxComponentNameLength)
 	}
 	if !utf8.ValidString(descriptor.Name) || containsControlChar(descriptor.Name) {
 		return fmt.Errorf("%s descriptor name must be valid UTF-8 without control characters", kind)
@@ -252,13 +237,13 @@ func componentFromAnalyzerDescriptor(descriptor AnalyzerDescriptor) ComponentDes
 	return ComponentDescriptor{Name: descriptor.Name, DisplayName: descriptor.DisplayName, Aliases: descriptor.Aliases, Tags: descriptor.Tags, SupportedEcosystems: descriptor.SupportedEcosystems, SupportedManagers: descriptor.SupportedManagers}
 }
 
-func includesName(include []string, name string) bool {
+func includesComponentName(include []string, name string) bool {
 	if len(include) == 0 {
 		return true
 	}
 	return slices.Contains(include, name)
 }
 
-func excludesName(exclude []string, name string) bool {
+func excludesComponentName(exclude []string, name string) bool {
 	return slices.Contains(exclude, name)
 }

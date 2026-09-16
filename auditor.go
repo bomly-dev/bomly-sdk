@@ -18,12 +18,12 @@ type AuditorFilter struct {
 
 // Includes reports whether an auditor name is explicitly allowed.
 func (f AuditorFilter) Includes(name string) bool {
-	return includesName(f.Include, name)
+	return includesComponentName(f.Include, name)
 }
 
 // Excludes reports whether an auditor name is explicitly denied.
 func (f AuditorFilter) Excludes(name string) bool {
-	return excludesName(f.Exclude, name)
+	return excludesComponentName(f.Exclude, name)
 }
 
 // AuditRequest defines input for an auditor. Auditors read the dependency Graph

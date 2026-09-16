@@ -194,7 +194,7 @@ func TestComponentNameIsBounded(t *testing.T) {
 		"analyzer": func(name string) error { return ValidateAnalyzerDescriptor(&AnalyzerDescriptor{Name: name}) },
 	}
 
-	longest := strings.Repeat("n", maxComponentNameLength)
+	longest := strings.Repeat("n", MaxComponentNameLength)
 	accepted := []string{
 		"external-depsdev",
 		"My Matcher",

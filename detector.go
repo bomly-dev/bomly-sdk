@@ -20,12 +20,12 @@ type DetectorFilter struct {
 
 // Includes reports whether a detector name is explicitly allowed.
 func (f DetectorFilter) Includes(name string) bool {
-	return includesName(f.Include, name)
+	return includesComponentName(f.Include, name)
 }
 
 // Excludes reports whether a detector name is explicitly denied.
 func (f DetectorFilter) Excludes(name string) bool {
-	return excludesName(f.Exclude, name)
+	return excludesComponentName(f.Exclude, name)
 }
 
 // DetectionRequest defines input for dependency graph resolution.

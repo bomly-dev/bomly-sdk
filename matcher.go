@@ -18,12 +18,12 @@ type MatcherFilter struct {
 
 // Includes reports whether a matcher name is explicitly allowed.
 func (f MatcherFilter) Includes(name string) bool {
-	return includesName(f.Include, name)
+	return includesComponentName(f.Include, name)
 }
 
 // Excludes reports whether a matcher name is explicitly denied.
 func (f MatcherFilter) Excludes(name string) bool {
-	return excludesName(f.Exclude, name)
+	return excludesComponentName(f.Exclude, name)
 }
 
 // MatcherDescriptor describes a matcher registration.

@@ -63,7 +63,7 @@ var boundedImports = []struct {
 		// magic cookie or the plugin map could drift from what the other
 		// end expects.
 		module: "github.com/hashicorp/go-plugin",
-		kitDir: "plugin",
+		kitDir: "runtime",
 		allowed: map[string]string{
 			"conformance/conformance.go": "ProbeBinary launches the built plugin binary over the real transport, exactly as the host does",
 		},
@@ -74,14 +74,14 @@ var boundedImports = []struct {
 		// declared once in plugin/; a direct import elsewhere puts protocol
 		// shape outside the file that owns it.
 		module:  "google.golang.org/grpc",
-		kitDir:  "plugin",
+		kitDir:  "runtime",
 		allowed: map[string]string{},
 	},
 	{
 		// The protobuf well-known types are the envelopes of that service
 		// and travel with it.
 		module:  "google.golang.org/protobuf",
-		kitDir:  "plugin",
+		kitDir:  "runtime",
 		allowed: map[string]string{},
 	},
 }

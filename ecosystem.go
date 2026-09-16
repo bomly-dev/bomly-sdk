@@ -136,3 +136,16 @@ func parseKnownEcosystem(value string) (Ecosystem, error) {
 	}
 	return EcosystemUnknown, fmt.Errorf("unsupported ecosystem %q", value)
 }
+
+// includesName and excludesName are the two halves of a selection filter:
+// an empty include list selects everything, and exclude always wins.
+func includesName(include []string, name string) bool {
+	if len(include) == 0 {
+		return true
+	}
+	return slices.Contains(include, name)
+}
+
+func excludesName(exclude []string, name string) bool {
+	return slices.Contains(exclude, name)
+}

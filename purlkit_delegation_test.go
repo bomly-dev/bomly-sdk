@@ -365,7 +365,7 @@ var specTypesOutsideTheEcosystemVocabulary = map[string]string{
 // rather than vendoring a second copy: one set of files, two readers, and
 // no chance of the two disagreeing about what the spec says.
 func TestEcosystemForPURLTypeCoversTheSpecTypeVocabulary(t *testing.T) {
-	definitions, err := filepath.Glob(filepath.Join("purlkit", "testdata", "purl-spec", "types", "*-definition.json"))
+	definitions, err := filepath.Glob(filepath.Join("..", "purlkit", "testdata", "purl-spec", "types", "*-definition.json"))
 	if err != nil {
 		t.Fatalf("glob the vendored purl-spec types: %v", err)
 	}

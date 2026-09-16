@@ -18,12 +18,12 @@ type AnalyzerFilter struct {
 
 // Includes reports whether an analyzer name is explicitly allowed.
 func (f AnalyzerFilter) Includes(name string) bool {
-	return includesName(f.Include, name)
+	return includesComponentName(f.Include, name)
 }
 
 // Excludes reports whether an analyzer name is explicitly denied.
 func (f AnalyzerFilter) Excludes(name string) bool {
-	return excludesName(f.Exclude, name)
+	return excludesComponentName(f.Exclude, name)
 }
 
 // AnalyzerDescriptor describes an analyzer registration.

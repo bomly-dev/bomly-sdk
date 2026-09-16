@@ -34,4 +34,4 @@
 //
 // On the host side, HandshakeConfig and ClientPluginMap configure a go-plugin
 // client, and the dispensed value implements Client.
-package plugin
+package runtime

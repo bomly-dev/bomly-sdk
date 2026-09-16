@@ -198,7 +198,7 @@ import (
 	"fmt"
 
 	sdk "github.com/bomly-dev/bomly-sdk"
-	"github.com/bomly-dev/bomly-sdk/plugin"
+	"github.com/bomly-dev/bomly-sdk/runtime"
 )
 
 type config struct {
@@ -225,7 +225,7 @@ func (m matcher) Match(_ context.Context, req sdk.MatchRequest) (sdk.MatchResult
 }
 
 func main() {
-	plugin.ServeModule(sdk.Module{
+	runtime.ServeModule(sdk.Module{
 		Kind: sdk.PluginKindMatcher,
 		Matcher: &sdk.MatcherModule{
 			Descriptor: descriptor(),
