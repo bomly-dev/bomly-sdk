@@ -91,6 +91,10 @@ and `MustConfigSchemaFor` stay in the root. Import the runtime as
 `sdkplugin "github.com/bomly-dev/bomly-sdk/plugin"` in a file whose own
 package is called `plugin`.
 
+`scripts/migrate-sdk-v013.py <repo>` applies every rewrite above to a
+consumer checkout, fixture source strings included, and adds or drops the
+imports; run `gofmt -w` afterwards, then bump the SDK pin and `go mod tidy`.
+
 ## The SBOM codec
 
 - `sbom` — the SBOM codec: projects a graph into SPDX 2.3 or CycloneDX JSON and reads such a document back into a graph, with the document model, the strict ingest preflight, and the assertions a document carries about itself.
