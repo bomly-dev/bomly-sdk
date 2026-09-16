@@ -10,11 +10,12 @@ import (
 )
 
 // TestNothingHereIsAWirePayload fails when a struct in this package carries a
-// json tag. Every bomly.plugin.v1 payload lives in the root package, where
-// the omitempty coverage walk (wire_omitempty_coverage_test.go) reaches it by
-// following exported fields from the root's wire roots; that walk stops at
-// the root's package path, so a payload type declared here would escape it
-// silently. This package adapts and transports payloads; it declares none.
+// json tag. Every bomly.plugin.v1 payload lives in the plugin or model
+// package, where the omitempty coverage walk (plugin's
+// wire_omitempty_coverage_test.go) reaches it by following exported fields
+// from the wire roots; that walk stops at those two package paths, so a
+// payload type declared here would escape it silently. This package adapts
+// and transports payloads; it declares none.
 func TestNothingHereIsAWirePayload(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {

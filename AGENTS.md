@@ -5,14 +5,19 @@ identical copy; keep the two files in sync.
 
 This module, `github.com/bomly-dev/bomly-sdk`, is the public contract for the
 Bomly CLI (`bomly-dev/bomly-cli`), its built-in components, and external
-managed plugins: domain types (the `GraphNode` union — manifest, module,
-and `DependencyNode` records — `Package`, `Vulnerability`, `Finding`,
-`Graph`), plugin kinds and validation, support metadata, and the
-shared helper subpackages (`plugin`, `httpkit`, `purlkit`, `spdxkit`,
-`system`, `filecache`, `logkit`, `detectorkit`, `matcherkit`, `testkit`,
-`conformance`), and the SBOM codec (`sbom`, with `graphview` beside it),
-which the CLI and the Syft and Grype plugins adopt from the release that
-carries it in place of the copies they carried (bomly-cli ADR-0045).
+managed plugins. It is four packages, split by the question each answers:
+`model` (what the data is: the `GraphNode` union — manifest, module, and
+`DependencyNode` records — `Package`, `Vulnerability`, `Finding`, `Graph`,
+the vocabularies, and the normalization, merge, and policy rules), `plugin`
+(what a component is: the role interfaces, descriptors, request/response
+types, `Module`/`HostContext`, validation), `runtime` (how a component runs
+out of process: the go-plugin gRPC transport, both ends), and `httpkit`
+(outbound HTTP policy). The module root declares nothing but the map. Around
+them sit the helper subpackages (`purlkit`, `spdxkit`, `system`, `filecache`,
+`logkit`, `detectorkit`, `matcherkit`, `testkit`, `conformance`) and the SBOM
+codec (`sbom`, with `graphview` beside it), which the CLI and the Syft and
+Grype plugins adopt from the release that carries it in place of the copies
+they carried (bomly-cli ADR-0045).
 
 ## This module is the source of truth
 
@@ -70,7 +75,7 @@ by quietly redefining the format's word. Where a specification genuinely says
 nothing, the mapping onto Bomly's own vocabulary is Bomly's policy, and it is
 documented as policy rather than dressed up as the format's meaning.
 
-`ScopesFromCycloneDX` in `scope_cyclonedx.go` is the worked example: the SDK
+`ScopesFromCycloneDX` in `model/scope_cyclonedx.go` is the worked example: the SDK
 read CycloneDX's `optional` as runtime on a pre-1.6 gloss, argued it was the
 safer reading for a scanner, and was wrong on both counts against the
 specification's own text. Reading that text also turned up a second deviation
@@ -108,7 +113,7 @@ copies of the reverse join had already drifted when this was exported.
 Never compare a scope by hand. `ScopeSetMatches` and `MatchesScopeFilter` are
 the answer, because the hard case is not comparison but a dependency that
 asserted no scope at all — and that case has a policy, stated in
-`scope_filter.go`: a filter selects on assertions, absence is not an
+`model/scope_filter.go`: a filter selects on assertions, absence is not an
 assertion, so a runtime view keeps everything not affirmatively
 development-only — a set naming both scopes names runtime, so it stays —
 while every other view requires an affirmative match. One rule, applied
@@ -130,7 +135,7 @@ must not look narrowed.
 `ReachabilityEvidence` is keyed by module root, so an analyzer must decide
 whether a dependency node's sites tie it to the root it is emitting for --
 the module root is the mandatory floor of that claim and `DependencyRefs`
-the optional ceiling. `RootAttribution` and `NewRootAttributor` in `usage.go`
+the optional ceiling. `RootAttribution` and `NewRootAttributor` in `model/usage.go`
 own the decision, including the self-calibration that keeps a
 producer/analyzer path-vocabulary mismatch from silently dropping a node's
 evidence. This landed as four identical copies across the reachability
@@ -194,42 +199,54 @@ branch.
 
 ### Layout
 
-The root is one flat package. A file is named for the concept it owns, and a
-test file pairs with the source file of the same stem (`contact.go` /
+Four packages carry the contract, and the dependency direction between them
+is fixed: `runtime` imports `plugin`, `plugin` imports `model`, `model`
+imports only `purlkit`, `spdxkit`, and the standard library; `httpkit` is a
+leaf that `plugin` reaches for `HostContext`. Nothing imports upward. The
+module root holds `doc.go` (the map) and `repo_guards_test.go` (the import
+boundary and the AGENTS.md/CLAUDE.md mirror, both keyed on the root
+directory) and nothing else; do not add code there.
+
+Within a package a file is named for the concept it owns, and a test file
+pairs with the source file of the same stem (`contact.go` /
 `contact_test.go`); add to the owner rather than starting a new file for a
 type that already has a home. What lives where:
 
-- Domain model: `node.go`, `node_access.go`, `dependency.go`,
-  `coordinates.go`, `graph.go`, `edge.go`, `relationship.go`, `container.go`,
-  `package.go`, `registry.go`, `vulnerability.go`, `contact.go`, `digest.go`,
-  `external_reference.go`, `document.go`, `origin.go`, `usage.go`,
-  `attestation.go`, `scorecard.go`, `metadata.go`.
-- Vocabularies and identity: `ecosystem.go`, `package_manager.go`,
-  `language.go`, `purl.go`, `normalization.go`, with `purlkit/` and
-  `spdxkit/` owning the grammars behind them.
-- Wire codecs and format adapters: `json.go`, `scope_cyclonedx.go`.
-- Component contract: `component.go` (descriptors, the `Base*` defaults, the
-  `Validate*Descriptor` gates), `detector.go`, `matcher.go`, `auditor.go`,
-  `analyzer.go`, `scan.go`, `module.go`, `plugin.go` (manifest and wire
-  vocabulary), `config_schema.go`.
-- Merge primitives: `merge.go`. Policy and filtering: `policy.go`,
-  `scope_filter.go`.
-- Guards with no source pair: `repo_guards_test.go` (the import boundary and
-  the AGENTS.md/CLAUDE.md mirror), `wire_compat_test.go`,
-  `wire_omitempty_coverage_test.go`, `vocabulary_registry_test.go`,
-  `purlkit_delegation_test.go`, `provenance_test.go`, `idn_test.go`, and
-  `fuzz_test.go` (every root `Fuzz*` target; corpora under
-  `testdata/fuzz/<Name>/`). Shared fixture constructors live in
+- `model/` — graph core: `node.go`, `node_access.go`, `dependency.go`,
+  `coordinates.go`, `graph.go`, `edge.go`, `relationship.go`,
+  `container.go`; packages and enrichment: `package.go`, `registry.go`,
+  `vulnerability.go`, `usage.go`, `attestation.go`, `scorecard.go`,
+  `metadata.go`; format vocabularies: `contact.go`, `digest.go`,
+  `external_reference.go`, `document.go`, `origin.go`; vocabularies and
+  identity: `ecosystem.go`, `package_manager.go`, `language.go`, `purl.go`,
+  `normalization.go`; wire codecs and adapters: `json.go`,
+  `scope_cyclonedx.go`; merge and policy: `merge.go`, `policy.go`,
+  `scope_filter.go`. Guards with no source pair: `vocabulary_registry_test.go`,
+  `purlkit_delegation_test.go`, `provenance_test.go`, `idn_test.go`,
+  `wire_codec_coverage_test.go` (the unexported codec structs), and
+  `fuzz_test.go` (every model `Fuzz*` target; corpora under
+  `model/testdata/fuzz/<Name>/`). Shared fixture constructors live in
   `helpers_test.go`.
+- `plugin/` — `component.go` (descriptors, the `Base*` defaults, the
+  `Validate*Descriptor` gates), `detector.go`, `matcher.go`, `auditor.go`,
+  `analyzer.go`, `scan.go` (execution targets and subprojects), `module.go`,
+  `plugin.go` (manifest and wire vocabulary), `config_schema.go`,
+  `consolidation.go` (the host's consolidated view), `detection_filter.go`
+  (scope filtering of a detection result). Guards: `wire_compat_test.go`
+  (frozen v1 fixtures) and `wire_omitempty_coverage_test.go`, whose walk
+  starts at the wire roots here and follows exported fields into `model`.
+- `runtime/` — `serve.go` (the bomly.plugin.v1 service, both ends),
+  `module.go` (`ServeModule` and the managed `HostContext`), `config.go`
+  (the per-process environment). `boundary_test.go` fails on any json-tagged
+  struct here: the transport carries payloads and declares none.
+- `httpkit/` — `client.go`, `proxy.go`.
 
-Two things deliberately do not live in the root. The managed-plugin
-transport (go-plugin, gRPC, protobuf) lives only in `plugin/`, and outbound
-HTTP policy lives only in `httpkit/`; `repo_guards_test.go` fails an import
-of those libraries anywhere else, with one named exception: `conformance/`
-imports go-plugin to launch a built plugin binary over the real transport
-(`ProbeBinary`), exactly as the host does. Every wire payload type stays in
-the root, where the omitempty coverage walk can see it -- nothing in
-`plugin/` is a payload.
+The managed-plugin transport (go-plugin, gRPC, protobuf) lives only in
+`runtime/`; `repo_guards_test.go` fails an import of those libraries anywhere
+else, with one named exception: `conformance/` imports go-plugin to launch a
+built plugin binary over the real transport (`ProbeBinary`), exactly as the
+host does. Every wire payload type lives in `model` or `plugin`, where the
+omitempty coverage walk can see it.
 
 ### The modernizer, and the analyzers we decline
 

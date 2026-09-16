@@ -9,11 +9,18 @@
 </p>
 
 `github.com/bomly-dev/bomly-sdk` is the contract module for building Bomly
-components: detectors, matchers, auditors, and analyzers. It contains the
-neutral domain types (dependencies, packages, vulnerabilities, findings, the
-package registry) and the component interfaces; the `plugin` subpackage is the
-managed-plugin runtime (serving adapters and gRPC protocol) used by external
-plugin binaries and by the host that launches them.
+components: detectors, matchers, auditors, and analyzers. It is four packages,
+split by the question each answers:
+
+| Package | Answers | Import it when |
+|---|---|---|
+| `model` | What the data is: the dependency graph, packages and the registry, vulnerabilities and findings, the vocabularies, and the normalization, merge, and policy rules they share. | Always; every component reads and returns these. |
+| `plugin` | What a component is: the `Detector`, `Matcher`, `Auditor`, and `Analyzer` interfaces, their descriptors and request/response types, the `Base*` defaults, and `Module`/`HostContext`. | Implementing a component, embedded or as a plugin. |
+| `runtime` | How a component runs out of process: `ServeModule` for a plugin binary's `main`, and `Client`/`HandshakeConfig`/`ClientPluginMap` for the host that launches it, over the go-plugin gRPC transport. | A plugin binary's `main`, or hosting plugins. |
+| `httpkit` | Outbound HTTP with Bomly's proxy and CA policy. | Rarely directly; a component gets it from `HostContext.HTTPClient()`. |
+
+The module root imports nothing and declares nothing; its package doc is
+this map.
 
 ```sh
 go get github.com/bomly-dev/bomly-sdk@latest
@@ -21,31 +28,34 @@ go get github.com/bomly-dev/bomly-sdk@latest
 
 ## Building a plugin
 
-A Bomly plugin is a standalone Go binary that imports this module and serves
-one component over the managed-plugin runtime:
+A Bomly plugin is a component packaged as a `plugin.Module` and served from
+`main` by the runtime:
 
 ```go
 package main
 
 import (
-	sdk "github.com/bomly-dev/bomly-sdk"
 	"github.com/bomly-dev/bomly-sdk/plugin"
+	"github.com/bomly-dev/bomly-sdk/runtime"
 )
 
 func main() {
-	plugin.ServeModule(sdk.Module{
-		Kind:     sdk.PluginKindDetector,
-		Detector: &sdk.DetectorModule{Descriptor: descriptor, Support: support, New: newDetector},
+	runtime.ServeModule(plugin.Module{
+		Kind:     plugin.PluginKindDetector,
+		Detector: &plugin.DetectorModule{Descriptor: descriptor, Support: support, New: newDetector},
 	})
 }
 ```
 
-See the [Bomly plugin documentation](https://github.com/bomly-dev/bomly-cli/blob/main/docs/PLUGINS.md)
+The same `Module` value registers embedded in the host; a component never
+learns which mode it runs in, because it reaches the host only through
+`plugin.HostContext`. See the
+[Bomly plugin documentation](https://github.com/bomly-dev/bomly-cli/blob/main/docs/PLUGINS.md)
 for the full authoring guide, packaging layout (`bomly-plugin.json`), and
 installation flow.
 
-Embed the `Base*` types (`sdk.BaseDetector`, `sdk.BaseMatcher`,
-`sdk.BaseAuditor`, `sdk.BaseAnalyzer`) in your implementation so future
+Embed the `Base*` types (`plugin.BaseDetector`, `plugin.BaseMatcher`,
+`plugin.BaseAuditor`, `plugin.BaseAnalyzer`) in your implementation so future
 additions to the component interfaces do not break your build.
 
 ## Helper packages
@@ -59,37 +69,33 @@ plugins reuse the same implementations Bomly's built-ins use:
 - `detectorkit` — detector helpers: manifest metadata, source positions, remediation hints, subgraphs, build-tool readiness and timeouts.
 - `matcherkit` — matcher helpers: registry package seeding and license normalization.
 - `testkit` — test helpers: fuzz graph invariants, typed-node constructors, Go binary builders, lockfile position assertions.
-- `plugin` — the managed-plugin runtime: `ServeModule` and the `Serve*` entrypoints for plugin binaries, `Client`, `HandshakeConfig`, and `ClientPluginMap` for the host, and the per-process plugin environment (`DecodePluginConfigFromEnv`).
-- `httpkit` — proxy- and CA-aware outbound HTTP clients from explicit configuration or the `BOMLY_HTTP_*` environment; `HostContext.HTTPClient()` returns its `ClientProvider`.
 - `purlkit` — the single home for package-URL behavior: parsing, building, canonicalizing, the purl-type mapping table, and the per-ecosystem name split, over packageurl-go and go-pep440-version.
 - `spdxkit` — the single home for SPDX license behavior: expression validation, classification, deprecated-identifier canonicalization, and deterministic `LicenseRef` minting, containing go-spdx's panics on untrusted input.
-- `conformance` — the reusable plugin-contract test suite: run it against your `sdk.Module` for descriptor validity, JSON round-trip stability, host-context construction, the Ready/Applicable lifecycle, role capabilities, and optionally a transport probe of the built binary.
+- `conformance` — the reusable plugin-contract test suite: run it against your `plugin.Module` for descriptor validity, JSON round-trip stability, host-context construction, the Ready/Applicable lifecycle, role capabilities, and optionally a transport probe of the built binary.
 
-The root package is one flat package. Files are named for the concept they
-own and every test file pairs with the source file of the same stem;
-`AGENTS.md` carries the map.
+Within each package a file is named for the concept it owns and every test
+file pairs with the source file of the same stem; `AGENTS.md` carries the map.
 
 ## Migrating to v0.13
 
-v0.13.0 moved the managed-plugin runtime and the HTTP client provider out of
-the root package. The wire protocol is unchanged; only import paths and a few
-spellings move:
+v0.13.0 dissolved the root package into `model`, `plugin`, and `runtime`,
+and moved the HTTP client provider to `httpkit`. The wire protocol is
+unchanged; every identifier keeps its name and moves to the package that
+owns it:
 
 | Before (`sdk.`) | After |
 |---|---|
-| `ServeModule`, `ServeDetector`, `ServeMatcher`, `ServeAuditor`, `ServeAnalyzer` | `plugin.` (same names) |
-| `Client`, `HandshakeConfig`, `ClientPluginMap`, `EnvVerbosity` | `plugin.` (same names) |
-| `EnvPluginConfigFile`, `EnvPluginID`, `RawPluginConfigFromEnv`, `DecodePluginConfigFromEnv` | `plugin.` (same names) |
-| `HTTPClientProvider`, `HTTPClientConfig` | `httpkit.ClientProvider`, `httpkit.ClientConfig` |
-| `NewHTTPClientProvider`, `NewHTTPClientProviderFromEnv` | `httpkit.NewClientProvider`, `httpkit.NewClientProviderFromEnv` |
-| `HTTPClientConfigFromEnv`, `NewHTTPClient` | `httpkit.ClientConfigFromEnv`, `httpkit.NewClient` |
-| `EnvHTTP*` constants | `httpkit.EnvHTTP*` (same names) |
+| Graph, node, package, registry, vulnerability, finding, vocabulary, scope, origin, digest, contact, document, normalization, merge, and policy types and functions | `model.` (same names) |
+| `Detector`, `Matcher`, `Auditor`, `Analyzer`, `Base*`, `*Descriptor`, `*Request`/`*Result`/`*Response`, `Module`, `*Module`, `HostContext`, `RuntimeInfo`, `Validate*`, `ConfigSchemaFor`, `PluginKind*`, `Consolidated*`, `ExecutionTarget`, `Subproject`, `FilterDetectionResultByScope` | `plugin.` (same names) |
+| `ServeModule`, `Serve*`, `Served*`, `Client`, `HandshakeConfig`, `ClientPluginMap`, `EnvVerbosity`, `EnvPluginConfigFile`, `EnvPluginID`, `RawPluginConfigFromEnv`, `DecodePluginConfigFromEnv` | `runtime.` (same names) |
+| `HTTPClientProvider`, `HTTPClientConfig`, `NewHTTPClientProvider`, `NewHTTPClientProviderFromEnv`, `HTTPClientConfigFromEnv`, `NewHTTPClient`, `EnvHTTP*` | `httpkit.ClientProvider`, `httpkit.ClientConfig`, `httpkit.NewClientProvider`, `httpkit.NewClientProviderFromEnv`, `httpkit.ClientConfigFromEnv`, `httpkit.NewClient`, `httpkit.EnvHTTP*` |
 
-`HostContext.HTTPClient()` now returns `*httpkit.ClientProvider`, so every
-implementer of the interface changes that one return type. `ConfigSchemaFor`
-and `MustConfigSchemaFor` stay in the root. Import the runtime as
-`sdkplugin "github.com/bomly-dev/bomly-sdk/plugin"` in a file whose own
-package is called `plugin`.
+Two spellings changed besides the package: `containsControlChar` is now
+`model.ContainsControlChar`, and the component-name bound is
+`model.MaxComponentNameLength`. `HostContext.HTTPClient()` returns
+`*httpkit.ClientProvider`. A file that already imported the root as `model`
+changes only its import path. A consumer package named `plugin` imports
+`github.com/bomly-dev/bomly-sdk/plugin` under an alias, or renames itself.
 
 ## The SBOM codec
 
