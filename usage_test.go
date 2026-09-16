@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"testing"
 )
 
@@ -286,5 +287,346 @@ func TestSelectUsagesAppliesTheAbsenceRule(t *testing.T) {
 	developmentUsages := SelectUsages(node, nil, UsageFilter{Scope: ScopeDevelopment})
 	if len(developmentUsages) != 1 || developmentUsages[0].ModuleRoot != "apps/api" {
 		t.Errorf("development usages = %+v, want only the site that asserted development", developmentUsages)
+	}
+}
+
+// TestUnknownSummariesKeepTheirReason pins that a summary over undecided
+// evidence still explains itself. "unknown" with no reason tells a reader
+// nothing, while "missing-toolchain" is actionable -- and the reason is the
+// entire content of an unknown result.
+//
+// Found migrating the govulncheck analyzer: its degraded-runner path sets a
+// reason on each module's evidence, and the derived summary dropped it.
+func TestUnknownSummariesKeepTheirReason(t *testing.T) {
+	summary := DeriveReachability([]ReachabilityEvidence{
+		{ModuleRoot: "a", Status: ReachabilityUnknown, Tier: TierNone, Reason: "missing-toolchain", Analyzer: "govulncheck"},
+	})
+	if summary.Status != ReachabilityUnknown {
+		t.Fatalf("status = %q, want unknown", summary.Status)
+	}
+	if summary.Reason != "missing-toolchain" {
+		t.Errorf("reason = %q, want it carried into the summary", summary.Reason)
+	}
+	if summary.Analyzer != "govulncheck" || summary.Tier != TierNone {
+		t.Errorf("summary dropped detail: %+v", summary)
+	}
+	// A mixed set is still unknown, and still explains itself.
+	mixed := DeriveReachability([]ReachabilityEvidence{
+		{ModuleRoot: "a", Status: ReachabilityUnreachable, Reason: "package-not-imported"},
+		{ModuleRoot: "b", Status: ReachabilityUnknown, Reason: "missing-toolchain"},
+	})
+	// It must be the *unknown* item's reason, not the first item's. Taking
+	// evidence[0] here reported "package-not-imported" as the reason the
+	// aggregate was unknown, which is both wrong and order-dependent.
+	if mixed.Status != ReachabilityUnknown || mixed.Reason != "missing-toolchain" {
+		t.Errorf("mixed summary = %+v, want unknown explained by the unknown item", mixed)
+	}
+	// ... whichever order the two arrive in.
+	flipped := DeriveReachability([]ReachabilityEvidence{
+		{ModuleRoot: "b", Status: ReachabilityUnknown, Reason: "missing-toolchain"},
+		{ModuleRoot: "a", Status: ReachabilityUnreachable, Reason: "package-not-imported"},
+	})
+	if flipped.Reason != mixed.Reason {
+		t.Errorf("the reason depends on evidence order: %q vs %q", mixed.Reason, flipped.Reason)
+	}
+	// No evidence at all has nothing to explain.
+	if got := DeriveReachability(nil); got.Status != ReachabilityUnknown || got.Reason != "" {
+		t.Errorf("empty evidence gave %+v", got)
+	}
+}
+
+// TestUnknownSummaryPrefersAnExplainedItem pins the second half of the reason
+// rule. Selecting simply the first unknown item was still order-dependent:
+// two roots both unknown, the first silent and the second carrying
+// "missing-toolchain", gave a bare unknown that changed when the evidence was
+// reordered. The explanation is the whole content of an unknown result, so an
+// item that has one wins.
+func TestUnknownSummaryPrefersAnExplainedItem(t *testing.T) {
+	silentFirst := DeriveReachability([]ReachabilityEvidence{
+		{ModuleRoot: "a", Status: ReachabilityUnknown},
+		{ModuleRoot: "b", Status: ReachabilityUnknown, Reason: "missing-toolchain"},
+	})
+	explainedFirst := DeriveReachability([]ReachabilityEvidence{
+		{ModuleRoot: "b", Status: ReachabilityUnknown, Reason: "missing-toolchain"},
+		{ModuleRoot: "a", Status: ReachabilityUnknown},
+	})
+	if silentFirst.Reason != "missing-toolchain" {
+		t.Errorf("reason = %q, want the explained item to win", silentFirst.Reason)
+	}
+	if silentFirst.Reason != explainedFirst.Reason {
+		t.Errorf("the reason depends on evidence order: %q vs %q", silentFirst.Reason, explainedFirst.Reason)
+	}
+	// A whitespace-only reason explains nothing and does not win either.
+	blank := DeriveReachability([]ReachabilityEvidence{
+		{ModuleRoot: "a", Status: ReachabilityUnknown, Reason: "   "},
+		{ModuleRoot: "b", Status: ReachabilityUnknown, Reason: "missing-toolchain"},
+	})
+	if blank.Reason != "missing-toolchain" {
+		t.Errorf("reason = %q, want a blank reason to lose to a real one", blank.Reason)
+	}
+	// With nothing explained anywhere, it is still unknown and still stable.
+	none := DeriveReachability([]ReachabilityEvidence{
+		{ModuleRoot: "a", Status: ReachabilityUnknown},
+		{ModuleRoot: "b", Status: ReachabilityUnknown},
+	})
+	if none.Status != ReachabilityUnknown || none.Reason != "" {
+		t.Errorf("got %+v, want a bare unknown when nothing explains itself", none)
+	}
+	// Whitespace is not an explanation on the way out either. Trimming only
+	// while choosing left the raw value to be published, so a set whose only
+	// reasons were blank returned "   " -- and returned "" when reversed.
+	for _, order := range [][]ReachabilityEvidence{
+		{{ModuleRoot: "a", Status: ReachabilityUnknown, Reason: "   "}, {ModuleRoot: "b", Status: ReachabilityUnknown}},
+		{{ModuleRoot: "b", Status: ReachabilityUnknown}, {ModuleRoot: "a", Status: ReachabilityUnknown, Reason: "   "}},
+	} {
+		if got := DeriveReachability(order); got.Reason != "" {
+			t.Errorf("a whitespace-only reason published as %q", got.Reason)
+		}
+	}
+}
+
+// TestUndecidedIsWiderThanUnknown pins that a status which is neither
+// reachable nor unreachable counts as undecided when a diagnostic is chosen,
+// not only the exact "unknown" spelling.
+//
+// ReachabilityEvidence has no decode gate, so an item can arrive with its
+// status omitted or misspelled. The count that decides "unreachable" already
+// treats such an item as undecided -- one of them is enough to stop the
+// aggregate being unreachable -- so the reason selection has to agree, or an
+// item with a real reason loses to a decided item's misleading one.
+func TestUndecidedIsWiderThanUnknown(t *testing.T) {
+	for _, status := range []ReachabilityStatus{"", "not-a-status", ReachabilityUnknown} {
+		summary := DeriveReachability([]ReachabilityEvidence{
+			{ModuleRoot: "a", Status: ReachabilityUnreachable, Reason: "package-not-imported"},
+			{ModuleRoot: "b", Status: status, Reason: "missing-toolchain"},
+		})
+		if summary.Status != ReachabilityUnknown {
+			t.Errorf("status %q: aggregate = %q, want unknown", status, summary.Status)
+		}
+		if summary.Reason != "missing-toolchain" {
+			t.Errorf("status %q: reason = %q, want the undecided item's explanation", status, summary.Reason)
+		}
+	}
+}
+
+// sitedNode builds one dependency node with the sites given, so a test can
+// state exactly what the producer recorded and nothing else.
+func sitedNode(t *testing.T, name string, locations ...PackageLocation) *DependencyNode {
+	t.Helper()
+	node, err := NewDependencyNode(Coordinates{Name: name, Version: "1.0.0", Ecosystem: EcosystemNPM})
+	if err != nil {
+		t.Fatalf("NewDependencyNode(%s): %v", name, err)
+	}
+	node.Locations = locations
+	return node
+}
+
+// graphOf wires nodes into a graph, which is what NewRootAttributor
+// calibrates against.
+func graphOf(t *testing.T, nodes ...*DependencyNode) *Graph {
+	t.Helper()
+	g := New()
+	for _, node := range nodes {
+		if err := g.AddNode(node); err != nil {
+			t.Fatalf("AddNode(%s): %v", node.NodeID(), err)
+		}
+	}
+	return g
+}
+
+// TestDeclaredRootAttributesTheSiteAndExcludesTheOthers is the rule at its
+// simplest: a site that names this root establishes the occurrence, and --
+// once the two vocabularies are known to overlap -- a site that names only
+// another root says the node is not here at all.
+func TestDeclaredRootAttributesTheSiteAndExcludesTheOthers(t *testing.T) {
+	node := sitedNode(t, "left-pad", PackageLocation{ModuleRoot: "/ws/api"})
+	attributor := NewRootAttributor([]string{"/ws/api", "/ws/web"}, graphOf(t, node))
+
+	if got := attributor.Attribute(node, "/ws/api"); got != AttributedToSite {
+		t.Errorf("Attribute(own root) = %v, want %v", got, AttributedToSite)
+	}
+	if got := attributor.Attribute(node, "/ws/web"); got != AttributedElsewhere {
+		t.Errorf("Attribute(other root) = %v, want %v", got, AttributedElsewhere)
+	}
+}
+
+// TestDeclaredRootsAreOnlyTrustedWhenTheyShareOurVocabulary guards the
+// degradation path, which is the half most likely to be lost in a rewrite.
+// Detectors record the root they resolved from and an analyzer derives roots
+// from the filesystem; when the two spellings do not overlap, a non-match
+// means they are speaking past each other, not that the package is absent --
+// and dropping the node would lose the finding outright.
+func TestDeclaredRootsAreOnlyTrustedWhenTheyShareOurVocabulary(t *testing.T) {
+	node := sitedNode(t, "left-pad", PackageLocation{ModuleRoot: "apps/api", RealPath: "apps/api/package.json"})
+	attributor := NewRootAttributor([]string{"/ws/api", "/ws/web"}, graphOf(t, node))
+
+	if got := attributor.Attribute(node, "/ws/api"); got != AttributedToRootOnly {
+		t.Errorf("Attribute under a foreign vocabulary = %v, want %v: the evidence must survive with the root as its floor", got, AttributedToRootOnly)
+	}
+}
+
+// TestOneOverlappingSiteCalibratesTheWholePass pins that calibration is a
+// property of the run, not of the node in hand: the node that shares the
+// vocabulary licenses reading the other node's mismatch as absence.
+func TestOneOverlappingSiteCalibratesTheWholePass(t *testing.T) {
+	overlapping := sitedNode(t, "left-pad", PackageLocation{ModuleRoot: "/ws/web"})
+	foreign := sitedNode(t, "right-pad", PackageLocation{ModuleRoot: "/elsewhere/lib"})
+	attributor := NewRootAttributor([]string{"/ws/api", "/ws/web"}, graphOf(t, overlapping, foreign))
+
+	if got := attributor.Attribute(foreign, "/ws/api"); got != AttributedElsewhere {
+		t.Errorf("Attribute(node declaring only a foreign root) = %v, want %v once the run's roots are known to be the same vocabulary", got, AttributedElsewhere)
+	}
+}
+
+// TestSitePathAttributesWithoutADeclaredRoot covers the path half of the
+// rule. A vendored or nested copy lives inside the module that installed it,
+// so its path alone says which root it belongs to.
+func TestSitePathAttributesWithoutADeclaredRoot(t *testing.T) {
+	apiRoot := filepath.Join("/ws", "api")
+	webRoot := filepath.Join("/ws", "web")
+	node := sitedNode(t, "left-pad", PackageLocation{
+		RealPath: filepath.Join(apiRoot, "node_modules", "left-pad", "index.js"),
+	})
+	attributor := NewRootAttributor([]string{apiRoot, webRoot}, graphOf(t, node))
+
+	if got := attributor.Attribute(node, apiRoot); got != AttributedToSite {
+		t.Errorf("Attribute(root containing the site) = %v, want %v", got, AttributedToSite)
+	}
+	if got := attributor.Attribute(node, webRoot); got != AttributedElsewhere {
+		t.Errorf("Attribute(sibling root) = %v, want %v: the copy is installed in a tree this run knows about, and it is not this one", got, AttributedElsewhere)
+	}
+}
+
+// TestSiteOutsideEveryAnalyzedRootIsNotAbsence separates "installed
+// somewhere else we analyze" from "installed somewhere we know nothing
+// about". A module cache or a global store says nothing either way, and
+// reading it as absence would drop every Go and Python finding.
+func TestSiteOutsideEveryAnalyzedRootIsNotAbsence(t *testing.T) {
+	node := sitedNode(t, "left-pad", PackageLocation{
+		RealPath: filepath.Join("/home", "user", "go", "pkg", "mod", "left-pad@v1.0.0", "lib.go"),
+	})
+	attributor := NewRootAttributor([]string{"/ws/api", "/ws/web"}, graphOf(t, node))
+
+	if got := attributor.Attribute(node, "/ws/api"); got != AttributedToRootOnly {
+		t.Errorf("Attribute(site in a shared store) = %v, want %v", got, AttributedToRootOnly)
+	}
+}
+
+// TestSiblingRootPrefixIsNotContainment pins that containment is a question
+// about path elements, not about string prefixes: "/ws/apifoo" is not inside
+// "/ws/api", and treating it as inside would attribute one module's install
+// tree to its neighbour.
+func TestSiblingRootPrefixIsNotContainment(t *testing.T) {
+	node := sitedNode(t, "left-pad", PackageLocation{
+		RealPath: filepath.Join("/ws", "apifoo", "node_modules", "left-pad", "index.js"),
+	})
+	attributor := NewRootAttributor([]string{"/ws/api"}, graphOf(t, node))
+
+	if got := attributor.Attribute(node, "/ws/api"); got != AttributedToRootOnly {
+		t.Errorf("Attribute(sibling whose name shares a prefix) = %v, want %v", got, AttributedToRootOnly)
+	}
+}
+
+// TestDirectoryNamedLikeAnEscapeIsStillInsideTheRoot pins the containment
+// test against the near miss the copies carried: a leading ".." must be a
+// whole path element. Kubernetes secret mounts really do name a directory
+// "..data", and reading that as an escape puts a site outside the root that
+// contains it.
+func TestDirectoryNamedLikeAnEscapeIsStillInsideTheRoot(t *testing.T) {
+	root := filepath.Join("/ws", "api")
+	node := sitedNode(t, "left-pad", PackageLocation{
+		RealPath: filepath.Join(root, "..data", "node_modules", "left-pad", "index.js"),
+	})
+	attributor := NewRootAttributor([]string{root}, graphOf(t, node))
+
+	if got := attributor.Attribute(node, root); got != AttributedToSite {
+		t.Errorf("Attribute(site under a %q directory) = %v, want %v", "..data", got, AttributedToSite)
+	}
+}
+
+// TestUncomparablePathsDoNotAttribute covers the mismatch filepath.Rel
+// reports: a relative site path against an absolute root is neither inside
+// nor outside it, and must read as neither.
+func TestUncomparablePathsDoNotAttribute(t *testing.T) {
+	node := sitedNode(t, "left-pad", PackageLocation{RealPath: filepath.Join("apps", "api", "package.json")})
+	attributor := NewRootAttributor([]string{"/ws/api"}, graphOf(t, node))
+
+	if got := attributor.Attribute(node, "/ws/api"); got != AttributedToRootOnly {
+		t.Errorf("Attribute(relative site, absolute root) = %v, want %v", got, AttributedToRootOnly)
+	}
+}
+
+// TestAttributeEdgeCasesKeepEvidence pins the answers that must never drop a
+// finding: an unattributed node, an empty root (the whole-scan claim), and a
+// zero-value attributor.
+func TestAttributeEdgeCasesKeepEvidence(t *testing.T) {
+	sited := sitedNode(t, "left-pad", PackageLocation{ModuleRoot: "/ws/api", RealPath: "/ws/api/package.json"})
+	bare := sitedNode(t, "right-pad")
+	attributor := NewRootAttributor([]string{"/ws/api"}, graphOf(t, sited, bare))
+
+	if got := attributor.Attribute(bare, "/ws/api"); got != AttributedToRootOnly {
+		t.Errorf("Attribute(node with no sites) = %v, want %v", got, AttributedToRootOnly)
+	}
+	if got := attributor.Attribute(sited, ""); got != AttributedToRootOnly {
+		t.Errorf("Attribute(empty root) = %v, want %v: a whole-scan claim covers every site", got, AttributedToRootOnly)
+	}
+	if got := attributor.Attribute(sited, "   "); got != AttributedToRootOnly {
+		t.Errorf("Attribute(blank root) = %v, want %v", got, AttributedToRootOnly)
+	}
+
+	var zero RootAttributor
+	if got := zero.Attribute(sited, "/ws/api"); got != AttributedToSite {
+		t.Errorf("zero attributor on the node's own root = %v, want %v", got, AttributedToSite)
+	}
+	if got := zero.Attribute(sited, "/ws/web"); got != AttributedToRootOnly {
+		t.Errorf("zero attributor on another root = %v, want %v: knowing no roots means trusting no mismatch", got, AttributedToRootOnly)
+	}
+}
+
+// TestAttributeNilNodeIsElsewhere keeps a typed nil from acquiring evidence.
+func TestAttributeNilNodeIsElsewhere(t *testing.T) {
+	attributor := NewRootAttributor([]string{"/ws/api"}, nil)
+	if got := attributor.Attribute(nil, "/ws/api"); got != AttributedElsewhere {
+		t.Errorf("Attribute(nil node) = %v, want %v", got, AttributedElsewhere)
+	}
+	if got := attributor.Attribute(nil, ""); got != AttributedElsewhere {
+		t.Errorf("Attribute(nil node, empty root) = %v, want %v", got, AttributedElsewhere)
+	}
+}
+
+// TestNewRootAttributorToleratesAnEmptyRun covers the inputs a caller can
+// hand it before it knows anything: no roots, no graph, blank spellings.
+func TestNewRootAttributorToleratesAnEmptyRun(t *testing.T) {
+	node := sitedNode(t, "left-pad", PackageLocation{ModuleRoot: "/ws/api"})
+
+	for _, tc := range []struct {
+		name       string
+		attributor RootAttributor
+	}{
+		{"nil graph", NewRootAttributor([]string{"/ws/web"}, nil)},
+		{"no roots", NewRootAttributor(nil, graphOf(t, node))},
+		{"blank roots", NewRootAttributor([]string{"", "  "}, graphOf(t, node))},
+	} {
+		if got := tc.attributor.Attribute(node, "/ws/web"); got != AttributedToRootOnly {
+			t.Errorf("%s: Attribute = %v, want %v: an uncalibrated run keeps the evidence", tc.name, got, AttributedToRootOnly)
+		}
+	}
+}
+
+// TestRootAttributionString keeps diagnostics readable; a failure message
+// that prints "2" says nothing about what was claimed.
+func TestRootAttributionString(t *testing.T) {
+	for _, tc := range []struct {
+		attribution RootAttribution
+		want        string
+	}{
+		{AttributedElsewhere, "attributed-elsewhere"},
+		{AttributedToRootOnly, "attributed-to-root-only"},
+		{AttributedToSite, "attributed-to-site"},
+		{RootAttribution(7), "root-attribution(7)"},
+	} {
+		if got := tc.attribution.String(); got != tc.want {
+			t.Errorf("RootAttribution(%d).String() = %q, want %q", int(tc.attribution), got, tc.want)
+		}
 	}
 }
