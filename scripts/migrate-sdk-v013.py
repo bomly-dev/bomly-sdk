@@ -12,7 +12,9 @@ and drop a root import that became unused. Run gofmt afterwards.
 import pathlib, re, sys
 
 ROOT = 'github.com/bomly-dev/bomly-sdk'
-ALIASES = r'(?:sdk|model|plugschema|schemav1)'
+# Aliases a consumer might already use for the root package when a document
+# declares no root import of its own (a dot-import, or a file we cannot parse).
+FALLBACK_ALIASES = ['sdk', 'model', 'plugschema', 'schemav1']
 PLUGIN_NAMES = ['ServeDetector', 'ServeMatcher', 'ServeAuditor', 'ServeAnalyzer', 'ServeModule',
                 'ServedDetector', 'ServedMatcher', 'ServedAuditor', 'ServedAnalyzer',
                 'DetectorInstaller', 'ServedDetectorRemediationProvider',
@@ -26,9 +28,14 @@ HTTP_RENAMES = [  # longest first so prefixes never match early
     ('HTTPClientConfig', 'ClientConfig'),
     ('NewHTTPClient', 'NewClient'),
 ]
-RULES = [(re.compile(r'\b' + ALIASES + r'\.(' + '|'.join(PLUGIN_NAMES) + r')\b'), r'sdkplugin.\1')]
-RULES += [(re.compile(r'\b' + ALIASES + r'\.' + old + r'\b'), 'httpkit.' + new) for old, new in HTTP_RENAMES]
-RULES.append((re.compile(r'\b' + ALIASES + r'\.(EnvHTTP[A-Za-z]+)\b'), r'httpkit.\1'))
+
+def rules_for(aliases):
+    """The rewrite rules for documents that refer to the root package by any of `aliases`."""
+    alt = r'(?:' + '|'.join(re.escape(a) for a in aliases) + r')'
+    rules = [(re.compile(r'\b' + alt + r'\.(' + '|'.join(PLUGIN_NAMES) + r')\b'), r'sdkplugin.\1')]
+    rules += [(re.compile(r'\b' + alt + r'\.' + old + r'\b'), 'httpkit.' + new) for old, new in HTTP_RENAMES]
+    rules.append((re.compile(r'\b' + alt + r'\.(EnvHTTP[A-Za-z]+)\b'), r'httpkit.\1'))
+    return rules
 
 IMPORT_BLOCK = re.compile(r'^import \((.*?)^\)', re.S | re.M)
 IMPORT_ONE = re.compile(r'^import (\w+ )?"' + re.escape(ROOT) + r'"\n', re.M)
@@ -41,10 +48,20 @@ FIXTURE = re.compile(r'`package \w+\n.*?\n`', re.S)
 # supported SDK on purpose (bomly-cli test/smoke); its body is left as it is.
 PROTECTED = re.compile(r'const \w*[Ll]egacy\w* = `.*?`', re.S)
 
-def rewrite(text):
-    for pat, rep in RULES:
-        text = pat.sub(rep, text)
-    return text
+ROOT_IMPORT = re.compile(r'^\s*(?:import\s+)?(\w+\s+)?"' + re.escape(ROOT) + r'"\s*$', re.M)
+
+def root_alias(doc):
+    """The selector this document uses for the root package: its import alias, or the package name."""
+    m = ROOT_IMPORT.search(doc)
+    if not m:
+        return None
+    return (m.group(1) or 'sdk').strip()
+
+def rewrite(doc):
+    alias = root_alias(doc)
+    for pat, rep in rules_for([alias] if alias else FALLBACK_ALIASES):
+        doc = pat.sub(rep, doc)
+    return doc
 
 def wanted_imports(doc, block):
     extra = []
@@ -82,21 +99,21 @@ def fix_imports(doc):
 def migrate(path):
     src = path.read_text()
     protected = PROTECTED.findall(src)
-    new = rewrite(src)
-    if new == src:
-        return False
-    # fix each embedded fixture's imports on its own, then the outer file with fixtures masked out
+    # each embedded fixture is rewritten and import-fixed on its own, then the
+    # file around them with the fixtures masked out
     fixtures = []
     def stash(m):
-        fixtures.append(fix_imports(m.group(0)))
+        fixtures.append(fix_imports(rewrite(m.group(0))))
         return '\x00FIXTURE%d\x00' % (len(fixtures) - 1)
-    outer = FIXTURE.sub(stash, new)
-    outer = fix_imports(outer)
+    outer = FIXTURE.sub(stash, src)
+    outer = fix_imports(rewrite(outer))
     # a callable replacement is inserted verbatim, so no escaping of the fixture text
     new = re.sub(r'\x00FIXTURE(\d+)\x00', lambda m: fixtures[int(m.group(1))], outer)
     # restore every protected fixture verbatim, matched by its const name
     by_name = {o[:o.index('=')]: o for o in protected}
     new = PROTECTED.sub(lambda m: by_name.get(m.group(0)[:m.group(0).index('=')], m.group(0)), new)
+    if new == src:
+        return False
     path.write_text(new)
     return True
 

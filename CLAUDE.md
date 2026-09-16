@@ -225,9 +225,11 @@ type that already has a home. What lives where:
 Two things deliberately do not live in the root. The managed-plugin
 transport (go-plugin, gRPC, protobuf) lives only in `plugin/`, and outbound
 HTTP policy lives only in `httpkit/`; `repo_guards_test.go` fails an import
-of those libraries anywhere else. Every wire payload type stays in the root,
-where the omitempty coverage walk can see it -- nothing in `plugin/` is a
-payload.
+of those libraries anywhere else, with one named exception: `conformance/`
+imports go-plugin to launch a built plugin binary over the real transport
+(`ProbeBinary`), exactly as the host does. Every wire payload type stays in
+the root, where the omitempty coverage walk can see it -- nothing in
+`plugin/` is a payload.
 
 ### The modernizer, and the analyzers we decline
 
