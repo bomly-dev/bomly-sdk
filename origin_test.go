@@ -522,3 +522,142 @@ func TestMergeOrigins(t *testing.T) {
 		}
 	}
 }
+
+// TestURLFormReferenceAcceptsCitations pins the reason the third form exists:
+// a homepage is legitimately a bare host with a query, both of which the
+// artifact and repository forms reject or strip.
+func TestURLFormReferenceAcceptsCitations(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{"https://example.test", "https://example.test"},
+		{"https://example.test/", "https://example.test/"},
+		{"https://example.test/docs?page=install", "https://example.test/docs?page=install"},
+		{"https://example.test/advisories#GHSA-1234", "https://example.test/advisories#GHSA-1234"},
+	} {
+		got, ok := NormalizeURL(tc.input, URLFormReference)
+		if !ok {
+			t.Fatalf("NormalizeURL(%q, reference) was rejected", tc.input)
+		}
+		if got != tc.want {
+			t.Fatalf("NormalizeURL(%q, reference) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+// TestURLFormsKeepTheirOwnRules pins that adding the reference form did not
+// loosen the other two.
+func TestURLFormsKeepTheirOwnRules(t *testing.T) {
+	// The artifact form still rejects a query: it marks a signed link.
+	if got, ok := NormalizeURL("https://cdn.test/pkg.tgz?token=abc", URLFormArtifact); ok {
+		t.Fatalf("artifact form accepted a tokenized link: %q", got)
+	}
+	// The repository form still drops one.
+	got, ok := NormalizeURL("https://github.test/owner/repo?rev=main", URLFormRepository)
+	if !ok || got != "https://github.test/owner/repo" {
+		t.Fatalf("repository form = %q ok=%v, want the query dropped", got, ok)
+	}
+	// A host root is still not an artifact or a repository.
+	for _, form := range []URLForm{URLFormArtifact, URLFormRepository} {
+		if got, ok := NormalizeURL("https://registry.test/", form); ok {
+			t.Fatalf("form %v accepted a host root: %q", form, got)
+		}
+	}
+	// Credentials are rejected by every form, the new one included.
+	for _, form := range []URLForm{URLFormArtifact, URLFormRepository, URLFormReference} {
+		if got, ok := NormalizeURL("https://user:pw@example.test/pkg", form); ok {
+			t.Fatalf("form %v accepted embedded credentials: %q", form, got)
+		}
+	}
+	// So are non-web schemes.
+	for _, form := range []URLForm{URLFormArtifact, URLFormRepository, URLFormReference} {
+		for _, raw := range []string{"file:///etc/passwd", "git@github.test:owner/repo.git", "/local/path"} {
+			if got, ok := NormalizeURL(raw, form); ok {
+				t.Fatalf("form %v accepted %q: %q", form, raw, got)
+			}
+		}
+	}
+}
+
+// TestNormalizeOriginURLStillSelectsTheOriginForms pins the compatibility
+// wrapper: detectors and plugins call it by name, and swapping which form the
+// boolean selects would silently change every recorded origin.
+func TestNormalizeOriginURLStillSelectsTheOriginForms(t *testing.T) {
+	if _, ok := NormalizeOriginURL("https://cdn.test/pkg.tgz?token=abc", false); ok {
+		t.Fatal("NormalizeOriginURL(false) accepted a query; it must select the artifact form")
+	}
+	got, ok := NormalizeOriginURL("https://github.test/owner/repo?rev=main", true)
+	if !ok || got != "https://github.test/owner/repo" {
+		t.Fatalf("NormalizeOriginURL(true) = %q ok=%v; it must select the repository form", got, ok)
+	}
+}
+
+// TestReferenceURLRejectsRawQueryWhitespace pins the other fixed-point break
+// the fuzzer caught. A URL's query is the one part url.URL writes back
+// verbatim rather than re-encoding, so a raw space survived one pass and was
+// trimmed on the next -- and this rule runs on both write and read.
+func TestReferenceURLRejectsRawQueryWhitespace(t *testing.T) {
+	for _, raw := range []string{"http://0? #", "https://example.test/docs?a= b", "https://example.test/?\x01"} {
+		if got, ok := NormalizeURL(raw, URLFormReference); ok {
+			// If it is accepted at all, it must at least be a fixed point.
+			again, _ := NormalizeURL(got, URLFormReference)
+			t.Fatalf("NormalizeURL(%q, reference) = %q, which re-normalizes to %q", raw, got, again)
+		}
+	}
+	// An escaped space is fine: it round-trips as written.
+	got, ok := NormalizeURL("https://example.test/docs?a=%20b", URLFormReference)
+	if !ok {
+		t.Fatal("an escaped query space was rejected")
+	}
+	again, ok := NormalizeURL(got, URLFormReference)
+	if !ok || again != got {
+		t.Fatalf("re-normalizing %q gave %q (ok=%v)", got, again, ok)
+	}
+}
+
+// TestNormalizeURLBoundsItsInput pins the byte limit. The reference form keeps
+// the path, query, and fragment, so without a bound one untrusted component
+// could hand url.Parse and the escape canonicalizer a multi-megabyte value and
+// then carry it on every wire round trip.
+func TestNormalizeURLBoundsItsInput(t *testing.T) {
+	oversized := "https://acme.test/" + strings.Repeat("a", maxPublishedURLLength)
+	for _, form := range []URLForm{URLFormArtifact, URLFormRepository, URLFormReference} {
+		if got, ok := NormalizeURL(oversized, form); ok {
+			t.Fatalf("form %v accepted a %d byte URL: %d bytes out", form, len(oversized), len(got))
+		}
+	}
+	// A URL at the limit is still accepted: the bound must not clip real ones.
+	atLimit := "https://acme.test/" + strings.Repeat("a", maxPublishedURLLength-len("https://acme.test/"))
+	if len(atLimit) != maxPublishedURLLength {
+		t.Fatalf("fixture is %d bytes, want exactly the limit", len(atLimit))
+	}
+	if _, ok := NormalizeURL(atLimit, URLFormReference); !ok {
+		t.Fatal("a URL exactly at the limit was rejected")
+	}
+	// A value that canonicalizes to something longer than the limit is
+	// rejected too. Escape canonicalization can grow a string, so a URL just
+	// under the limit could normalize to one just over it -- accepted on
+	// write and rejected on read, which breaks the fixed point the rule
+	// promises. The fuzzer found this one.
+	// Raw bytes in a fragment are percent-encoded on the way out, three
+	// characters for one, so this arrives under the limit and would leave
+	// above it.
+	prefix := "https://acme.test/#"
+	grows := prefix + strings.Repeat("\xa1", 2725)
+	if len(grows) > maxPublishedURLLength {
+		t.Fatalf("fixture is %d bytes, want it under the limit", len(grows))
+	}
+	if len(prefix)+3*2725 <= maxPublishedURLLength {
+		t.Fatalf("fixture would not exceed the limit once encoded; it proves nothing")
+	}
+	if got, ok := NormalizeURL(grows, URLFormReference); ok {
+		t.Fatalf("accepted a value whose normalized form is %d bytes: %d byte limit", len(got), maxPublishedURLLength)
+	}
+
+	// And the gate reaches the callers that matter.
+	contact, ok := (Contact{Kind: ContactKindOrganization, Name: "Acme", URL: oversized}).Normalized()
+	if !ok || contact.URL != "" {
+		t.Fatalf("an oversized contact URL survived: %+v", contact)
+	}
+	if got := NormalizeHomepage(oversized); got != "" {
+		t.Fatalf("an oversized homepage survived: %d bytes", len(got))
+	}
+}

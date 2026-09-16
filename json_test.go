@@ -209,3 +209,104 @@ func TestProtocolV1DetectorDescriptorDefaultsNewOptionalCapabilities(t *testing.
 		t.Fatalf("legacy optional capabilities should remain absent: %#v", descriptor)
 	}
 }
+
+func TestDependencyNodeWireCarriesComponentAssertions(t *testing.T) {
+	graph := New()
+	node := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "react", Version: "18.2.0"})
+	node.Description = "A JavaScript library."
+	node.Homepage = "https://react.test/docs?v=18"
+	node.Supplier = &Contact{Kind: ContactKindOrganization, Name: "Meta"}
+	node.Originator = &Contact{Kind: ContactKindPerson, Name: "Jane Doe"}
+	node.Licenses = []PackageLicense{{Value: "MIT", SPDXExpression: "MIT", Type: LicenseTypeDeclared}}
+	if err := graph.AddNode(node); err != nil {
+		t.Fatalf("add node: %v", err)
+	}
+
+	encoded, err := json.Marshal(graph)
+	if err != nil {
+		t.Fatalf("encode graph: %v", err)
+	}
+	var decoded Graph
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("decode graph: %v", err)
+	}
+	round := decoded.DependencyNodes()
+	if len(round) != 1 {
+		t.Fatalf("decoded %d dependency nodes, want 1", len(round))
+	}
+	got := round[0]
+	if got.Description != node.Description {
+		t.Fatalf("description did not survive the wire: %q", got.Description)
+	}
+	if got.Homepage != node.Homepage {
+		t.Fatalf("homepage did not survive the wire: %q", got.Homepage)
+	}
+	if got.Supplier == nil || got.Supplier.Name != "Meta" {
+		t.Fatalf("supplier did not survive the wire: %+v", got.Supplier)
+	}
+	if got.Originator == nil || got.Originator.Name != "Jane Doe" {
+		t.Fatalf("originator did not survive the wire: %+v", got.Originator)
+	}
+	if len(got.Licenses) != 1 || got.Licenses[0].Type != LicenseTypeDeclared {
+		t.Fatalf("licenses did not survive the wire: %+v", got.Licenses)
+	}
+}
+
+// TestDependencyNodeWireGatesArrivingAssertions pins that the decoder holds a
+// payload to the same rules the encoder does. A plugin is an untrusted
+// producer, so a homepage carrying credentials must not become a stored value
+// that later code trusts because "it came from the wire".
+func TestDependencyNodeWireGatesArrivingAssertions(t *testing.T) {
+	payload := `{"nodes":[{"kind":"dependency","id":"pkg:npm/react@18.2.0","purl":"pkg:npm/react@18.2.0",` +
+		`"homepage":"https://user:pw@react.test/","description":"bad\u0007text",` +
+		`"supplier":{"kind":"organization","name":"Acme\nInc"}}]}`
+	var decoded Graph
+	if err := json.Unmarshal([]byte(payload), &decoded); err != nil {
+		t.Fatalf("decode graph: %v", err)
+	}
+	nodes := decoded.DependencyNodes()
+	if len(nodes) != 1 {
+		t.Fatalf("decoded %d dependency nodes, want 1", len(nodes))
+	}
+	got := nodes[0]
+	if got.Homepage != "" {
+		t.Fatalf("credentials survived the decoder: %q", got.Homepage)
+	}
+	if got.Description != "badtext" {
+		t.Fatalf("description = %q, want the control character dropped", got.Description)
+	}
+	if got.Supplier != nil {
+		t.Fatalf("an unpublishable supplier survived the decoder: %+v", got.Supplier)
+	}
+}
+
+// TestRejectedOptionalAssertionsLeaveNoEmptyWireObjects pins the two shapes
+// that omitempty cannot suppress on its own: a non-nil pointer to a rejected
+// value, and a rejected element inside a slice. Both would publish an empty
+// object where the assertion was supposed to have been dropped.
+func TestRejectedOptionalAssertionsLeaveNoEmptyWireObjects(t *testing.T) {
+	payload := `{"nodes":[{"kind":"dependency","id":"pkg:npm/a@1.0.0","purl":"pkg:npm/a@1.0.0",` +
+		`"supplier":{"kind":"organization"},"originator":{},` +
+		`"digests":[{"algorithm":"crc32","value":"zz"},{"algorithm":"sha256","value":"abc"}]}]}`
+	var decoded Graph
+	if err := json.Unmarshal([]byte(payload), &decoded); err != nil {
+		t.Fatalf("decode graph: %v", err)
+	}
+	node := decoded.DependencyNodes()[0]
+	if node.Supplier != nil || node.Originator != nil {
+		t.Fatalf("a rejected contact survived as a pointer: supplier=%+v originator=%+v", node.Supplier, node.Originator)
+	}
+	if len(node.Digests) != 1 || node.Digests[0].Algorithm != DigestAlgorithmSHA256 {
+		t.Fatalf("digests = %+v, want only the publishable one", node.Digests)
+	}
+
+	encoded, err := json.Marshal(&decoded)
+	if err != nil {
+		t.Fatalf("encode graph: %v", err)
+	}
+	for _, forbidden := range []string{`"supplier":{}`, `"originator":{}`, `{},`, `[{}`} {
+		if strings.Contains(string(encoded), forbidden) {
+			t.Fatalf("encoded graph contains %s: %s", forbidden, encoded)
+		}
+	}
+}

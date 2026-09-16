@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -650,5 +651,81 @@ func TestFoldKeepsUnattributedAndAttributedRecordsOfOneSiteDistinct(t *testing.T
 		if !seen[""] || !seen["packages/a"] {
 			t.Errorf("%s: module roots = %v, want both the empty and the attributed root", name, seen)
 		}
+	}
+}
+
+// TestDependencyFoldMergesComponentAssertions pins the fold's classes: license
+// claims union across witnesses, the scalar assertions fill gaps, and an
+// existing claim is not overwritten by a later witness.
+func TestDependencyFoldMergesComponentAssertions(t *testing.T) {
+	graph := New()
+	first := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "react", Version: "18.2.0"})
+	first.Licenses = []PackageLicense{{Value: "MIT", SPDXExpression: "MIT", Type: LicenseTypeDeclared}}
+	first.Description = "From the lockfile."
+	if err := graph.AddNode(first); err != nil {
+		t.Fatalf("add first: %v", err)
+	}
+
+	second := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "react", Version: "18.2.0"})
+	second.Licenses = []PackageLicense{{Value: "Apache-2.0", SPDXExpression: "Apache-2.0", Type: LicenseTypeConcluded}}
+	second.Description = "From an SBOM."
+	second.Homepage = "https://react.test"
+	second.Supplier = &Contact{Kind: ContactKindOrganization, Name: "Meta"}
+	if _, err := graph.InsertNode(second); err != nil {
+		t.Fatalf("insert second: %v", err)
+	}
+
+	folded := graph.DependencyNodes()
+	if len(folded) != 1 {
+		t.Fatalf("folded to %d nodes, want 1", len(folded))
+	}
+	got := folded[0]
+	if len(got.Licenses) != 2 {
+		t.Fatalf("licenses = %+v, want both witnesses' claims", got.Licenses)
+	}
+	if got.Description != "From the lockfile." {
+		t.Fatalf("description = %q, want the surviving claim kept", got.Description)
+	}
+	if got.Homepage != "https://react.test" {
+		t.Fatalf("homepage = %q, want the second witness to fill the gap", got.Homepage)
+	}
+	if got.Supplier == nil || got.Supplier.Name != "Meta" {
+		t.Fatalf("supplier = %+v, want the second witness to fill the gap", got.Supplier)
+	}
+}
+
+// TestFoldGatesBothWitnessesBeforeMeasuringTheGap pins the ordering. A node
+// built in process never passed a codec, so a survivor can hold a value that
+// is non-empty (and so blocks the gap-fill) but unpublishable (and so is
+// dropped at encode) — losing a good assertion to a witness that never had one.
+func TestFoldGatesBothWitnessesBeforeMeasuringTheGap(t *testing.T) {
+	graph := New()
+	first := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "react", Version: "18.2.0"})
+	first.Homepage = "https://user:pw@evil.test/"
+	first.Supplier = &Contact{Kind: ContactKindOrganization, Name: "Acme\nInc"}
+	if err := graph.AddNode(first); err != nil {
+		t.Fatalf("add first: %v", err)
+	}
+
+	second := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "react", Version: "18.2.0"})
+	second.Homepage = "https://react.test"
+	second.Supplier = &Contact{Kind: ContactKindOrganization, Name: "Meta"}
+	if _, err := graph.InsertNode(second); err != nil {
+		t.Fatalf("insert second: %v", err)
+	}
+
+	folded := graph.DependencyNodes()[0]
+	if folded.Homepage != "https://react.test" {
+		t.Fatalf("homepage = %q, want the valid witness to win over the unpublishable one", folded.Homepage)
+	}
+	if folded.Supplier == nil || folded.Supplier.Name != "Meta" {
+		t.Fatalf("supplier = %+v, want the valid witness to win", folded.Supplier)
+	}
+	encoded, err := json.Marshal(graph)
+	if err != nil {
+		t.Fatalf("encode graph: %v", err)
+	}
+	if !strings.Contains(string(encoded), "https://react.test") {
+		t.Fatalf("the valid homepage did not survive to the wire: %s", encoded)
 	}
 }
