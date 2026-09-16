@@ -5,32 +5,6 @@ import (
 	"testing"
 )
 
-// workspaceNode is the case per-site attribution exists for: one package
-// version used two ways. In "apps/web" it is a direct development dependency;
-// in "apps/api" it is a transitive runtime dependency.
-func workspaceNode(t *testing.T) *DependencyNode {
-	t.Helper()
-	node, err := NewDependencyNode(Coordinates{Name: "left-pad", Version: "1.3.0", Ecosystem: EcosystemNPM})
-	if err != nil {
-		t.Fatalf("NewDependencyNode: %v", err)
-	}
-	node.Locations = []PackageLocation{
-		{
-			RealPath:     "apps/web/package.json",
-			ModuleRoot:   "apps/web",
-			Scopes:       []Scope{ScopeDevelopment},
-			Relationship: DependencyRelationshipDirect,
-		},
-		{
-			RealPath:     "apps/api/package-lock.json",
-			ModuleRoot:   "apps/api",
-			Scopes:       []Scope{ScopeRuntime},
-			Relationship: DependencyRelationshipTransitive,
-		},
-	}
-	return node
-}
-
 // TestTheUnionAnswersAQuestionNoUsageAnswers is the defect this whole change
 // exists to prevent, stated as a test. Asked of the node's unions, "runtime
 // and direct" is true; asked of its usages, it is true of neither. A filter

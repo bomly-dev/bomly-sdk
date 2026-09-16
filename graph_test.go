@@ -932,14 +932,6 @@ func assertBefore(t *testing.T, ids []string, first, second string) {
 	}
 }
 
-func idsOf(nodes []GraphNode) []string {
-	ids := make([]string, 0, len(nodes))
-	for _, n := range nodes {
-		ids = append(ids, n.NodeID())
-	}
-	return ids
-}
-
 func depIDsOf(nodes []*DependencyNode) []string {
 	ids := make([]string, 0, len(nodes))
 	for _, n := range nodes {
