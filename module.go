@@ -77,7 +77,7 @@ type AnalyzerModule struct {
 
 // Module is the execution-neutral packaging of one component. Exactly one of
 // the role fields must be set, and it must match Kind. The same Module value
-// can be registered embedded by the host or served managed via ServeModule.
+// can be registered embedded by the host or served managed via plugin.ServeModule.
 type Module struct {
 	Kind     PluginKind
 	Detector *DetectorModule

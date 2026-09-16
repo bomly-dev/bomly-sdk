@@ -1,4 +1,4 @@
-package sdk
+package plugin
 
 import (
 	"encoding/json"

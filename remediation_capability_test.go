@@ -95,3 +95,12 @@ func TestDetectorDescriptorCloneDeepCopiesRemediationCapabilities(t *testing.T) 
 		t.Fatalf("Clone() shared remediation capability slices: %#v", descriptor)
 	}
 }
+
+func TestValidateAnalyzerDescriptorNil(t *testing.T) {
+	if err := ValidateAnalyzerDescriptor(nil); err == nil {
+		t.Fatal("expected error for nil analyzer descriptor")
+	}
+	if err := ValidateAnalyzerDescriptor(&AnalyzerDescriptor{Name: "ok"}); err != nil {
+		t.Fatalf("valid descriptor rejected: %v", err)
+	}
+}

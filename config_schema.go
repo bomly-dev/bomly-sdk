@@ -12,7 +12,7 @@ import (
 // ConfigSchemaFor derives a JSON Schema (draft 2020-12 subset) for a
 // component's configuration block from a prototype struct. Declare your
 // configuration once as a typed Go struct, decode it at runtime with
-// DecodePluginConfigFromEnv, and advertise its shape in the descriptor:
+// HostContext.DecodeConfig, and advertise its shape in the descriptor:
 //
 //	type Config struct {
 //		Endpoint string `json:"endpoint" doc:"API endpoint override" default:"https://api.example.com"`

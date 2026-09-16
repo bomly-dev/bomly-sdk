@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-// wireRoots are the payloads serve.go encodes and decodes for bomly.plugin.v1.
+// wireRoots are the payloads plugin/serve.go encodes and decodes for bomly.plugin.v1.
 //
-// Taken from serve.go rather than chosen. A hand-picked root set was one of
+// Taken from plugin/serve.go rather than chosen. A hand-picked root set was one of
 // this rule's earlier bugs: it listed thirteen types that seemed reasonable
 // and reached a sixth of the wire.
 var wireRoots = []any{

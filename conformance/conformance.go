@@ -33,6 +33,7 @@ import (
 
 	sdk "github.com/bomly-dev/bomly-sdk"
 	"github.com/bomly-dev/bomly-sdk/httpkit"
+	"github.com/bomly-dev/bomly-sdk/plugin"
 )
 
 // cancelledContextTimeout bounds how long a component may take to return from
@@ -316,8 +317,8 @@ func ProbeBinary(t *testing.T, binaryPath string, opts ...ProbeOption) {
 	}
 
 	client := hplugin.NewClient(&hplugin.ClientConfig{
-		HandshakeConfig:  sdk.HandshakeConfig(),
-		Plugins:          sdk.ClientPluginMap(),
+		HandshakeConfig:  plugin.HandshakeConfig(),
+		Plugins:          plugin.ClientPluginMap(),
 		Cmd:              exec.Command(binaryPath),
 		AllowedProtocols: []hplugin.Protocol{hplugin.ProtocolGRPC},
 	})
@@ -331,9 +332,9 @@ func ProbeBinary(t *testing.T, binaryPath string, opts ...ProbeOption) {
 	if err != nil {
 		t.Fatalf("dispense plugin service: %v", err)
 	}
-	service, ok := raw.(sdk.Client)
+	service, ok := raw.(plugin.Client)
 	if !ok {
-		t.Fatalf("dispensed value %T does not implement sdk.Client", raw)
+		t.Fatalf("dispensed value %T does not implement plugin.Client", raw)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -348,7 +349,7 @@ func ProbeBinary(t *testing.T, binaryPath string, opts ...ProbeOption) {
 
 // probeModuleDescriptor fetches the descriptor for the module's kind over the
 // transport and asserts it equals the in-process descriptor.
-func probeModuleDescriptor(ctx context.Context, t *testing.T, service sdk.Client, m sdk.Module) {
+func probeModuleDescriptor(ctx context.Context, t *testing.T, service plugin.Client, m sdk.Module) {
 	t.Helper()
 	var remote, local any
 	var err error
@@ -388,7 +389,7 @@ func probeModuleDescriptor(ctx context.Context, t *testing.T, service sdk.Client
 
 // probeAnyDescriptor tries every role descriptor RPC and requires exactly one
 // role to be implemented with a valid descriptor.
-func probeAnyDescriptor(ctx context.Context, t *testing.T, service sdk.Client) {
+func probeAnyDescriptor(ctx context.Context, t *testing.T, service plugin.Client) {
 	t.Helper()
 	var served []string
 	if descriptor, err := service.DetectorDescriptor(ctx); err == nil {

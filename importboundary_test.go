@@ -55,6 +55,35 @@ var boundedImports = []struct {
 		kitDir:  "sbom",
 		allowed: map[string]string{},
 	},
+	{
+		// The HashiCorp go-plugin transport is the managed-plugin runtime
+		// and nothing else. Both ends of the handshake -- HandshakeConfig
+		// and ClientPluginMap on the host side, Serve* on the plugin side
+		// -- live in plugin/, so a second importer is a second place the
+		// magic cookie or the plugin map could drift from what the other
+		// end expects.
+		module: "github.com/hashicorp/go-plugin",
+		kitDir: "plugin",
+		allowed: map[string]string{
+			"conformance/conformance.go": "ProbeBinary launches the built plugin binary over the real transport, exactly as the host does",
+		},
+	},
+	{
+		// gRPC is the wire beneath go-plugin. The bomly.plugin.v1 service
+		// -- its method names, status codes, and BytesValue envelopes -- is
+		// declared once in plugin/; a direct import elsewhere puts protocol
+		// shape outside the file that owns it.
+		module:  "google.golang.org/grpc",
+		kitDir:  "plugin",
+		allowed: map[string]string{},
+	},
+	{
+		// The protobuf well-known types are the envelopes of that service
+		// and travel with it.
+		module:  "google.golang.org/protobuf",
+		kitDir:  "plugin",
+		allowed: map[string]string{},
+	},
 }
 
 // TestThirdPartyParsersAreConfinedToTheirKits fails when a bounded library

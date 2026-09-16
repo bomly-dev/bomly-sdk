@@ -1,4 +1,4 @@
-package sdk
+package plugin
 
 import (
 	"context"
@@ -13,6 +13,8 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
+
+	sdk "github.com/bomly-dev/bomly-sdk"
 )
 
 const pluginName = "bomly"
@@ -22,11 +24,11 @@ const pluginName = "bomly"
 // reports readiness/applicability for a planned scan target, and returns one or
 // more manifest-scoped dependency graphs from Detect.
 type ServedDetector interface {
-	Descriptor(context.Context) (*DetectorDescriptor, error)
-	PackageManagerSupport(context.Context) ([]PackageManagerSupport, error)
-	Ready(context.Context, *DetectRequest) (*ReadyResponse, error)
-	Applicable(context.Context, *DetectRequest) (*ApplicableResponse, error)
-	Detect(context.Context, *DetectRequest) (*DetectResponse, error)
+	Descriptor(context.Context) (*sdk.DetectorDescriptor, error)
+	PackageManagerSupport(context.Context) ([]sdk.PackageManagerSupport, error)
+	Ready(context.Context, *sdk.DetectRequest) (*sdk.ReadyResponse, error)
+	Applicable(context.Context, *sdk.DetectRequest) (*sdk.ApplicableResponse, error)
+	Detect(context.Context, *sdk.DetectRequest) (*sdk.DetectResponse, error)
 }
 
 // DetectorInstaller optionally performs install-first preparation before
@@ -34,13 +36,13 @@ type ServedDetector interface {
 // dependencies before reading them; Bomly calls it only when install-first
 // execution is requested.
 type DetectorInstaller interface {
-	Install(context.Context, *DetectRequest) (*InstallResponse, error)
+	Install(context.Context, *sdk.DetectRequest) (*sdk.InstallResponse, error)
 }
 
 // ServedDetectorRemediationProvider optionally supplies read-only,
 // package-manager-specific remediation evidence.
 type ServedDetectorRemediationProvider interface {
-	RemediationHints(context.Context, *RemediationHintRequest) (*RemediationHintResponse, error)
+	RemediationHints(context.Context, *sdk.RemediationHintRequest) (*sdk.RemediationHintResponse, error)
 }
 
 // ServedMatcher is the matcher interface implemented by external matcher
@@ -48,43 +50,43 @@ type ServedDetectorRemediationProvider interface {
 // then return the registry with package enrichment such as licenses,
 // vulnerabilities, lifecycle data, or other metadata.
 type ServedMatcher interface {
-	Descriptor(context.Context) (*MatcherDescriptor, error)
-	Ready(context.Context, *MatchRequest) (*ReadyResponse, error)
-	Applicable(context.Context, *MatchRequest) (*ApplicableResponse, error)
-	Match(context.Context, *MatchRequest) (*MatchResponse, error)
+	Descriptor(context.Context) (*sdk.MatcherDescriptor, error)
+	Ready(context.Context, *sdk.MatchRequest) (*sdk.ReadyResponse, error)
+	Applicable(context.Context, *sdk.MatchRequest) (*sdk.ApplicableResponse, error)
+	Match(context.Context, *sdk.MatchRequest) (*sdk.MatchResponse, error)
 }
 
 // ServedAuditor is the auditor interface implemented by external auditor
 // plugins. Auditors read graph and registry data and return reference-style
 // findings, risk scores, and run metadata.
 type ServedAuditor interface {
-	Descriptor(context.Context) (*AuditorDescriptor, error)
-	Ready(context.Context, *AuditRequest) (*ReadyResponse, error)
-	Applicable(context.Context, *AuditRequest) (*ApplicableResponse, error)
-	Audit(context.Context, *AuditRequest) (*AuditResponse, error)
+	Descriptor(context.Context) (*sdk.AuditorDescriptor, error)
+	Ready(context.Context, *sdk.AuditRequest) (*sdk.ReadyResponse, error)
+	Applicable(context.Context, *sdk.AuditRequest) (*sdk.ApplicableResponse, error)
+	Audit(context.Context, *sdk.AuditRequest) (*sdk.AuditResponse, error)
 }
 
 // Client is the generic runtime client used by Bomly core.
 type Client interface {
-	DetectorDescriptor(context.Context) (*DetectorDescriptor, error)
-	DetectorPackageManagerSupport(context.Context) ([]PackageManagerSupport, error)
-	DetectorReady(context.Context, *DetectRequest) (*ReadyResponse, error)
-	DetectorApplicable(context.Context, *DetectRequest) (*ApplicableResponse, error)
-	DetectorInstall(context.Context, *DetectRequest) (*InstallResponse, error)
-	Detect(context.Context, *DetectRequest) (*DetectResponse, error)
-	DetectorRemediationHints(context.Context, *RemediationHintRequest) (*RemediationHintResponse, error)
-	MatcherDescriptor(context.Context) (*MatcherDescriptor, error)
-	MatcherReady(context.Context, *MatchRequest) (*ReadyResponse, error)
-	MatcherApplicable(context.Context, *MatchRequest) (*ApplicableResponse, error)
-	Match(context.Context, *MatchRequest) (*MatchResponse, error)
-	AuditorDescriptor(context.Context) (*AuditorDescriptor, error)
-	AuditorReady(context.Context, *AuditRequest) (*ReadyResponse, error)
-	AuditorApplicable(context.Context, *AuditRequest) (*ApplicableResponse, error)
-	Audit(context.Context, *AuditRequest) (*AuditResponse, error)
-	AnalyzerDescriptor(context.Context) (*AnalyzerDescriptor, error)
-	AnalyzerReady(context.Context, *AnalyzeRequest) (*ReadyResponse, error)
-	AnalyzerApplicable(context.Context, *AnalyzeRequest) (*ApplicableResponse, error)
-	Analyze(context.Context, *AnalyzeRequest) (*AnalyzeResponse, error)
+	DetectorDescriptor(context.Context) (*sdk.DetectorDescriptor, error)
+	DetectorPackageManagerSupport(context.Context) ([]sdk.PackageManagerSupport, error)
+	DetectorReady(context.Context, *sdk.DetectRequest) (*sdk.ReadyResponse, error)
+	DetectorApplicable(context.Context, *sdk.DetectRequest) (*sdk.ApplicableResponse, error)
+	DetectorInstall(context.Context, *sdk.DetectRequest) (*sdk.InstallResponse, error)
+	Detect(context.Context, *sdk.DetectRequest) (*sdk.DetectResponse, error)
+	DetectorRemediationHints(context.Context, *sdk.RemediationHintRequest) (*sdk.RemediationHintResponse, error)
+	MatcherDescriptor(context.Context) (*sdk.MatcherDescriptor, error)
+	MatcherReady(context.Context, *sdk.MatchRequest) (*sdk.ReadyResponse, error)
+	MatcherApplicable(context.Context, *sdk.MatchRequest) (*sdk.ApplicableResponse, error)
+	Match(context.Context, *sdk.MatchRequest) (*sdk.MatchResponse, error)
+	AuditorDescriptor(context.Context) (*sdk.AuditorDescriptor, error)
+	AuditorReady(context.Context, *sdk.AuditRequest) (*sdk.ReadyResponse, error)
+	AuditorApplicable(context.Context, *sdk.AuditRequest) (*sdk.ApplicableResponse, error)
+	Audit(context.Context, *sdk.AuditRequest) (*sdk.AuditResponse, error)
+	AnalyzerDescriptor(context.Context) (*sdk.AnalyzerDescriptor, error)
+	AnalyzerReady(context.Context, *sdk.AnalyzeRequest) (*sdk.ReadyResponse, error)
+	AnalyzerApplicable(context.Context, *sdk.AnalyzeRequest) (*sdk.ApplicableResponse, error)
+	Analyze(context.Context, *sdk.AnalyzeRequest) (*sdk.AnalyzeResponse, error)
 }
 
 // HandshakeConfig returns the shared HashiCorp go-plugin handshake configuration.
@@ -189,7 +191,7 @@ func (s *serviceServer) DetectorDescriptor(ctx context.Context, _ *emptypb.Empty
 	if err != nil {
 		return nil, err
 	}
-	if err := ValidateDetectorDescriptor(descriptor); err != nil {
+	if err := sdk.ValidateDetectorDescriptor(descriptor); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid detector descriptor: %v", err)
 	}
 	data, err := json.Marshal(descriptor)
@@ -223,11 +225,11 @@ func (s *serviceServer) Detect(ctx context.Context, in *wrapperspb.BytesValue) (
 	if s.detector == nil {
 		return nil, status.Error(codes.Unimplemented, "detector not implemented")
 	}
-	req, err := unmarshalPayload[DetectRequest](in)
+	req, err := unmarshalPayload[sdk.DetectRequest](in)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "decode detect request: %v", err)
 	}
-	return marshalResponse(ctx, func(ctx context.Context) (*DetectResponse, error) {
+	return marshalResponse(ctx, func(ctx context.Context) (*sdk.DetectResponse, error) {
 		return s.detector.Detect(ctx, req)
 	})
 }
@@ -236,11 +238,11 @@ func (s *serviceServer) DetectorReady(ctx context.Context, in *wrapperspb.BytesV
 	if s.detector == nil {
 		return nil, status.Error(codes.Unimplemented, "detector not implemented")
 	}
-	req, err := unmarshalPayload[DetectRequest](in)
+	req, err := unmarshalPayload[sdk.DetectRequest](in)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "decode detector ready request: %v", err)
 	}
-	return marshalResponse(ctx, func(ctx context.Context) (*ReadyResponse, error) {
+	return marshalResponse(ctx, func(ctx context.Context) (*sdk.ReadyResponse, error) {
 		return s.detector.Ready(ctx, req)
 	})
 }
@@ -249,11 +251,11 @@ func (s *serviceServer) DetectorApplicable(ctx context.Context, in *wrapperspb.B
 	if s.detector == nil {
 		return nil, status.Error(codes.Unimplemented, "detector not implemented")
 	}
-	req, err := unmarshalPayload[DetectRequest](in)
+	req, err := unmarshalPayload[sdk.DetectRequest](in)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "decode detector applicable request: %v", err)
 	}
-	return marshalResponse(ctx, func(ctx context.Context) (*ApplicableResponse, error) {
+	return marshalResponse(ctx, func(ctx context.Context) (*sdk.ApplicableResponse, error) {
 		return s.detector.Applicable(ctx, req)
 	})
 }
@@ -262,15 +264,15 @@ func (s *serviceServer) DetectorInstall(ctx context.Context, in *wrapperspb.Byte
 	if s.detector == nil {
 		return nil, status.Error(codes.Unimplemented, "detector not implemented")
 	}
-	req, err := unmarshalPayload[DetectRequest](in)
+	req, err := unmarshalPayload[sdk.DetectRequest](in)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "decode detector install request: %v", err)
 	}
-	return marshalResponse(ctx, func(ctx context.Context) (*InstallResponse, error) {
+	return marshalResponse(ctx, func(ctx context.Context) (*sdk.InstallResponse, error) {
 		if detector, ok := s.detector.(DetectorInstaller); ok {
 			return detector.Install(ctx, req)
 		}
-		return &InstallResponse{}, nil
+		return &sdk.InstallResponse{}, nil
 	})
 }
 
@@ -282,11 +284,11 @@ func (s *serviceServer) DetectorRemediationHints(ctx context.Context, in *wrappe
 	if !ok {
 		return nil, status.Error(codes.Unimplemented, "detector remediation hints not implemented")
 	}
-	req, err := unmarshalPayload[RemediationHintRequest](in)
+	req, err := unmarshalPayload[sdk.RemediationHintRequest](in)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "decode detector remediation hint request: %v", err)
 	}
-	return marshalResponse(ctx, func(ctx context.Context) (*RemediationHintResponse, error) {
+	return marshalResponse(ctx, func(ctx context.Context) (*sdk.RemediationHintResponse, error) {
 		return provider.RemediationHints(ctx, req)
 	})
 }
@@ -295,11 +297,11 @@ func (s *serviceServer) Match(ctx context.Context, in *wrapperspb.BytesValue) (*
 	if s.matcher == nil {
 		return nil, status.Error(codes.Unimplemented, "matcher not implemented")
 	}
-	req, err := unmarshalPayload[MatchRequest](in)
+	req, err := unmarshalPayload[sdk.MatchRequest](in)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "decode match request: %v", err)
 	}
-	return marshalResponse(ctx, func(ctx context.Context) (*MatchResponse, error) {
+	return marshalResponse(ctx, func(ctx context.Context) (*sdk.MatchResponse, error) {
 		return s.matcher.Match(ctx, req)
 	})
 }
@@ -312,7 +314,7 @@ func (s *serviceServer) MatcherDescriptor(ctx context.Context, _ *emptypb.Empty)
 	if err != nil {
 		return nil, err
 	}
-	if err := ValidateMatcherDescriptor(descriptor); err != nil {
+	if err := sdk.ValidateMatcherDescriptor(descriptor); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid matcher descriptor: %v", err)
 	}
 	data, err := json.Marshal(descriptor)
@@ -326,11 +328,11 @@ func (s *serviceServer) MatcherReady(ctx context.Context, in *wrapperspb.BytesVa
 	if s.matcher == nil {
 		return nil, status.Error(codes.Unimplemented, "matcher not implemented")
 	}
-	req, err := unmarshalPayload[MatchRequest](in)
+	req, err := unmarshalPayload[sdk.MatchRequest](in)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "decode matcher ready request: %v", err)
 	}
-	return marshalResponse(ctx, func(ctx context.Context) (*ReadyResponse, error) {
+	return marshalResponse(ctx, func(ctx context.Context) (*sdk.ReadyResponse, error) {
 		return s.matcher.Ready(ctx, req)
 	})
 }
@@ -339,11 +341,11 @@ func (s *serviceServer) MatcherApplicable(ctx context.Context, in *wrapperspb.By
 	if s.matcher == nil {
 		return nil, status.Error(codes.Unimplemented, "matcher not implemented")
 	}
-	req, err := unmarshalPayload[MatchRequest](in)
+	req, err := unmarshalPayload[sdk.MatchRequest](in)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "decode matcher applicable request: %v", err)
 	}
-	return marshalResponse(ctx, func(ctx context.Context) (*ApplicableResponse, error) {
+	return marshalResponse(ctx, func(ctx context.Context) (*sdk.ApplicableResponse, error) {
 		return s.matcher.Applicable(ctx, req)
 	})
 }
@@ -352,11 +354,11 @@ func (s *serviceServer) Audit(ctx context.Context, in *wrapperspb.BytesValue) (*
 	if s.auditor == nil {
 		return nil, status.Error(codes.Unimplemented, "auditor not implemented")
 	}
-	req, err := unmarshalPayload[AuditRequest](in)
+	req, err := unmarshalPayload[sdk.AuditRequest](in)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "decode audit request: %v", err)
 	}
-	return marshalResponse(ctx, func(ctx context.Context) (*AuditResponse, error) {
+	return marshalResponse(ctx, func(ctx context.Context) (*sdk.AuditResponse, error) {
 		return s.auditor.Audit(ctx, req)
 	})
 }
@@ -369,7 +371,7 @@ func (s *serviceServer) AuditorDescriptor(ctx context.Context, _ *emptypb.Empty)
 	if err != nil {
 		return nil, err
 	}
-	if err := ValidateAuditorDescriptor(descriptor); err != nil {
+	if err := sdk.ValidateAuditorDescriptor(descriptor); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid auditor descriptor: %v", err)
 	}
 	data, err := json.Marshal(descriptor)
@@ -383,11 +385,11 @@ func (s *serviceServer) AuditorReady(ctx context.Context, in *wrapperspb.BytesVa
 	if s.auditor == nil {
 		return nil, status.Error(codes.Unimplemented, "auditor not implemented")
 	}
-	req, err := unmarshalPayload[AuditRequest](in)
+	req, err := unmarshalPayload[sdk.AuditRequest](in)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "decode auditor ready request: %v", err)
 	}
-	return marshalResponse(ctx, func(ctx context.Context) (*ReadyResponse, error) {
+	return marshalResponse(ctx, func(ctx context.Context) (*sdk.ReadyResponse, error) {
 		return s.auditor.Ready(ctx, req)
 	})
 }
@@ -396,11 +398,11 @@ func (s *serviceServer) AuditorApplicable(ctx context.Context, in *wrapperspb.By
 	if s.auditor == nil {
 		return nil, status.Error(codes.Unimplemented, "auditor not implemented")
 	}
-	req, err := unmarshalPayload[AuditRequest](in)
+	req, err := unmarshalPayload[sdk.AuditRequest](in)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "decode auditor applicable request: %v", err)
 	}
-	return marshalResponse(ctx, func(ctx context.Context) (*ApplicableResponse, error) {
+	return marshalResponse(ctx, func(ctx context.Context) (*sdk.ApplicableResponse, error) {
 		return s.auditor.Applicable(ctx, req)
 	})
 }
@@ -409,84 +411,84 @@ type serviceClient struct {
 	conn grpc.ClientConnInterface
 }
 
-func (c *serviceClient) DetectorDescriptor(ctx context.Context) (*DetectorDescriptor, error) {
+func (c *serviceClient) DetectorDescriptor(ctx context.Context) (*sdk.DetectorDescriptor, error) {
 	out := new(wrapperspb.BytesValue)
 	if err := c.conn.Invoke(ctx, "/bomly.plugin.v1.Plugin/DetectorDescriptor", &emptypb.Empty{}, out); err != nil {
 		return nil, err
 	}
-	return unmarshalBytes[DetectorDescriptor](out.Value)
+	return unmarshalBytes[sdk.DetectorDescriptor](out.Value)
 }
 
-func (c *serviceClient) DetectorPackageManagerSupport(ctx context.Context) ([]PackageManagerSupport, error) {
+func (c *serviceClient) DetectorPackageManagerSupport(ctx context.Context) ([]sdk.PackageManagerSupport, error) {
 	out := new(wrapperspb.BytesValue)
 	if err := c.conn.Invoke(ctx, "/bomly.plugin.v1.Plugin/DetectorPackageManagerSupport", &emptypb.Empty{}, out); err != nil {
 		return nil, err
 	}
-	support, err := unmarshalBytes[[]PackageManagerSupport](out.Value)
+	support, err := unmarshalBytes[[]sdk.PackageManagerSupport](out.Value)
 	if err != nil || support == nil {
 		return nil, err
 	}
 	return *support, nil
 }
 
-func (c *serviceClient) Detect(ctx context.Context, req *DetectRequest) (*DetectResponse, error) {
-	return invokeJSON[DetectRequest, DetectResponse](ctx, c.conn, "/bomly.plugin.v1.Plugin/Detect", req)
+func (c *serviceClient) Detect(ctx context.Context, req *sdk.DetectRequest) (*sdk.DetectResponse, error) {
+	return invokeJSON[sdk.DetectRequest, sdk.DetectResponse](ctx, c.conn, "/bomly.plugin.v1.Plugin/Detect", req)
 }
 
-func (c *serviceClient) DetectorReady(ctx context.Context, req *DetectRequest) (*ReadyResponse, error) {
-	return invokeJSON[DetectRequest, ReadyResponse](ctx, c.conn, "/bomly.plugin.v1.Plugin/DetectorReady", req)
+func (c *serviceClient) DetectorReady(ctx context.Context, req *sdk.DetectRequest) (*sdk.ReadyResponse, error) {
+	return invokeJSON[sdk.DetectRequest, sdk.ReadyResponse](ctx, c.conn, "/bomly.plugin.v1.Plugin/DetectorReady", req)
 }
 
-func (c *serviceClient) DetectorApplicable(ctx context.Context, req *DetectRequest) (*ApplicableResponse, error) {
-	return invokeJSON[DetectRequest, ApplicableResponse](ctx, c.conn, "/bomly.plugin.v1.Plugin/DetectorApplicable", req)
+func (c *serviceClient) DetectorApplicable(ctx context.Context, req *sdk.DetectRequest) (*sdk.ApplicableResponse, error) {
+	return invokeJSON[sdk.DetectRequest, sdk.ApplicableResponse](ctx, c.conn, "/bomly.plugin.v1.Plugin/DetectorApplicable", req)
 }
 
-func (c *serviceClient) DetectorInstall(ctx context.Context, req *DetectRequest) (*InstallResponse, error) {
-	return invokeJSON[DetectRequest, InstallResponse](ctx, c.conn, "/bomly.plugin.v1.Plugin/DetectorInstall", req)
+func (c *serviceClient) DetectorInstall(ctx context.Context, req *sdk.DetectRequest) (*sdk.InstallResponse, error) {
+	return invokeJSON[sdk.DetectRequest, sdk.InstallResponse](ctx, c.conn, "/bomly.plugin.v1.Plugin/DetectorInstall", req)
 }
 
-func (c *serviceClient) DetectorRemediationHints(ctx context.Context, req *RemediationHintRequest) (*RemediationHintResponse, error) {
-	return invokeJSON[RemediationHintRequest, RemediationHintResponse](ctx, c.conn, "/bomly.plugin.v1.Plugin/DetectorRemediationHints", req)
+func (c *serviceClient) DetectorRemediationHints(ctx context.Context, req *sdk.RemediationHintRequest) (*sdk.RemediationHintResponse, error) {
+	return invokeJSON[sdk.RemediationHintRequest, sdk.RemediationHintResponse](ctx, c.conn, "/bomly.plugin.v1.Plugin/DetectorRemediationHints", req)
 }
 
-func (c *serviceClient) Match(ctx context.Context, req *MatchRequest) (*MatchResponse, error) {
-	return invokeJSON[MatchRequest, MatchResponse](ctx, c.conn, "/bomly.plugin.v1.Plugin/Match", req)
+func (c *serviceClient) Match(ctx context.Context, req *sdk.MatchRequest) (*sdk.MatchResponse, error) {
+	return invokeJSON[sdk.MatchRequest, sdk.MatchResponse](ctx, c.conn, "/bomly.plugin.v1.Plugin/Match", req)
 }
 
-func (c *serviceClient) MatcherDescriptor(ctx context.Context) (*MatcherDescriptor, error) {
+func (c *serviceClient) MatcherDescriptor(ctx context.Context) (*sdk.MatcherDescriptor, error) {
 	out := new(wrapperspb.BytesValue)
 	if err := c.conn.Invoke(ctx, "/bomly.plugin.v1.Plugin/MatcherDescriptor", &emptypb.Empty{}, out); err != nil {
 		return nil, err
 	}
-	return unmarshalBytes[MatcherDescriptor](out.Value)
+	return unmarshalBytes[sdk.MatcherDescriptor](out.Value)
 }
 
-func (c *serviceClient) MatcherReady(ctx context.Context, req *MatchRequest) (*ReadyResponse, error) {
-	return invokeJSON[MatchRequest, ReadyResponse](ctx, c.conn, "/bomly.plugin.v1.Plugin/MatcherReady", req)
+func (c *serviceClient) MatcherReady(ctx context.Context, req *sdk.MatchRequest) (*sdk.ReadyResponse, error) {
+	return invokeJSON[sdk.MatchRequest, sdk.ReadyResponse](ctx, c.conn, "/bomly.plugin.v1.Plugin/MatcherReady", req)
 }
 
-func (c *serviceClient) MatcherApplicable(ctx context.Context, req *MatchRequest) (*ApplicableResponse, error) {
-	return invokeJSON[MatchRequest, ApplicableResponse](ctx, c.conn, "/bomly.plugin.v1.Plugin/MatcherApplicable", req)
+func (c *serviceClient) MatcherApplicable(ctx context.Context, req *sdk.MatchRequest) (*sdk.ApplicableResponse, error) {
+	return invokeJSON[sdk.MatchRequest, sdk.ApplicableResponse](ctx, c.conn, "/bomly.plugin.v1.Plugin/MatcherApplicable", req)
 }
 
-func (c *serviceClient) Audit(ctx context.Context, req *AuditRequest) (*AuditResponse, error) {
-	return invokeJSON[AuditRequest, AuditResponse](ctx, c.conn, "/bomly.plugin.v1.Plugin/Audit", req)
+func (c *serviceClient) Audit(ctx context.Context, req *sdk.AuditRequest) (*sdk.AuditResponse, error) {
+	return invokeJSON[sdk.AuditRequest, sdk.AuditResponse](ctx, c.conn, "/bomly.plugin.v1.Plugin/Audit", req)
 }
 
-func (c *serviceClient) AuditorDescriptor(ctx context.Context) (*AuditorDescriptor, error) {
+func (c *serviceClient) AuditorDescriptor(ctx context.Context) (*sdk.AuditorDescriptor, error) {
 	out := new(wrapperspb.BytesValue)
 	if err := c.conn.Invoke(ctx, "/bomly.plugin.v1.Plugin/AuditorDescriptor", &emptypb.Empty{}, out); err != nil {
 		return nil, err
 	}
-	return unmarshalBytes[AuditorDescriptor](out.Value)
+	return unmarshalBytes[sdk.AuditorDescriptor](out.Value)
 }
 
-func (c *serviceClient) AuditorReady(ctx context.Context, req *AuditRequest) (*ReadyResponse, error) {
-	return invokeJSON[AuditRequest, ReadyResponse](ctx, c.conn, "/bomly.plugin.v1.Plugin/AuditorReady", req)
+func (c *serviceClient) AuditorReady(ctx context.Context, req *sdk.AuditRequest) (*sdk.ReadyResponse, error) {
+	return invokeJSON[sdk.AuditRequest, sdk.ReadyResponse](ctx, c.conn, "/bomly.plugin.v1.Plugin/AuditorReady", req)
 }
 
-func (c *serviceClient) AuditorApplicable(ctx context.Context, req *AuditRequest) (*ApplicableResponse, error) {
-	return invokeJSON[AuditRequest, ApplicableResponse](ctx, c.conn, "/bomly.plugin.v1.Plugin/AuditorApplicable", req)
+func (c *serviceClient) AuditorApplicable(ctx context.Context, req *sdk.AuditRequest) (*sdk.ApplicableResponse, error) {
+	return invokeJSON[sdk.AuditRequest, sdk.ApplicableResponse](ctx, c.conn, "/bomly.plugin.v1.Plugin/AuditorApplicable", req)
 }
 
 func registerPluginService(server *grpc.Server, impl *serviceServer) {
@@ -703,4 +705,129 @@ func unmarshalBytes[T any](data []byte) (*T, error) {
 		return nil, err
 	}
 	return &value, nil
+}
+
+// ServedAnalyzer is the analyzer interface implemented by external analyzer
+// plugins. Analyzers read the dependency graph and PURL-keyed package registry
+// and annotate Vulnerability.Reachability on registry packages.
+type ServedAnalyzer interface {
+	Descriptor(context.Context) (*sdk.AnalyzerDescriptor, error)
+	Ready(context.Context, *sdk.AnalyzeRequest) (*sdk.ReadyResponse, error)
+	Applicable(context.Context, *sdk.AnalyzeRequest) (*sdk.ApplicableResponse, error)
+	Analyze(context.Context, *sdk.AnalyzeRequest) (*sdk.AnalyzeResponse, error)
+}
+
+// ServeAnalyzer serves one analyzer plugin over Bomly's managed HashiCorp
+// go-plugin gRPC transport. Call it from the plugin binary's main function.
+func ServeAnalyzer(analyzer ServedAnalyzer) {
+	serve(nil, nil, nil, analyzer)
+}
+
+func (s *serviceServer) AnalyzerDescriptor(ctx context.Context, _ *emptypb.Empty) (*wrapperspb.BytesValue, error) {
+	if s.analyzer == nil {
+		return nil, status.Error(codes.Unimplemented, "analyzer not implemented")
+	}
+	descriptor, err := s.analyzer.Descriptor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := sdk.ValidateAnalyzerDescriptor(descriptor); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid analyzer descriptor: %v", err)
+	}
+	data, err := json.Marshal(descriptor)
+	if err != nil {
+		return nil, fmt.Errorf("marshal response: %w", err)
+	}
+	return wrapperspb.Bytes(data), nil
+}
+
+func (s *serviceServer) AnalyzerReady(ctx context.Context, in *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
+	if s.analyzer == nil {
+		return nil, status.Error(codes.Unimplemented, "analyzer not implemented")
+	}
+	req, err := unmarshalPayload[sdk.AnalyzeRequest](in)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "decode analyzer ready request: %v", err)
+	}
+	return marshalResponse(ctx, func(ctx context.Context) (*sdk.ReadyResponse, error) {
+		return s.analyzer.Ready(ctx, req)
+	})
+}
+
+func (s *serviceServer) AnalyzerApplicable(ctx context.Context, in *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
+	if s.analyzer == nil {
+		return nil, status.Error(codes.Unimplemented, "analyzer not implemented")
+	}
+	req, err := unmarshalPayload[sdk.AnalyzeRequest](in)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "decode analyzer applicable request: %v", err)
+	}
+	return marshalResponse(ctx, func(ctx context.Context) (*sdk.ApplicableResponse, error) {
+		return s.analyzer.Applicable(ctx, req)
+	})
+}
+
+func (s *serviceServer) Analyze(ctx context.Context, in *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
+	if s.analyzer == nil {
+		return nil, status.Error(codes.Unimplemented, "analyzer not implemented")
+	}
+	req, err := unmarshalPayload[sdk.AnalyzeRequest](in)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "decode analyze request: %v", err)
+	}
+	return marshalResponse(ctx, func(ctx context.Context) (*sdk.AnalyzeResponse, error) {
+		return s.analyzer.Analyze(ctx, req)
+	})
+}
+
+func analyzerDescriptorHandler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	method := func(ctx context.Context, req any) (any, error) {
+		return srv.(*serviceServer).AnalyzerDescriptor(ctx, req.(*emptypb.Empty))
+	}
+	if interceptor == nil {
+		return method(ctx, in)
+	}
+	return interceptor(ctx, in, &grpc.UnaryServerInfo{Server: srv, FullMethod: "/bomly.plugin.v1.Plugin/AnalyzerDescriptor"}, method)
+}
+
+func analyzerReadyHandler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+	return bytesHandler(srv, ctx, dec, interceptor, "/bomly.plugin.v1.Plugin/AnalyzerReady", func(ctx context.Context, req *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
+		return srv.(*serviceServer).AnalyzerReady(ctx, req)
+	})
+}
+
+func analyzerApplicableHandler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+	return bytesHandler(srv, ctx, dec, interceptor, "/bomly.plugin.v1.Plugin/AnalyzerApplicable", func(ctx context.Context, req *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
+		return srv.(*serviceServer).AnalyzerApplicable(ctx, req)
+	})
+}
+
+func analyzeHandler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+	return bytesHandler(srv, ctx, dec, interceptor, "/bomly.plugin.v1.Plugin/Analyze", func(ctx context.Context, req *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
+		return srv.(*serviceServer).Analyze(ctx, req)
+	})
+}
+
+func (c *serviceClient) AnalyzerDescriptor(ctx context.Context) (*sdk.AnalyzerDescriptor, error) {
+	out := new(wrapperspb.BytesValue)
+	if err := c.conn.Invoke(ctx, "/bomly.plugin.v1.Plugin/AnalyzerDescriptor", &emptypb.Empty{}, out); err != nil {
+		return nil, err
+	}
+	return unmarshalBytes[sdk.AnalyzerDescriptor](out.Value)
+}
+
+func (c *serviceClient) AnalyzerReady(ctx context.Context, req *sdk.AnalyzeRequest) (*sdk.ReadyResponse, error) {
+	return invokeJSON[sdk.AnalyzeRequest, sdk.ReadyResponse](ctx, c.conn, "/bomly.plugin.v1.Plugin/AnalyzerReady", req)
+}
+
+func (c *serviceClient) AnalyzerApplicable(ctx context.Context, req *sdk.AnalyzeRequest) (*sdk.ApplicableResponse, error) {
+	return invokeJSON[sdk.AnalyzeRequest, sdk.ApplicableResponse](ctx, c.conn, "/bomly.plugin.v1.Plugin/AnalyzerApplicable", req)
+}
+
+func (c *serviceClient) Analyze(ctx context.Context, req *sdk.AnalyzeRequest) (*sdk.AnalyzeResponse, error) {
+	return invokeJSON[sdk.AnalyzeRequest, sdk.AnalyzeResponse](ctx, c.conn, "/bomly.plugin.v1.Plugin/Analyze", req)
 }

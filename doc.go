@@ -14,18 +14,20 @@
 //   - analyzer: runs code analysis (e.g. reachability) over the matched graph
 //     and annotates registry vulnerability entries
 //
-// A plugin binary serves its role from main by calling one of the runtime
-// entrypoints:
+// A plugin binary packages its component as a Module and serves it from main
+// through the plugin subpackage:
 //
 //	func main() {
-//		sdk.ServeDetector(&detector{})
+//		plugin.ServeModule(myModule)
 //	}
 //
-// The corresponding plugin-facing interfaces are ServedDetector, ServedMatcher,
-// ServedAuditor, and ServedAnalyzer. They use the same request and response
-// types as Bomly core: DetectionRequest and DetectionResult for detectors,
-// MatchRequest and MatchResult for matchers, AuditRequest and AuditResult for
-// auditors, and AnalyzeRequest and AnalyzeResult for analyzers.
+// The managed-plugin runtime -- the go-plugin gRPC transport, the host-side
+// Client, and the per-process environment -- lives in
+// github.com/bomly-dev/bomly-sdk/plugin. This package holds the contract it
+// carries: Detector, Matcher, Auditor, and Analyzer with their descriptors,
+// DetectionRequest and DetectionResult for detectors, MatchRequest and
+// MatchResult for matchers, AuditRequest and AuditResult for auditors, and
+// AnalyzeRequest and AnalyzeResult for analyzers.
 //
 // The central data model deliberately separates pipeline stages. Dependency is
 // a detection-time graph node with identity, locations, scopes, and edges.
@@ -85,10 +87,10 @@
 // validated, not merged by a declared rule, not projected to either document
 // format — so anything a typed field can hold belongs in the typed field.
 //
-// Plugins that need configuration should read only their per-plugin config with
-// DecodePluginConfigFromEnv. Plugins that make HTTP calls should create a
-// process-local provider with httpkit.NewClientProviderFromEnv so Bomly's proxy,
-// no-proxy, and CA certificate settings are honored consistently.
+// Components reach host services only through HostContext: DecodeConfig for
+// their own configuration block and HTTPClient for outbound HTTP, backed by
+// github.com/bomly-dev/bomly-sdk/httpkit so Bomly's proxy, no-proxy, and CA
+// certificate settings are honored consistently in both execution modes.
 //
 // The repository documentation contains the workflow-oriented guides for
 // packaging, installing, testing, and distributing plugins. This package
