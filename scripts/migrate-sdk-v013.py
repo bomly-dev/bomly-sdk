@@ -92,10 +92,11 @@ def migrate(path):
         return '\x00FIXTURE%d\x00' % (len(fixtures) - 1)
     outer = FIXTURE.sub(stash, new)
     outer = fix_imports(outer)
-    new = re.sub(r'\x00FIXTURE(\d+)\x00', lambda m: fixtures[int(m.group(1))].replace('\\', '\\\\'), outer)
-    # restore protected fixtures verbatim
-    for original in protected:
-        new = PROTECTED.sub(lambda m, o=original: o if m.group(0)[:m.group(0).index('=')] == o[:o.index('=')] else m.group(0), new, count=1)
+    # a callable replacement is inserted verbatim, so no escaping of the fixture text
+    new = re.sub(r'\x00FIXTURE(\d+)\x00', lambda m: fixtures[int(m.group(1))], outer)
+    # restore every protected fixture verbatim, matched by its const name
+    by_name = {o[:o.index('=')]: o for o in protected}
+    new = PROTECTED.sub(lambda m: by_name.get(m.group(0)[:m.group(0).index('=')], m.group(0)), new)
     path.write_text(new)
     return True
 
