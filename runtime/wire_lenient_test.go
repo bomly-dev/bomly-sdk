@@ -5,7 +5,8 @@ import (
 
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
-	sdk "github.com/bomly-dev/bomly-sdk"
+	"github.com/bomly-dev/bomly-sdk/model"
+	"github.com/bomly-dev/bomly-sdk/plugin"
 )
 
 // wireV1DuplicateName repeats "copyright" on a dependency node, with different
@@ -43,9 +44,9 @@ const wireV1InvalidUTF8 = "{\"graphs\":{\"entries\":[{\"graph\":{\"nodes\":[" +
 // migration that touched only that helper would leave a direct-json test green
 // while real plugin traffic began rejecting these payloads -- the exact
 // regression this file exists to catch.
-func wireV1TransportGraph(t *testing.T, payload string) *sdk.Graph {
+func wireV1TransportGraph(t *testing.T, payload string) *model.Graph {
 	t.Helper()
-	result, err := unmarshalPayload[sdk.DetectionResult](wrapperspb.Bytes([]byte(payload)))
+	result, err := unmarshalPayload[plugin.DetectionResult](wrapperspb.Bytes([]byte(payload)))
 	if err != nil {
 		t.Fatalf("the plugin transport must keep decoding this payload: %v", err)
 	}

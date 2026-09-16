@@ -13,24 +13,25 @@
 //   - analyzer: runs code analysis (e.g. reachability) over the matched graph
 //     and annotates registry vulnerability entries
 //
-// A plugin binary packages its component as an sdk.Module and serves it from
-// main:
+// A plugin binary packages its component as a plugin.Module and serves it
+// from main:
 //
 //	func main() {
-//		plugin.ServeModule(myModule)
+//		runtime.ServeModule(myModule)
 //	}
 //
-// ServeModule builds the managed sdk.HostContext (a stderr logger, an HTTP
+// ServeModule builds the managed plugin.HostContext (a stderr logger, an HTTP
 // client provider from the BOMLY_HTTP_* environment via httpkit, and config
 // decoding from the file named by BOMLY_PLUGIN_CONFIG_FILE) and adapts the
 // component to the wire protocol. ServeDetector, ServeMatcher, ServeAuditor,
 // and ServeAnalyzer serve a hand-written ServedDetector, ServedMatcher,
 // ServedAuditor, or ServedAnalyzer directly; they use the same request and
-// response types as the in-process contract in the root package.
+// response types as the in-process contract in the plugin package.
 //
 // The wire contract, bomly.plugin.v1, is JSON over gRPC and strictly
-// additive: every payload type lives in the root package, where the
-// omitempty coverage tests guard it. Nothing in this package is a payload.
+// additive: every payload type lives in the plugin and model packages,
+// where the omitempty coverage tests guard it. Nothing in this package is a
+// payload.
 //
 // On the host side, HandshakeConfig and ClientPluginMap configure a go-plugin
 // client, and the dispensed value implements Client.

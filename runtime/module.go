@@ -13,7 +13,7 @@ import (
 
 	"github.com/bomly-dev/bomly-sdk/httpkit"
 
-	sdk "github.com/bomly-dev/bomly-sdk"
+	"github.com/bomly-dev/bomly-sdk/plugin"
 )
 
 // EnvVerbosity mirrors the host's verbosity environment variable
@@ -27,20 +27,20 @@ const EnvVerbosity = "BOMLY_VERBOSE"
 // client provider from Bomly environment variables, config decoding from the
 // file named by BOMLY_PLUGIN_CONFIG_FILE), constructs the component lazily on
 // first use, and adapts it to the served plugin protocol.
-func ServeModule(m sdk.Module) {
-	if err := sdk.ValidateModule(m); err != nil {
+func ServeModule(m plugin.Module) {
+	if err := plugin.ValidateModule(m); err != nil {
 		fmt.Fprintf(os.Stderr, "bomly plugin: invalid module: %v\n", err)
 		os.Exit(1)
 	}
 	host := newManagedHostContext()
 	switch m.Kind {
-	case sdk.PluginKindDetector:
+	case plugin.PluginKindDetector:
 		ServeDetector(newServedDetectorModule(m.Detector, host))
-	case sdk.PluginKindMatcher:
+	case plugin.PluginKindMatcher:
 		ServeMatcher(newServedMatcherModule(m.Matcher, host))
-	case sdk.PluginKindAuditor:
+	case plugin.PluginKindAuditor:
 		ServeAuditor(newServedAuditorModule(m.Auditor, host))
-	case sdk.PluginKindAnalyzer:
+	case plugin.PluginKindAnalyzer:
 		ServeAnalyzer(newServedAnalyzerModule(m.Analyzer, host))
 	}
 }
@@ -50,7 +50,7 @@ func ServeModule(m sdk.Module) {
 type managedHostContext struct {
 	logger  *zap.Logger
 	http    *httpkit.ClientProvider
-	runtime sdk.RuntimeInfo
+	runtime plugin.RuntimeInfo
 }
 
 func newManagedHostContext() *managedHostContext {
@@ -63,7 +63,7 @@ func newManagedHostContext() *managedHostContext {
 	return &managedHostContext{
 		logger:  logger,
 		http:    provider,
-		runtime: sdk.RuntimeInfo{Execution: sdk.ExecutionManaged},
+		runtime: plugin.RuntimeInfo{Execution: plugin.ExecutionManaged},
 	}
 }
 
@@ -81,9 +81,9 @@ func (c *managedHostContext) HTTPClient() *httpkit.ClientProvider {
 	return c.http
 }
 
-func (c *managedHostContext) Runtime() sdk.RuntimeInfo {
+func (c *managedHostContext) Runtime() plugin.RuntimeInfo {
 	if c == nil {
-		return sdk.RuntimeInfo{Execution: sdk.ExecutionManaged}
+		return plugin.RuntimeInfo{Execution: plugin.ExecutionManaged}
 	}
 	return c.runtime
 }
@@ -116,8 +116,8 @@ func newManagedLogger() *zap.Logger {
 // lazyComponent constructs a module component at most once and caches the
 // outcome for every subsequent protocol call.
 type lazyComponent[T any] struct {
-	newFn func(context.Context, sdk.HostContext) (T, error)
-	host  sdk.HostContext
+	newFn func(context.Context, plugin.HostContext) (T, error)
+	host  plugin.HostContext
 
 	once      sync.Once
 	component T
@@ -136,34 +136,34 @@ func (l *lazyComponent[T]) get(ctx context.Context) (T, error) {
 
 // readyResponseFromError maps a component's Ready error contract (nil = ready)
 // to the served protocol's ReadyResponse shape.
-func readyResponseFromError(err error) *sdk.ReadyResponse {
+func readyResponseFromError(err error) *plugin.ReadyResponse {
 	if err != nil {
-		return &sdk.ReadyResponse{Ready: false, Reason: err.Error()}
+		return &plugin.ReadyResponse{Ready: false, Reason: err.Error()}
 	}
-	return &sdk.ReadyResponse{Ready: true}
+	return &plugin.ReadyResponse{Ready: true}
 }
 
 // servedDetectorModule adapts a DetectorModule to the ServedDetector protocol.
 type servedDetectorModule struct {
-	module *sdk.DetectorModule
-	lazy   *lazyComponent[sdk.Detector]
+	module *plugin.DetectorModule
+	lazy   *lazyComponent[plugin.Detector]
 }
 
-func newServedDetectorModule(module *sdk.DetectorModule, host sdk.HostContext) *servedDetectorModule {
+func newServedDetectorModule(module *plugin.DetectorModule, host plugin.HostContext) *servedDetectorModule {
 	return &servedDetectorModule{
 		module: module,
-		lazy:   &lazyComponent[sdk.Detector]{newFn: module.New, host: host},
+		lazy:   &lazyComponent[plugin.Detector]{newFn: module.New, host: host},
 	}
 }
 
-func (s *servedDetectorModule) Descriptor(context.Context) (*sdk.DetectorDescriptor, error) {
+func (s *servedDetectorModule) Descriptor(context.Context) (*plugin.DetectorDescriptor, error) {
 	descriptor := s.module.Descriptor.Clone()
 	return &descriptor, nil
 }
 
-func (s *servedDetectorModule) PackageManagerSupport(ctx context.Context) ([]sdk.PackageManagerSupport, error) {
+func (s *servedDetectorModule) PackageManagerSupport(ctx context.Context) ([]plugin.PackageManagerSupport, error) {
 	if len(s.module.Support) > 0 {
-		support := make([]sdk.PackageManagerSupport, len(s.module.Support))
+		support := make([]plugin.PackageManagerSupport, len(s.module.Support))
 		for idx, entry := range s.module.Support {
 			support[idx] = entry
 			support[idx].EvidencePatterns = append([]string(nil), entry.EvidencePatterns...)
@@ -177,7 +177,7 @@ func (s *servedDetectorModule) PackageManagerSupport(ctx context.Context) ([]sdk
 	return detector.PackageManagerSupport(), nil
 }
 
-func (s *servedDetectorModule) Ready(ctx context.Context, req *sdk.DetectRequest) (*sdk.ReadyResponse, error) {
+func (s *servedDetectorModule) Ready(ctx context.Context, req *plugin.DetectRequest) (*plugin.ReadyResponse, error) {
 	detector, err := s.lazy.get(ctx)
 	if err != nil {
 		return nil, err
@@ -185,7 +185,7 @@ func (s *servedDetectorModule) Ready(ctx context.Context, req *sdk.DetectRequest
 	return readyResponseFromError(detector.Ready(ctx, *req)), nil
 }
 
-func (s *servedDetectorModule) Applicable(ctx context.Context, req *sdk.DetectRequest) (*sdk.ApplicableResponse, error) {
+func (s *servedDetectorModule) Applicable(ctx context.Context, req *plugin.DetectRequest) (*plugin.ApplicableResponse, error) {
 	detector, err := s.lazy.get(ctx)
 	if err != nil {
 		return nil, err
@@ -194,10 +194,10 @@ func (s *servedDetectorModule) Applicable(ctx context.Context, req *sdk.DetectRe
 	if err != nil {
 		return nil, err
 	}
-	return &sdk.ApplicableResponse{Applicable: applicable}, nil
+	return &plugin.ApplicableResponse{Applicable: applicable}, nil
 }
 
-func (s *servedDetectorModule) Detect(ctx context.Context, req *sdk.DetectRequest) (*sdk.DetectResponse, error) {
+func (s *servedDetectorModule) Detect(ctx context.Context, req *plugin.DetectRequest) (*plugin.DetectResponse, error) {
 	detector, err := s.lazy.get(ctx)
 	if err != nil {
 		return nil, err
@@ -211,40 +211,40 @@ func (s *servedDetectorModule) Detect(ctx context.Context, req *sdk.DetectReques
 
 // Install satisfies DetectorInstaller. Components that do not implement
 // InstallFirstDetector report no install work performed.
-func (s *servedDetectorModule) Install(ctx context.Context, req *sdk.DetectRequest) (*sdk.InstallResponse, error) {
+func (s *servedDetectorModule) Install(ctx context.Context, req *plugin.DetectRequest) (*plugin.InstallResponse, error) {
 	detector, err := s.lazy.get(ctx)
 	if err != nil {
 		return nil, err
 	}
-	installer, ok := detector.(sdk.InstallFirstDetector)
+	installer, ok := detector.(plugin.InstallFirstDetector)
 	if !ok {
-		return &sdk.InstallResponse{}, nil
+		return &plugin.InstallResponse{}, nil
 	}
 	if err := installer.Install(ctx, *req); err != nil {
 		return nil, err
 	}
-	return &sdk.InstallResponse{Performed: true}, nil
+	return &plugin.InstallResponse{Performed: true}, nil
 }
 
 // servedMatcherModule adapts a MatcherModule to the ServedMatcher protocol.
 type servedMatcherModule struct {
-	module *sdk.MatcherModule
-	lazy   *lazyComponent[sdk.Matcher]
+	module *plugin.MatcherModule
+	lazy   *lazyComponent[plugin.Matcher]
 }
 
-func newServedMatcherModule(module *sdk.MatcherModule, host sdk.HostContext) *servedMatcherModule {
+func newServedMatcherModule(module *plugin.MatcherModule, host plugin.HostContext) *servedMatcherModule {
 	return &servedMatcherModule{
 		module: module,
-		lazy:   &lazyComponent[sdk.Matcher]{newFn: module.New, host: host},
+		lazy:   &lazyComponent[plugin.Matcher]{newFn: module.New, host: host},
 	}
 }
 
-func (s *servedMatcherModule) Descriptor(context.Context) (*sdk.MatcherDescriptor, error) {
+func (s *servedMatcherModule) Descriptor(context.Context) (*plugin.MatcherDescriptor, error) {
 	descriptor := s.module.Descriptor
 	return &descriptor, nil
 }
 
-func (s *servedMatcherModule) Ready(ctx context.Context, req *sdk.MatchRequest) (*sdk.ReadyResponse, error) {
+func (s *servedMatcherModule) Ready(ctx context.Context, req *plugin.MatchRequest) (*plugin.ReadyResponse, error) {
 	matcher, err := s.lazy.get(ctx)
 	if err != nil {
 		return nil, err
@@ -252,7 +252,7 @@ func (s *servedMatcherModule) Ready(ctx context.Context, req *sdk.MatchRequest) 
 	return readyResponseFromError(matcher.Ready(ctx, *req)), nil
 }
 
-func (s *servedMatcherModule) Applicable(ctx context.Context, req *sdk.MatchRequest) (*sdk.ApplicableResponse, error) {
+func (s *servedMatcherModule) Applicable(ctx context.Context, req *plugin.MatchRequest) (*plugin.ApplicableResponse, error) {
 	matcher, err := s.lazy.get(ctx)
 	if err != nil {
 		return nil, err
@@ -261,10 +261,10 @@ func (s *servedMatcherModule) Applicable(ctx context.Context, req *sdk.MatchRequ
 	if err != nil {
 		return nil, err
 	}
-	return &sdk.ApplicableResponse{Applicable: applicable}, nil
+	return &plugin.ApplicableResponse{Applicable: applicable}, nil
 }
 
-func (s *servedMatcherModule) Match(ctx context.Context, req *sdk.MatchRequest) (*sdk.MatchResponse, error) {
+func (s *servedMatcherModule) Match(ctx context.Context, req *plugin.MatchRequest) (*plugin.MatchResponse, error) {
 	matcher, err := s.lazy.get(ctx)
 	if err != nil {
 		return nil, err
@@ -278,23 +278,23 @@ func (s *servedMatcherModule) Match(ctx context.Context, req *sdk.MatchRequest) 
 
 // servedAuditorModule adapts an AuditorModule to the ServedAuditor protocol.
 type servedAuditorModule struct {
-	module *sdk.AuditorModule
-	lazy   *lazyComponent[sdk.Auditor]
+	module *plugin.AuditorModule
+	lazy   *lazyComponent[plugin.Auditor]
 }
 
-func newServedAuditorModule(module *sdk.AuditorModule, host sdk.HostContext) *servedAuditorModule {
+func newServedAuditorModule(module *plugin.AuditorModule, host plugin.HostContext) *servedAuditorModule {
 	return &servedAuditorModule{
 		module: module,
-		lazy:   &lazyComponent[sdk.Auditor]{newFn: module.New, host: host},
+		lazy:   &lazyComponent[plugin.Auditor]{newFn: module.New, host: host},
 	}
 }
 
-func (s *servedAuditorModule) Descriptor(context.Context) (*sdk.AuditorDescriptor, error) {
+func (s *servedAuditorModule) Descriptor(context.Context) (*plugin.AuditorDescriptor, error) {
 	descriptor := s.module.Descriptor
 	return &descriptor, nil
 }
 
-func (s *servedAuditorModule) Ready(ctx context.Context, req *sdk.AuditRequest) (*sdk.ReadyResponse, error) {
+func (s *servedAuditorModule) Ready(ctx context.Context, req *plugin.AuditRequest) (*plugin.ReadyResponse, error) {
 	auditor, err := s.lazy.get(ctx)
 	if err != nil {
 		return nil, err
@@ -302,7 +302,7 @@ func (s *servedAuditorModule) Ready(ctx context.Context, req *sdk.AuditRequest) 
 	return readyResponseFromError(auditor.Ready(ctx, *req)), nil
 }
 
-func (s *servedAuditorModule) Applicable(ctx context.Context, req *sdk.AuditRequest) (*sdk.ApplicableResponse, error) {
+func (s *servedAuditorModule) Applicable(ctx context.Context, req *plugin.AuditRequest) (*plugin.ApplicableResponse, error) {
 	auditor, err := s.lazy.get(ctx)
 	if err != nil {
 		return nil, err
@@ -311,10 +311,10 @@ func (s *servedAuditorModule) Applicable(ctx context.Context, req *sdk.AuditRequ
 	if err != nil {
 		return nil, err
 	}
-	return &sdk.ApplicableResponse{Applicable: applicable}, nil
+	return &plugin.ApplicableResponse{Applicable: applicable}, nil
 }
 
-func (s *servedAuditorModule) Audit(ctx context.Context, req *sdk.AuditRequest) (*sdk.AuditResponse, error) {
+func (s *servedAuditorModule) Audit(ctx context.Context, req *plugin.AuditRequest) (*plugin.AuditResponse, error) {
 	auditor, err := s.lazy.get(ctx)
 	if err != nil {
 		return nil, err
@@ -328,23 +328,23 @@ func (s *servedAuditorModule) Audit(ctx context.Context, req *sdk.AuditRequest) 
 
 // servedAnalyzerModule adapts an AnalyzerModule to the ServedAnalyzer protocol.
 type servedAnalyzerModule struct {
-	module *sdk.AnalyzerModule
-	lazy   *lazyComponent[sdk.Analyzer]
+	module *plugin.AnalyzerModule
+	lazy   *lazyComponent[plugin.Analyzer]
 }
 
-func newServedAnalyzerModule(module *sdk.AnalyzerModule, host sdk.HostContext) *servedAnalyzerModule {
+func newServedAnalyzerModule(module *plugin.AnalyzerModule, host plugin.HostContext) *servedAnalyzerModule {
 	return &servedAnalyzerModule{
 		module: module,
-		lazy:   &lazyComponent[sdk.Analyzer]{newFn: module.New, host: host},
+		lazy:   &lazyComponent[plugin.Analyzer]{newFn: module.New, host: host},
 	}
 }
 
-func (s *servedAnalyzerModule) Descriptor(context.Context) (*sdk.AnalyzerDescriptor, error) {
+func (s *servedAnalyzerModule) Descriptor(context.Context) (*plugin.AnalyzerDescriptor, error) {
 	descriptor := s.module.Descriptor
 	return &descriptor, nil
 }
 
-func (s *servedAnalyzerModule) Ready(ctx context.Context, req *sdk.AnalyzeRequest) (*sdk.ReadyResponse, error) {
+func (s *servedAnalyzerModule) Ready(ctx context.Context, req *plugin.AnalyzeRequest) (*plugin.ReadyResponse, error) {
 	analyzer, err := s.lazy.get(ctx)
 	if err != nil {
 		return nil, err
@@ -352,7 +352,7 @@ func (s *servedAnalyzerModule) Ready(ctx context.Context, req *sdk.AnalyzeReques
 	return readyResponseFromError(analyzer.Ready(ctx, *req)), nil
 }
 
-func (s *servedAnalyzerModule) Applicable(ctx context.Context, req *sdk.AnalyzeRequest) (*sdk.ApplicableResponse, error) {
+func (s *servedAnalyzerModule) Applicable(ctx context.Context, req *plugin.AnalyzeRequest) (*plugin.ApplicableResponse, error) {
 	analyzer, err := s.lazy.get(ctx)
 	if err != nil {
 		return nil, err
@@ -361,10 +361,10 @@ func (s *servedAnalyzerModule) Applicable(ctx context.Context, req *sdk.AnalyzeR
 	if err != nil {
 		return nil, err
 	}
-	return &sdk.ApplicableResponse{Applicable: applicable}, nil
+	return &plugin.ApplicableResponse{Applicable: applicable}, nil
 }
 
-func (s *servedAnalyzerModule) Analyze(ctx context.Context, req *sdk.AnalyzeRequest) (*sdk.AnalyzeResponse, error) {
+func (s *servedAnalyzerModule) Analyze(ctx context.Context, req *plugin.AnalyzeRequest) (*plugin.AnalyzeResponse, error) {
 	analyzer, err := s.lazy.get(ctx)
 	if err != nil {
 		return nil, err

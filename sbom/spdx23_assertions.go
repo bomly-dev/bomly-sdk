@@ -4,9 +4,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/bomly-dev/bomly-sdk"
 	"github.com/spdx/tools-golang/spdx/v2/common"
 	v23 "github.com/spdx/tools-golang/spdx/v2/v2_3"
+
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // This file carries an SPDX document's own component assertions in and out:
@@ -28,7 +29,7 @@ const (
 )
 
 // spdxIngestedSupplier reads a package's supplier.
-func spdxIngestedSupplier(supplier *common.Supplier) *sdk.Contact {
+func spdxIngestedSupplier(supplier *common.Supplier) *model.Contact {
 	if supplier == nil {
 		return nil
 	}
@@ -36,7 +37,7 @@ func spdxIngestedSupplier(supplier *common.Supplier) *sdk.Contact {
 }
 
 // spdxIngestedOriginator reads the party that authored the package.
-func spdxIngestedOriginator(originator *common.Originator) *sdk.Contact {
+func spdxIngestedOriginator(originator *common.Originator) *model.Contact {
 	if originator == nil {
 		return nil
 	}
@@ -50,7 +51,7 @@ func spdxIngestedOriginator(originator *common.Originator) *sdk.Contact {
 // reassembled rather than mapped field by field: the SDK owns what the form
 // means, including the address suffix it strips, and a second reading of the
 // same grammar here would be a second place to get it wrong.
-func spdxContactFrom(contactType, value string) *sdk.Contact {
+func spdxContactFrom(contactType, value string) *model.Contact {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return nil
@@ -59,7 +60,7 @@ func spdxContactFrom(contactType, value string) *sdk.Contact {
 	if contactType = strings.TrimSpace(contactType); contactType != "" {
 		line = contactType + ": " + value
 	}
-	contact, ok := sdk.ParseSPDXContact(line)
+	contact, ok := model.ParseSPDXContact(line)
 	if !ok {
 		return nil
 	}
@@ -98,27 +99,27 @@ func spdxIngestedChecksums(checksums []common.Checksum) []Digest {
 // them back as source assertions would duplicate them on the next export;
 // the origin-derived ones are excluded for the laundering reason recorded on
 // isOriginDerivedReferenceType.
-func spdxIngestedReferences(refs []*v23.PackageExternalReference) []sdk.ExternalReference {
+func spdxIngestedReferences(refs []*v23.PackageExternalReference) []model.ExternalReference {
 	if len(refs) == 0 {
 		return nil
 	}
-	converted := make([]sdk.ExternalReference, 0, len(refs))
+	converted := make([]model.ExternalReference, 0, len(refs))
 	for _, ref := range refs {
 		if ref == nil || isBomlyProjectedReference(ref) {
 			continue
 		}
-		category, err := sdk.ParseExternalReferenceCategory(ref.Category)
+		category, err := model.ParseExternalReferenceCategory(ref.Category)
 		if err != nil {
 			continue
 		}
-		converted = append(converted, sdk.ExternalReference{
+		converted = append(converted, model.ExternalReference{
 			Category: category,
 			Type:     ref.RefType,
 			Locator:  ref.Locator,
 			Comment:  ref.ExternalRefComment,
 		})
 	}
-	return sdk.MergeExternalReferences(nil, converted)
+	return model.MergeExternalReferences(nil, converted)
 }
 
 // spdxCPEReferenceType names the reference type a CPE actually belongs to.
@@ -134,8 +135,8 @@ func spdxIngestedReferences(refs []*v23.PackageExternalReference) []sdk.External
 // tried first so an identifier valid in both is written in the current form.
 func spdxCPEReferenceType(value string) string {
 	for _, cpeType := range []string{common.TypeSecurityCPE23Type, common.TypeSecurityCPE22Type} {
-		if _, ok := (sdk.ExternalReference{
-			Category: sdk.ExternalReferenceCategorySecurity,
+		if _, ok := (model.ExternalReference{
+			Category: model.ExternalReferenceCategorySecurity,
 			Type:     cpeType,
 			Locator:  value,
 		}).Normalized(); ok {
@@ -222,8 +223,8 @@ func applySPDXAssertions(component *Component, pkg *v23.Package) {
 	if strings.TrimSpace(description) == "" {
 		description = pkg.PackageSummary
 	}
-	component.Description = sdk.NormalizeDescription(description)
-	component.Homepage = sdk.NormalizeHomepage(pkg.PackageHomePage)
+	component.Description = model.NormalizeDescription(description)
+	component.Homepage = model.NormalizeHomepage(pkg.PackageHomePage)
 	component.ExternalReferences = spdxIngestedReferences(pkg.PackageExternalReferences)
 	if cpes := spdxIngestedCPEs(pkg.PackageExternalReferences); len(cpes) > 0 {
 		component.CPEs = cpes
@@ -234,7 +235,7 @@ func applySPDXAssertions(component *Component, pkg *v23.Package) {
 }
 
 // spdxSupplierFor renders a contact into SPDX's supplier form.
-func spdxSupplierFor(contact *sdk.Contact) *common.Supplier {
+func spdxSupplierFor(contact *model.Contact) *common.Supplier {
 	if contact == nil {
 		return nil
 	}
@@ -246,7 +247,7 @@ func spdxSupplierFor(contact *sdk.Contact) *common.Supplier {
 }
 
 // spdxOriginatorFor renders a contact into SPDX's originator form.
-func spdxOriginatorFor(contact *sdk.Contact) *common.Originator {
+func spdxOriginatorFor(contact *model.Contact) *common.Originator {
 	if contact == nil {
 		return nil
 	}
@@ -264,7 +265,7 @@ func spdxOriginatorFor(contact *sdk.Contact) *common.Originator {
 // the gate runs and the rendering stays the SDK's; this only re-splits what
 // it produced. A contact with nothing publishable renders empty and is
 // omitted rather than written as a malformed line.
-func spdxContactParts(contact sdk.Contact) (kind, name string, ok bool) {
+func spdxContactParts(contact model.Contact) (kind, name string, ok bool) {
 	line := contact.SPDXString()
 	if line == "" {
 		return "", "", false
@@ -279,7 +280,7 @@ func spdxContactParts(contact sdk.Contact) (kind, name string, ok bool) {
 
 // spdxEmittedReferences renders the component's own asserted references,
 // re-clearing the gate on the way out.
-func spdxEmittedReferences(refs []sdk.ExternalReference) []*v23.PackageExternalReference {
+func spdxEmittedReferences(refs []model.ExternalReference) []*v23.PackageExternalReference {
 	if len(refs) == 0 {
 		return nil
 	}
@@ -338,11 +339,11 @@ func spdxCommentEOL(comment string) *EOL {
 // tools-golang has already split each creator line into its type and value,
 // so the "Person: name (email)" grammar is never re-parsed here -- the type
 // selects the slot, and the value goes through the SDK's own contact gate.
-func spdxDocumentAssertions(doc *v23.Document) sdk.DocumentAssertions {
+func spdxDocumentAssertions(doc *v23.Document) model.DocumentAssertions {
 	if doc == nil {
-		return sdk.DocumentAssertions{}
+		return model.DocumentAssertions{}
 	}
-	assertions := sdk.DocumentAssertions{
+	assertions := model.DocumentAssertions{
 		Identity:    doc.DocumentNamespace,
 		Name:        doc.DocumentName,
 		DataLicense: doc.DataLicense,
@@ -355,7 +356,7 @@ func spdxDocumentAssertions(doc *v23.Document) sdk.DocumentAssertions {
 			if strings.EqualFold(strings.TrimSpace(creator.CreatorType), spdxToolCreatorType) {
 				// Kept whole: see documentSourceTools for why the
 				// "name-version" convention is not split apart.
-				assertions.Tools = append(assertions.Tools, sdk.DocumentTool{Name: creator.Creator})
+				assertions.Tools = append(assertions.Tools, model.DocumentTool{Name: creator.Creator})
 				continue
 			}
 			if contact := spdxContactFrom(creator.CreatorType, creator.Creator); contact != nil {
@@ -365,7 +366,7 @@ func spdxDocumentAssertions(doc *v23.Document) sdk.DocumentAssertions {
 	}
 	normalized, ok := assertions.Normalized()
 	if !ok {
-		return sdk.DocumentAssertions{}
+		return model.DocumentAssertions{}
 	}
 	return normalized
 }
@@ -381,7 +382,7 @@ func spdxDocumentAssertions(doc *v23.Document) sdk.DocumentAssertions {
 // reads back as a tool called "Acme/cdx-gen", which corrupts the name instead
 // of preserving the vendor. A claim the format cannot hold is better lost
 // than misfiled -- the CycloneDX projection keeps all three fields.
-func spdxToolCreator(tool sdk.DocumentTool) string {
+func spdxToolCreator(tool model.DocumentTool) string {
 	name := strings.TrimSpace(tool.Name)
 	if version := strings.TrimSpace(tool.Version); name != "" && version != "" {
 		return name + "-" + version
@@ -416,7 +417,7 @@ func spdxDocumentCreators(doc *Document) []common.Creator {
 		if tool == doc.ToolOrDefault() {
 			version = doc.ToolVersion
 		}
-		if toolIsRestatedInFull(sdk.DocumentTool{Name: tool, Version: version}, doc.Assertions.Tools) {
+		if toolIsRestatedInFull(model.DocumentTool{Name: tool, Version: version}, doc.Assertions.Tools) {
 			continue
 		}
 		// SPDX creator convention appends the tool version as "name-version".
@@ -519,15 +520,15 @@ func spdxSourceLinks(doc *Document) []v23.ExternalDocumentRef {
 // source usable as a link on the next export in either format. The algorithm
 // spelling is SPDX's; the SDK's digest registry resolves it, so no mapping is
 // written here.
-func spdxIngestedSources(refs []v23.ExternalDocumentRef) []sdk.DocumentSource {
+func spdxIngestedSources(refs []v23.ExternalDocumentRef) []model.DocumentSource {
 	if len(refs) == 0 {
 		return nil
 	}
-	sources := make([]sdk.DocumentSource, 0, len(refs))
+	sources := make([]model.DocumentSource, 0, len(refs))
 	for _, ref := range refs {
-		source := sdk.DocumentSource{Identity: ref.URI}
-		if checksum, ok := (sdk.Digest{
-			Algorithm: sdk.DigestAlgorithm(ref.Checksum.Algorithm),
+		source := model.DocumentSource{Identity: ref.URI}
+		if checksum, ok := (model.Digest{
+			Algorithm: model.DigestAlgorithm(ref.Checksum.Algorithm),
 			Value:     ref.Checksum.Value,
 		}).Normalized(); ok {
 			source.Checksum = &checksum

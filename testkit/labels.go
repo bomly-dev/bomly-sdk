@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	sdk "github.com/bomly-dev/bomly-sdk"
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // Looking a fixture node up by the label it was written as.
@@ -24,9 +24,9 @@ import (
 
 // MustManifestNode constructs a manifest node and fails the test when the
 // constructor rejects the path or kind.
-func MustManifestNode(t testing.TB, path string, kind sdk.ManifestKind) *sdk.ManifestNode {
+func MustManifestNode(t testing.TB, path string, kind model.ManifestKind) *model.ManifestNode {
 	t.Helper()
-	node, err := sdk.NewManifestNode(path, kind)
+	node, err := model.NewManifestNode(path, kind)
 	if err != nil {
 		t.Fatalf("NewManifestNode(%q, %q): %v", path, kind, err)
 	}
@@ -36,10 +36,10 @@ func MustManifestNode(t testing.TB, path string, kind sdk.ManifestKind) *sdk.Man
 // MustDependencyFrom constructs a dependency node from a prototype, copying
 // every field the prototype states, and fails the test when the coordinates
 // cannot mint an identity. Test-fixture counterpart of
-// sdk.NewDependencyNodeFrom.
-func MustDependencyFrom(t testing.TB, proto sdk.DependencyNode) *sdk.DependencyNode {
+// model.NewDependencyNodeFrom.
+func MustDependencyFrom(t testing.TB, proto model.DependencyNode) *model.DependencyNode {
 	t.Helper()
-	node, err := sdk.NewDependencyNodeFrom(proto)
+	node, err := model.NewDependencyNodeFrom(proto)
 	if err != nil {
 		t.Fatalf("NewDependencyNodeFrom(%q): %v", proto.Name, err)
 	}
@@ -53,7 +53,7 @@ func MustDependencyFrom(t testing.TB, proto sdk.DependencyNode) *sdk.DependencyN
 // spellings the node answers to: the bare name, the ecosystem-native name,
 // and the display name. A label with no version matches on name alone, which
 // is what a module or manifest label looks like.
-func FindNode(g *sdk.Graph, label string) (sdk.GraphNode, bool) {
+func FindNode(g *model.Graph, label string) (model.GraphNode, bool) {
 	if g == nil {
 		return nil, false
 	}
@@ -75,12 +75,12 @@ func FindNode(g *sdk.Graph, label string) (sdk.GraphNode, bool) {
 }
 
 // FindDependencyNode is FindNode narrowed to a dependency node.
-func FindDependencyNode(g *sdk.Graph, label string) (*sdk.DependencyNode, bool) {
+func FindDependencyNode(g *model.Graph, label string) (*model.DependencyNode, bool) {
 	node, ok := FindNode(g, label)
 	if !ok {
 		return nil, false
 	}
-	return sdk.AsDependencyNode(node)
+	return model.AsDependencyNode(node)
 }
 
 // NodeID returns the ID of the node a label names, or the label unchanged
@@ -89,7 +89,7 @@ func FindDependencyNode(g *sdk.Graph, label string) (*sdk.DependencyNode, bool) 
 //
 // Use it where a graph method takes an ID rather than returning a node:
 // DirectDependencies, Dependents, CollectPathsTo, AddEdge.
-func NodeID(g *sdk.Graph, label string) string {
+func NodeID(g *model.Graph, label string) string {
 	if node, ok := FindNode(g, label); ok {
 		return node.NodeID()
 	}
@@ -99,8 +99,8 @@ func NodeID(g *sdk.Graph, label string) string {
 // NodeIs reports whether a node answers to a label: by ID, or by any of the
 // spellings its coordinates carry. It is the comparison form of FindNode, for
 // assertions that hold a node and want to know which one it is.
-func NodeIs(node sdk.GraphNode, label string) bool {
-	if sdk.IsNilNode(node) {
+func NodeIs(node model.GraphNode, label string) bool {
+	if model.IsNilNode(node) {
 		return false
 	}
 	if node.NodeID() == label {
@@ -138,11 +138,11 @@ func labelSpellings(name string, loose bool) []string {
 	return spellings
 }
 
-func nodeMatchesLabel(node sdk.GraphNode, name, version string, loose bool) bool {
-	if manifest, ok := node.(*sdk.ManifestNode); ok && manifest != nil {
+func nodeMatchesLabel(node model.GraphNode, name, version string, loose bool) bool {
+	if manifest, ok := node.(*model.ManifestNode); ok && manifest != nil {
 		return version == "" && manifest.Path == name
 	}
-	coords, ok := sdk.NodeCoordinates(node)
+	coords, ok := model.NodeCoordinates(node)
 	if !ok {
 		return false
 	}

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bomly-dev/bomly-sdk"
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // Target identifies an SBOM wire format target.
@@ -91,7 +91,7 @@ type BuildOptions struct {
 	// Registry, when non-nil, supplies matching-stage enrichment (licenses,
 	// vulnerabilities, CPEs, digests, EOL) resolved by PURL and folded onto
 	// each component during projection.
-	Registry *sdk.PackageRegistry
+	Registry *model.PackageRegistry
 }
 
 // EncodeOptions controls JSON output formatting.
@@ -137,7 +137,7 @@ type Document struct {
 	//
 	// This is what a document says about *itself*, which is why it is not the
 	// same field as Sources below.
-	Assertions sdk.DocumentAssertions
+	Assertions model.DocumentAssertions
 
 	// UnknownScopeTokens are the scope-carrier tokens an ingested document
 	// named that this build does not recognize, deduplicated and sorted.
@@ -163,7 +163,7 @@ type Document struct {
 	// inheriting one, because both formats give a document exactly one
 	// identity and picking a source's would name a document that is not this
 	// one.
-	Sources []sdk.DocumentAssertions
+	Sources []model.DocumentAssertions
 }
 
 // IsProjectRootComponent reports whether a component is a synthesized pseudo
@@ -205,7 +205,7 @@ type Component struct {
 	//
 	// A source document's own scalar rides beside the set in SourceScope, so
 	// the derived set is never the only record of what the document said.
-	Scopes []sdk.Scope
+	Scopes []model.Scope
 
 	// SourceScope is the scope word the source document used, in that
 	// document's own vocabulary -- CycloneDX's "optional", say. It is a
@@ -215,7 +215,7 @@ type Component struct {
 	// ADR-0037 asks that the word be re-emitted verbatim unless Bomly's own
 	// scope set changed, so "optional" and "excluded" do not collapse into
 	// "required" across a round trip that asserted neither. Whether the word
-	// still means what the set means is sdk.CycloneDXScopeForExport's
+	// still means what the set means is model.CycloneDXScopeForExport's
 	// decision, not this package's -- the mapping that read the word in is
 	// the only thing that can say whether it still describes the set, and a
 	// second copy of it here is how the two directions came to disagree
@@ -264,8 +264,8 @@ type Component struct {
 	// because an ingested document is untrusted input that Bomly re-emits.
 	// A local mirror of these shapes would be a second place for those rules
 	// to be forgotten, which is the defect ADR-0037 replaced.
-	Supplier    *sdk.Contact
-	Originator  *sdk.Contact
+	Supplier    *model.Contact
+	Originator  *model.Contact
 	Description string
 	Homepage    string
 
@@ -273,7 +273,7 @@ type Component struct {
 	// category and type it stated so the SPDX triple round-trips without
 	// being re-derived. Merge class: set, unioned by the reference's own
 	// identity.
-	ExternalReferences []sdk.ExternalReference
+	ExternalReferences []model.ExternalReference
 
 	// Every place this package was resolved from, primary first.
 	//

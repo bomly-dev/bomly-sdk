@@ -6,8 +6,9 @@ import (
 	"testing"
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
-	"github.com/bomly-dev/bomly-sdk"
 	"github.com/bomly-dev/bomly-sdk/internal/testnodes"
+
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // TestCycloneDXPrimaryComponentCarriesFullDetail covers a natural single-root
@@ -72,15 +73,15 @@ func TestCycloneDXPrimaryComponentCarriesFullDetail(t *testing.T) {
 // the provenance references rely on: a component's own origin references come
 // first, and the document-level security references follow.
 func TestCycloneDXPrimaryComponentKeepsSecurityReferencesLast(t *testing.T) {
-	g := sdk.New()
-	dep := testnodes.DepFrom(sdk.DependencyNode{
-		Coordinates: sdk.Coordinates{
+	g := model.New()
+	dep := testnodes.DepFrom(model.DependencyNode{
+		Coordinates: model.Coordinates{
 			Name:      "left-pad",
 			Version:   "1.3.0",
 			PURL:      "pkg:npm/left-pad@1.3.0",
 			Ecosystem: "npm",
 		},
-		Origins: []sdk.DependencyOrigin{{ArtifactURL: "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz"}},
+		Origins: []model.DependencyOrigin{{ArtifactURL: "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz"}},
 	})
 	if err := g.AddNode(dep); err != nil {
 		t.Fatalf("add node: %v", err)
@@ -131,8 +132,8 @@ func TestCycloneDXComponentGroup(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			g := sdk.New()
-			dep := testnodes.DepFrom(sdk.DependencyNode{Coordinates: sdk.Coordinates{
+			g := model.New()
+			dep := testnodes.DepFrom(model.DependencyNode{Coordinates: model.Coordinates{
 				Name:    "pkg",
 				Version: "1",
 				PURL:    tc.purl,
@@ -306,7 +307,7 @@ func TestIngestBareNameRecoversQualifiedName(t *testing.T) {
 				t.Fatalf("to graph: %v", err)
 			}
 			found := false
-			graph.WalkDependencyNodes(func(pkg *sdk.DependencyNode) bool {
+			graph.WalkDependencyNodes(func(pkg *model.DependencyNode) bool {
 				found = true
 				if got := pkg.EcosystemName(); got != tc.wantName {
 					t.Fatalf("expected name %q, got %q", tc.wantName, got)
@@ -376,12 +377,12 @@ func TestCycloneDXGroupSurvivesRoundTrip(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			g := sdk.New()
-			dep := testnodes.DepFrom(sdk.DependencyNode{Coordinates: sdk.Coordinates{
+			g := model.New()
+			dep := testnodes.DepFrom(model.DependencyNode{Coordinates: model.Coordinates{
 				Name:      tc.pkgName,
 				Version:   "1.0.0",
 				PURL:      tc.purl,
-				Ecosystem: sdk.Ecosystem(tc.ecosystem),
+				Ecosystem: model.Ecosystem(tc.ecosystem),
 			}})
 			if err := g.AddNode(dep); err != nil {
 				t.Fatalf("add node: %v", err)
@@ -408,7 +409,7 @@ func TestCycloneDXGroupSurvivesRoundTrip(t *testing.T) {
 				t.Fatalf("to graph: %v", err)
 			}
 			found := false
-			graph.WalkDependencyNodes(func(pkg *sdk.DependencyNode) bool {
+			graph.WalkDependencyNodes(func(pkg *model.DependencyNode) bool {
 				found = true
 				if got := pkg.EcosystemName(); got != tc.pkgName {
 					t.Fatalf("re-ingested name changed: expected %q, got %q", tc.pkgName, got)
@@ -447,16 +448,16 @@ func TestCycloneDXGroupSurvivesRoundTrip(t *testing.T) {
 // of the whole document. A scan of a project with two top-level packages
 // described itself as one of them.
 func TestManifestRootDoesNotDecideThePrimaryComponent(t *testing.T) {
-	g := sdk.New()
-	manifest := testnodes.Manifest("package.json", sdk.ManifestKindPackageJSON)
-	left := testnodes.Dep(sdk.Coordinates{Ecosystem: "npm", Name: "left", Version: "1.0.0"})
-	right := testnodes.Dep(sdk.Coordinates{Ecosystem: "npm", Name: "right", Version: "2.0.0"})
-	for _, node := range []sdk.GraphNode{manifest, left, right} {
+	g := model.New()
+	manifest := testnodes.Manifest("package.json", model.ManifestKindPackageJSON)
+	left := testnodes.Dep(model.Coordinates{Ecosystem: "npm", Name: "left", Version: "1.0.0"})
+	right := testnodes.Dep(model.Coordinates{Ecosystem: "npm", Name: "right", Version: "2.0.0"})
+	for _, node := range []model.GraphNode{manifest, left, right} {
 		if _, err := g.InsertNode(node); err != nil {
 			t.Fatalf("InsertNode(%q): %v", node.NodeID(), err)
 		}
 	}
-	for _, child := range []*sdk.DependencyNode{left, right} {
+	for _, child := range []*model.DependencyNode{left, right} {
 		if err := g.AddEdge(manifest.NodeID(), child.NodeID()); err != nil {
 			t.Fatalf("AddEdge(%q): %v", child.NodeID(), err)
 		}

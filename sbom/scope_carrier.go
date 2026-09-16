@@ -3,7 +3,7 @@ package sbom
 import (
 	"sort"
 
-	"github.com/bomly-dev/bomly-sdk"
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // This file reads Bomly's own scope carrier out of an ingested document and
@@ -29,7 +29,7 @@ import (
 // junk to warn about. The SDK draws that line; this only reports what it
 // hands back.
 func unknownScopeTokens(carrier string) []string {
-	decoded, err := sdk.DecodeScopeSetLenient(carrier)
+	decoded, err := model.DecodeScopeSetLenient(carrier)
 	if err != nil {
 		return nil
 	}

@@ -3,13 +3,14 @@ package detectorkit
 import (
 	"strings"
 
-	sdk "github.com/bomly-dev/bomly-sdk"
+	"github.com/bomly-dev/bomly-sdk/model"
+	"github.com/bomly-dev/bomly-sdk/plugin"
 )
 
 // RemediationAdvice builds manager-specific, read-only guidance for a strategy.
 // Concrete detectors own this function and the wording it returns.
 type RemediationAdvice func(
-	action sdk.RemediationAction,
+	action model.RemediationAction,
 	name, version, manifestPath string,
 ) string
 
@@ -17,20 +18,20 @@ type RemediationAdvice func(
 // graph. It handles only common graph traversal; the calling detector owns its
 // advertised actions and manager-specific advice.
 func BuildRemediationHints(
-	request sdk.RemediationHintRequest,
-	manager sdk.PackageManager,
-	actions []sdk.RemediationAction,
+	request plugin.RemediationHintRequest,
+	manager model.PackageManager,
+	actions []model.RemediationAction,
 	advice RemediationAdvice,
-) sdk.RemediationHintResponse {
+) plugin.RemediationHintResponse {
 	if request.Detection.Graphs == nil || request.Registry == nil || len(actions) == 0 {
-		return sdk.RemediationHintResponse{}
+		return plugin.RemediationHintResponse{}
 	}
-	advertised := make(map[sdk.RemediationAction]struct{}, len(actions))
+	advertised := make(map[model.RemediationAction]struct{}, len(actions))
 	for _, action := range actions {
 		advertised[action] = struct{}{}
 	}
 
-	response := sdk.RemediationHintResponse{}
+	response := plugin.RemediationHintResponse{}
 	for _, entry := range request.Detection.Graphs.Entries {
 		if entry.Graph == nil {
 			continue
@@ -45,18 +46,18 @@ func BuildRemediationHints(
 			}
 			pkg, ok := request.Registry.Get(packageRef)
 			if !ok || pkg == nil || pkg.Remediation == nil ||
-				pkg.Remediation.Status != sdk.PackageRemediationComplete ||
+				pkg.Remediation.Status != model.PackageRemediationComplete ||
 				strings.TrimSpace(pkg.Remediation.RecommendedVersion) == "" {
 				continue
 			}
 			dependencyManager := dependency.PackageManager
-			if dependencyManager == sdk.PackageManagerUnknown {
+			if dependencyManager == model.PackageManagerUnknown {
 				dependencyManager = request.Detection.SubprojectInfo.PrimaryPackageManager()
 			}
 			if dependencyManager != manager {
 				continue
 			}
-			hint := sdk.RemediationHint{
+			hint := plugin.RemediationHint{
 				DependencyRef: dependency.NodeID(),
 				ManifestPath:  entry.Manifest.Path,
 			}
@@ -64,7 +65,7 @@ func BuildRemediationHints(
 				if _, ok := advertised[action]; !ok {
 					continue
 				}
-				strategy := sdk.RemediationStrategyHint{
+				strategy := plugin.RemediationStrategyHint{
 					Action: action,
 				}
 				if advice != nil {
@@ -85,8 +86,8 @@ func BuildRemediationHints(
 	return response
 }
 
-var remediationActionOrder = []sdk.RemediationAction{
-	sdk.RemediationActionDirectBump,
-	sdk.RemediationActionTransitiveOverride,
-	sdk.RemediationActionLockfileRefresh,
+var remediationActionOrder = []model.RemediationAction{
+	model.RemediationActionDirectBump,
+	model.RemediationActionTransitiveOverride,
+	model.RemediationActionLockfileRefresh,
 }

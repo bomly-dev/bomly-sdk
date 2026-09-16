@@ -9,20 +9,21 @@ import (
 	"testing"
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
-	"github.com/bomly-dev/bomly-sdk"
+
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // mergedExport ingests two documents, merges their graphs, and exports the
 // result to one target -- the merge case ADR-0042 defines, where the document
 // mints its own identity and links its sources.
-func mergedExport(t *testing.T, target Target, raws ...string) ([]byte, []sdk.GraphEntry) {
+func mergedExport(t *testing.T, target Target, raws ...string) ([]byte, []model.GraphEntry) {
 	t.Helper()
-	entries := make([]sdk.GraphEntry, 0, len(raws))
-	merged := sdk.New()
+	entries := make([]model.GraphEntry, 0, len(raws))
+	merged := model.New()
 	for _, raw := range raws {
 		_, entry := ingestDocument(t, raw)
 		entries = append(entries, entry)
-		if err := sdk.MergeGraph(merged, entry.Graph); err != nil {
+		if err := model.MergeGraph(merged, entry.Graph); err != nil {
 			t.Fatalf("merge: %v", err)
 		}
 	}
@@ -179,7 +180,7 @@ func TestMergedSourceLinksSurviveASecondConversion(t *testing.T) {
 			// so this is a conversion: it restates that document, and the
 			// documents that document named are still named.
 			_, entry := ingestDocument(t, string(first))
-			second, err := MarshalGraphEntriesJSON(entry.Graph, []sdk.GraphEntry{entry}, target,
+			second, err := MarshalGraphEntriesJSON(entry.Graph, []model.GraphEntry{entry}, target,
 				BuildOptions{Created: fixedExportTime(), RestatesSource: true}, EncodeOptions{Pretty: true})
 			if err != nil {
 				t.Fatalf("second export: %v", err)
@@ -227,7 +228,7 @@ func TestCycloneDXSourceLinksCarryTheirChecksum(t *testing.T) {
 	// And converting that document to SPDX still names both sources, which is
 	// the whole reason the hash is written.
 	_, entry := ingestDocument(t, string(raw))
-	converted, err := MarshalGraphEntriesJSON(entry.Graph, []sdk.GraphEntry{entry}, TargetSPDX23JSON,
+	converted, err := MarshalGraphEntriesJSON(entry.Graph, []model.GraphEntry{entry}, TargetSPDX23JSON,
 		BuildOptions{Created: fixedExportTime(), RestatesSource: true}, EncodeOptions{Pretty: true})
 	if err != nil {
 		t.Fatalf("convert to spdx: %v", err)
@@ -239,7 +240,7 @@ func TestCycloneDXSourceLinksCarryTheirChecksum(t *testing.T) {
 
 // A native scan names no sources: there were none.
 func TestNativeExportNamesNoSources(t *testing.T) {
-	g := scopedGraph(t, sdk.ScopeRuntime)
+	g := scopedGraph(t, model.ScopeRuntime)
 	for _, target := range []Target{TargetSPDX23JSON, TargetCycloneDX16JSON} {
 		t.Run(string(target), func(t *testing.T) {
 			raw, err := MarshalDepGraphJSON(g, target, BuildOptions{Created: fixedExportTime()}, EncodeOptions{Pretty: true})
@@ -264,7 +265,7 @@ func TestNativeExportNamesNoSources(t *testing.T) {
 // Only the documents behind it are named.
 func TestConversionDoesNotLinkTheDocumentItRestates(t *testing.T) {
 	_, entry := ingestDocument(t, documentRichSPDX)
-	raw, err := MarshalGraphEntriesJSON(entry.Graph, []sdk.GraphEntry{entry}, TargetSPDX23JSON,
+	raw, err := MarshalGraphEntriesJSON(entry.Graph, []model.GraphEntry{entry}, TargetSPDX23JSON,
 		BuildOptions{Created: fixedExportTime(), RestatesSource: true}, EncodeOptions{Pretty: true})
 	if err != nil {
 		t.Fatalf("export: %v", err)
@@ -293,13 +294,13 @@ func sha256Hex(value string) string {
 // or the SDK mints one, so this package reuses its own package-id rule
 // including the collision suffix; this is the case that says so.
 func TestCollidingSourceIdentitiesGetDistinctReferenceIDs(t *testing.T) {
-	checksum := sdk.Digest{
-		Algorithm: sdk.DigestAlgorithmSHA256,
+	checksum := model.Digest{
+		Algorithm: model.DigestAlgorithmSHA256,
 		Value:     "0000000000000000000000000000000000000000000000000000000000000000",
 	}
 	doc := &Document{
 		Namespace: "https://bomly.dev/spdx/merged",
-		Sources: []sdk.DocumentAssertions{
+		Sources: []model.DocumentAssertions{
 			{Identity: "https://acme.example/a_b", Checksum: &checksum},
 			{Identity: "https://acme.example/a+b", Checksum: &checksum},
 		},

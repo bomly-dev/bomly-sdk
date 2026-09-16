@@ -1,7 +1,7 @@
 package sbom
 
 import (
-	"github.com/bomly-dev/bomly-sdk"
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // publishableDigest puts a component digest through the SDK's gate and returns
@@ -39,9 +39,9 @@ import (
 // requested version cannot name. Repeating that table here would be the same
 // transcription these helpers exist to remove.
 // TestCycloneDXHashesAreScopedToTheTargetSpecVersion pins the behavior.
-func publishableDigest(d Digest) (sdk.DigestAlgorithm, string, bool) {
-	normalized, publishable := sdk.Digest{
-		Algorithm: sdk.DigestAlgorithm(d.Algorithm),
+func publishableDigest(d Digest) (model.DigestAlgorithm, string, bool) {
+	normalized, publishable := model.Digest{
+		Algorithm: model.DigestAlgorithm(d.Algorithm),
 		Value:     d.Value,
 	}.Normalized()
 	if !publishable {

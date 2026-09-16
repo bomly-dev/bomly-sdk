@@ -6,8 +6,9 @@ import (
 	"testing"
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
-	"github.com/bomly-dev/bomly-sdk"
 	"github.com/bomly-dev/bomly-sdk/internal/testnodes"
+
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // A single source whose graph was transformed after ingest -- scope-filtered,
@@ -22,7 +23,7 @@ import (
 // safe side, and these tests pass no RestatesSource at all.
 func TestATransformedConversionMintsItsOwnIdentity(t *testing.T) {
 	_, entry := ingestDocument(t, documentRichSPDX)
-	doc, err := FromGraphEntries(entry.Graph, []sdk.GraphEntry{entry}, BuildOptions{Created: fixedExportTime()})
+	doc, err := FromGraphEntries(entry.Graph, []model.GraphEntry{entry}, BuildOptions{Created: fixedExportTime()})
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}
@@ -62,7 +63,7 @@ func TestATransformedConversionMintsItsOwnIdentity(t *testing.T) {
 func TestATransformedConversionLinksItsSource(t *testing.T) {
 	t.Run("spdx", func(t *testing.T) {
 		_, entry := ingestDocument(t, documentRichSPDX)
-		raw, err := MarshalGraphEntriesJSON(entry.Graph, []sdk.GraphEntry{entry}, TargetSPDX23JSON,
+		raw, err := MarshalGraphEntriesJSON(entry.Graph, []model.GraphEntry{entry}, TargetSPDX23JSON,
 			BuildOptions{Created: fixedExportTime()}, EncodeOptions{Pretty: true})
 		if err != nil {
 			t.Fatalf("export: %v", err)
@@ -80,7 +81,7 @@ func TestATransformedConversionLinksItsSource(t *testing.T) {
 	})
 	t.Run("cyclonedx", func(t *testing.T) {
 		_, entry := ingestDocument(t, serialCycloneDX)
-		raw, err := MarshalGraphEntriesJSON(entry.Graph, []sdk.GraphEntry{entry}, TargetCycloneDX16JSON,
+		raw, err := MarshalGraphEntriesJSON(entry.Graph, []model.GraphEntry{entry}, TargetCycloneDX16JSON,
 			BuildOptions{Created: fixedExportTime()}, EncodeOptions{Pretty: true})
 		if err != nil {
 			t.Fatalf("export: %v", err)
@@ -110,14 +111,14 @@ func TestATransformedConversionLinksItsSource(t *testing.T) {
 func TestRestatementFlagIsIgnoredByAMerge(t *testing.T) {
 	_, first := ingestDocument(t, documentRichSPDX)
 	_, second := ingestDocument(t, serialCycloneDX)
-	merged := sdk.New()
-	if err := sdk.MergeGraph(merged, first.Graph); err != nil {
+	merged := model.New()
+	if err := model.MergeGraph(merged, first.Graph); err != nil {
 		t.Fatalf("merge: %v", err)
 	}
-	if err := sdk.MergeGraph(merged, second.Graph); err != nil {
+	if err := model.MergeGraph(merged, second.Graph); err != nil {
 		t.Fatalf("merge: %v", err)
 	}
-	doc, err := FromGraphEntries(merged, []sdk.GraphEntry{first, second}, BuildOptions{RestatesSource: true})
+	doc, err := FromGraphEntries(merged, []model.GraphEntry{first, second}, BuildOptions{RestatesSource: true})
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}
@@ -136,17 +137,17 @@ func TestRestatementFlagIsIgnoredByAMerge(t *testing.T) {
 // so no caller has to remember to.
 func TestADocumentBesideANativeManifestIsNotRestated(t *testing.T) {
 	_, ingested := ingestDocument(t, documentRichSPDX)
-	native := sdk.New()
-	if err := native.AddNode(testnodes.Dep(sdk.Coordinates{Ecosystem: sdk.EcosystemNPM, Name: "left-pad", Version: "1.3.0"})); err != nil {
+	native := model.New()
+	if err := native.AddNode(testnodes.Dep(model.Coordinates{Ecosystem: model.EcosystemNPM, Name: "left-pad", Version: "1.3.0"})); err != nil {
 		t.Fatalf("add native node: %v", err)
 	}
-	merged := sdk.New()
-	for _, g := range []*sdk.Graph{ingested.Graph, native} {
-		if err := sdk.MergeGraph(merged, g); err != nil {
+	merged := model.New()
+	for _, g := range []*model.Graph{ingested.Graph, native} {
+		if err := model.MergeGraph(merged, g); err != nil {
 			t.Fatalf("merge: %v", err)
 		}
 	}
-	entries := []sdk.GraphEntry{ingested, {Graph: native}}
+	entries := []model.GraphEntry{ingested, {Graph: native}}
 	doc, err := FromGraphEntries(merged, entries, BuildOptions{RestatesSource: true, Created: fixedExportTime()})
 	if err != nil {
 		t.Fatalf("export: %v", err)
@@ -159,7 +160,7 @@ func TestADocumentBesideANativeManifestIsNotRestated(t *testing.T) {
 	}
 
 	// The same entries without the native graph beside them still restate.
-	alone, err := FromGraphEntries(ingested.Graph, []sdk.GraphEntry{ingested}, BuildOptions{RestatesSource: true})
+	alone, err := FromGraphEntries(ingested.Graph, []model.GraphEntry{ingested}, BuildOptions{RestatesSource: true})
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}

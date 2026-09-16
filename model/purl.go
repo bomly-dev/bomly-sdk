@@ -1,0 +1,363 @@
+package model
+
+import (
+	"strings"
+	"sync"
+
+	"github.com/bomly-dev/bomly-sdk/purlkit"
+)
+
+// CanonicalizePackageURL normalizes a package URL string when possible.
+// It delegates to purlkit, the single home for package-URL behavior.
+func CanonicalizePackageURL(value string) string {
+	return purlkit.Canonicalize(value)
+}
+
+// BuildPackageURL builds and normalizes a package URL from its parts.
+func BuildPackageURL(purlType, namespace, name, version string) string {
+	purlType = strings.TrimSpace(strings.ToLower(purlType))
+	name = strings.Trim(strings.ReplaceAll(strings.TrimSpace(name), "\\", "/"), "/")
+	namespace = strings.Trim(strings.ReplaceAll(strings.TrimSpace(namespace), "\\", "/"), "/")
+	version = strings.TrimSpace(version)
+	if purlType == "" || name == "" {
+		return ""
+	}
+	built, err := purlkit.Build(purlkit.PURL{Type: purlType, Namespace: namespace, Name: name, Version: version})
+	if err != nil {
+		// The library rejected the parts: there is no valid package URL to
+		// mint, and emitting a hand-concatenated one the library refused
+		// would put an invalid identity on the wire.
+		return ""
+	}
+	return built
+}
+
+// BuildPackageURLFor builds a package URL for an ecosystem and its package
+// manager, deciding the package-url type itself.
+//
+// Prefer this over BuildPackageURL wherever both tokens are known, which is
+// every detector. The type is not a parameter here, so a caller cannot pick
+// one: the mapping is purlkit's (ADR-0038) and stays there.
+//
+// That matters for a reason a code-review rule could not reach. The type
+// depends on BOTH tokens, and passing one is silently wrong in at least one
+// live case: the swift ecosystem covers SwiftPM and CocoaPods, purlkit has no
+// "swift" case because swift is itself a purl type, and so the package manager
+// is what separates pkg:swift from pkg:cocoapods. A caller handing
+// PackageURLTypeForValues only the ecosystem gets "swift" for a CocoaPods
+// package -- wrong ecosystem, no advisory matches, and nothing to see at the
+// call site. Taking both as parameters makes that unrepresentable rather than
+// discouraged. See bomly-dev/bomly-cli#449.
+//
+// It is additive: BuildPackageURL keeps working for callers that genuinely
+// have only a type string, such as an SBOM ingest reading one off a document.
+func BuildPackageURLFor(ecosystem Ecosystem, manager PackageManager, namespace, name, version string) string {
+	if ecosystemNeedsItsPackageManager(ecosystem) && manager.Ecosystem() != ecosystem {
+		// Refusing beats guessing. The ecosystem alone answers for one of
+		// its registries and is wrong for the others, and the wrong answer
+		// is a well-formed package URL that matches no advisory -- the
+		// failure mode this constructor exists to remove.
+		//
+		// The test is whether the manager belongs to this ecosystem, not
+		// whether it is non-zero. PackageManagerOther belongs to
+		// EcosystemOther and PackageManagerMultiple to none, so both name
+		// a manager while disambiguating nothing -- they would have walked
+		// past a zero-value check and minted the same wrong identity.
+		//
+		// An empty result is what BuildPackageURL already returns when
+		// there is no valid identity to mint, so callers handle it.
+		return ""
+	}
+	return BuildPackageURL(PackageURLTypeForValues(ecosystem, manager), namespace, name, version)
+}
+
+// ecosystemNeedsItsPackageManager reports whether the ecosystem alone gives a
+// different package-url type than one of its own package managers would.
+//
+// Derived, not listed. purlkit already knows which ecosystems span more than
+// one registry -- it has no "swift" case because swift is itself a purl type
+// and cocoapods is the other half, and it maps erlang at the manager level so
+// a bare erlang value cannot guess between Hex and OTP. Asking it, rather than
+// copying the answer into a table here, means an ecosystem that becomes
+// ambiguous in a later purlkit release is covered without an edit.
+var ecosystemNeedsItsPackageManager = sync.OnceValue(func() func(Ecosystem) bool {
+	ambiguous := map[Ecosystem]bool{}
+	for _, manager := range AllPackageManagers() {
+		ecosystem := manager.Ecosystem()
+		if ecosystem == "" {
+			continue
+		}
+		if PackageURLTypeForValues(ecosystem, manager) != PackageURLTypeForValues(ecosystem) {
+			ambiguous[ecosystem] = true
+		}
+	}
+	return func(ecosystem Ecosystem) bool { return ambiguous[ecosystem] }
+})()
+
+// PackageURLTypeForValues maps ecosystem/build-system values to a package-url type.
+//
+// The explicit switch below is the authority: it is consulted for every value
+// before the loose fallback runs, so the most specific mapping wins regardless
+// of the order the caller passes ecosystem / package manager / package type in.
+// The fallback then returns the first non-empty value verbatim, which is only
+// correct where the Bomly identifier happens to be the purl type as well (npm,
+// maven, apk, rpm, ...). Any ecosystem whose purl type differs from its Bomly
+// name needs an explicit case here — without one we emit a type that is not in
+// the purl spec, and consumers keyed on the type (OSV, SBOM ingest) silently
+// fail to match. See issue #317.
+//
+// Ecosystems that span more than one registry are the exception: erlang covers
+// both Hex (rebar) and OTP (*.app), so it is mapped at the package-manager
+// level only. A bare erlang value with no manager to disambiguate keeps the
+// non-spec pkg:erlang rather than guessing a registry the package may not be
+// published to.
+func PackageURLTypeForValues(values ...any) string {
+	converted := make([]string, 0, len(values))
+	for _, value := range values {
+		converted = append(converted, packageURLTypeValue(value))
+	}
+	return purlkit.TypeForValues(converted...)
+}
+
+// EcosystemForPURLType resolves the Bomly ecosystem a package URL type names,
+// and returns EcosystemUnknown when no ecosystem is decidable from the type
+// alone. It is the reverse of PackageURLTypeForValues.
+//
+// This is the durable home for a join consumers used to transcribe: bomly-cli
+// carried three copies of it, and they had already drifted — one answered
+// Elixir for pkg:hex, which is exactly the guess this refuses, and none of
+// them had learned hackage, cran, opam, deb or otp, so five ecosystems came
+// back unknown (ADR-0040; issue #69).
+//
+// Two purlkit tables answer, in that order. The type join covers the purl
+// types whose spec name differs from Bomly's ecosystem token (golang → go,
+// gem → ruby, …); the canonical alias table covers the direct ones (npm, apk,
+// rpm, conda, …), which the type join deliberately omits. Without the second
+// lookup a node built from a bare package URL would carry no ecosystem, and
+// ecosystem-specific behavior — an npm scope in EcosystemName(), for one —
+// would silently degrade.
+//
+// Ambiguity is refused rather than guessed. pkg:hex serves Elixir and Erlang
+// alike and resolves to EcosystemUnknown: relabelling every round-tripped
+// Erlang dependency as Elixir is worse than declining to answer. pkg:generic
+// names no ecosystem either — an identity that fell back to it records the
+// type it could not express in the GenericFallbackTypeQualifier qualifier,
+// and that value resolves here. A type outside both tables resolves to
+// EcosystemUnknown, which leaves a detector's own token to stand: the
+// ecosystem vocabulary is open where the tables have no say.
+func EcosystemForPURLType(purlType string) Ecosystem {
+	if ecosystem, ok := purlkit.EcosystemForType(purlType); ok {
+		return Ecosystem(ecosystem)
+	}
+	if ecosystem, ok := purlkit.CanonicalEcosystem(purlType); ok {
+		return Ecosystem(ecosystem)
+	}
+	return EcosystemUnknown
+}
+
+// legacyPackageURLTypeSwitch is retained only by its parity test, which pins
+// that the purlkit table matches the historical mapping row for row.
+func legacyPackageURLTypeSwitch(values ...any) string {
+	for _, value := range values {
+		normalized := strings.ToLower(strings.TrimSpace(packageURLTypeValue(value)))
+		switch normalized {
+		case "nuget", "dotnet":
+			return "nuget"
+		case "cargo", "rust":
+			return "cargo"
+		case "pub", "dart":
+			return "pub"
+		case "cocoapods":
+			// Deliberately no "swift" case: swift is itself a purl type, and
+			// adding one here would beat cocoapods whenever the ecosystem is
+			// checked before the package manager.
+			return "cocoapods"
+		case "swiftpm":
+			return "swift"
+		case "github-actions", "githubactions":
+			return "githubactions"
+		case "conan", "cpp":
+			return "conan"
+		case "mix", "hex", "elixir", "rebar":
+			// Elixir (mix) and Erlang (rebar) both resolve from Hex.
+			return "hex"
+		case "otp":
+			// OTP applications are discovered from *.app manifests. They ship
+			// with the runtime or the release rather than resolving from Hex,
+			// so they get their own type — the same one Syft emits for them.
+			// Claiming Hex here would let a name collision with a real Hex
+			// package produce a false advisory match.
+			return "otp"
+		case "haskell", "cabal", "stack", "hackage":
+			return "hackage"
+		case "r", "r-package", "cran":
+			return "cran"
+		case "ocaml", "opam":
+			return "opam"
+		case "dpkg", "deb":
+			return "deb"
+		case "sbt", "scala":
+			return "maven"
+		case "ruby", "gem", "rubygems", "bundler":
+			return "gem"
+		case "php", "composer":
+			return "composer"
+		case "python", "pypi", "pip", "pipenv", "poetry", "uv":
+			return "pypi"
+		}
+	}
+	for _, value := range values {
+		normalized := strings.ToLower(strings.TrimSpace(packageURLTypeValue(value)))
+		if normalized == "" {
+			continue
+		}
+		switch normalized {
+		case "go", "gomod":
+			return "golang"
+		default:
+			return normalized
+		}
+	}
+	return "generic"
+}
+
+func packageURLTypeValue(value any) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case Ecosystem:
+		return string(v)
+	case PackageManager:
+		return v.Name()
+	case PackageType:
+		return string(v)
+	case Language:
+		return string(v)
+	default:
+		return ""
+	}
+}
+
+// CanonicalPackageURLFromParts returns the canonical package URL derived from
+// raw identity fields. existingPURL takes precedence when it canonicalizes.
+func CanonicalPackageURLFromParts(existingPURL string, ecosystem Ecosystem, packageManager PackageManager, typ PackageType, org, name, version string) string {
+	return (Coordinates{
+		PURL:           existingPURL,
+		Ecosystem:      ecosystem,
+		PackageManager: packageManager,
+		Type:           typ,
+		Org:            org,
+		Name:           name,
+		Version:        version,
+	}).CanonicalPURL()
+}
+
+// GenericPURL returns a pkg:generic package URL for the identity, for the
+// case where the ecosystem's own type profile rejects the coordinates.
+//
+// It is deliberately separate from CanonicalPURL: that answers "what is this
+// package's canonical identity in its own ecosystem", and answering it with a
+// generic URL would make every caller unable to tell the two apart. Node
+// construction is the only place that reaches for this, and it records a
+// warning when it does.
+//
+// A qualifier names the type that could not express the package. Two
+// ecosystems whose profiles both reject otherwise identical coordinates would
+// otherwise mint the same identity -- a bare Swift "internal-tools@2.0.0" and
+// a bare Go one both becoming pkg:generic/internal-tools@2.0.0 -- and folding
+// two distinct packages into one node is a worse outcome than the loose type
+// this fallback already accepts. A degraded identity still has to be an
+// identity.
+//
+// A qualifier rather than the namespace, because coordinates are projected
+// from the identity verbatim once it is minted: a discriminator in the
+// namespace comes back as Coordinates.Org, so a bare Swift package would read
+// as organization "swift" and display as "swift:internal-tools" -- an
+// organization no manifest declared. A qualifier is part of the identity, so
+// it keeps the two records distinct, and it is not projected, so the
+// coordinates still say what the detector found. It also rides the wire,
+// which is what lets the warning below be derived after a decode.
+func (i Coordinates) GenericPURL() string {
+	if i.Type == PackageTypeManifest {
+		return ""
+	}
+	name := strings.TrimSpace(i.Name)
+	if name == "" {
+		return ""
+	}
+	failedType := strings.TrimSpace(PackageURLTypeForValues(i.Ecosystem, i.PackageManager, i.Type))
+	if failedType == "" || failedType == genericPURLType {
+		return ""
+	}
+	built, err := purlkit.Build(purlkit.PURL{
+		Type:       genericPURLType,
+		Namespace:  strings.TrimSpace(i.Org),
+		Name:       name,
+		Version:    strings.TrimSpace(i.Version),
+		Qualifiers: []purlkit.Qualifier{{Key: GenericFallbackTypeQualifier, Value: failedType}},
+	})
+	if err != nil {
+		return ""
+	}
+	return built
+}
+
+// genericPURLType is the package URL type a degraded identity falls back to.
+const genericPURLType = "generic"
+
+// GenericFallbackTypeQualifier names the package URL type that could not
+// express a package whose identity fell back to pkg:generic.
+//
+// It is prefixed because it is this project's, not the specification's: a
+// consumer reading an exported document should be able to tell a Bomly
+// annotation from a purl-spec qualifier at a glance.
+const GenericFallbackTypeQualifier = "bomly_source_type"
+
+// genericFallbackType reports the type a generic identity fell back from, and
+// whether it fell back at all.
+func genericFallbackType(purl purlkit.PURL) (string, bool) {
+	if !strings.EqualFold(purl.Type, genericPURLType) {
+		return "", false
+	}
+	for _, qualifier := range purl.Qualifiers {
+		if strings.EqualFold(qualifier.Key, GenericFallbackTypeQualifier) && qualifier.Value != "" {
+			return qualifier.Value, true
+		}
+	}
+	return "", false
+}
+
+// CanonicalPURL returns the canonical package URL for the identity.
+func (i Coordinates) CanonicalPURL() string {
+	if canonical := CanonicalizePackageURL(i.PURL); canonical != "" {
+		return canonical
+	}
+	if i.Type == PackageTypeManifest {
+		return ""
+	}
+
+	name := strings.TrimSpace(i.Name)
+	if name == "" {
+		return ""
+	}
+
+	purlType := PackageURLTypeForValues(i.Ecosystem, i.PackageManager, i.Type)
+	namespace := strings.TrimSpace(i.Org)
+	if purlType == "golang" && namespace == "" {
+		parts := strings.Split(strings.ReplaceAll(name, "\\", "/"), "/")
+		if len(parts) > 1 {
+			namespace = strings.Join(parts[:len(parts)-1], "/")
+			name = parts[len(parts)-1]
+		}
+	}
+
+	return BuildPackageURL(purlType, namespace, name, i.Version)
+}
+
+// PackageURLBase strips version, qualifiers, and subpath from a package URL.
+// It delegates to purlkit.Base, which works on the parsed structure — the
+// previous string surgery mishandled subpath-carrying and version-less
+// package URLs.
+func PackageURLBase(value string) string {
+	return purlkit.Base(value)
+}

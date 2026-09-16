@@ -6,8 +6,9 @@ import (
 	"testing"
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
-	"github.com/bomly-dev/bomly-sdk"
 	"github.com/bomly-dev/bomly-sdk/internal/testnodes"
+
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // An SBOM component whose identity cannot mint a well-formed package URL
@@ -81,14 +82,14 @@ func TestToGraphAcceptsWellFormedComponents(t *testing.T) {
 // dropped the hop, so the child module came loose from its parent. Both are
 // fixed by contracting the path through the structural node.
 func TestExportedDependenciesNameOnlyComponents(t *testing.T) {
-	g := sdk.New()
+	g := model.New()
 	root := testnodes.Module("package.json", "workspace-root", "1.0.0")
-	childManifest := testnodes.Manifest("packages/web/package.json", sdk.ManifestKindPackageJSON)
-	child := testnodes.ModuleFrom("packages/web/package.json", sdk.Coordinates{
+	childManifest := testnodes.Manifest("packages/web/package.json", model.ManifestKindPackageJSON)
+	child := testnodes.ModuleFrom("packages/web/package.json", model.Coordinates{
 		Ecosystem: "npm", Name: "web", Version: "1.0.0",
 	})
-	leaf := testnodes.Dep(sdk.Coordinates{Ecosystem: "npm", Name: "lodash", Version: "4.17.21"})
-	for _, node := range []sdk.GraphNode{root, childManifest, child, leaf} {
+	leaf := testnodes.Dep(model.Coordinates{Ecosystem: "npm", Name: "lodash", Version: "4.17.21"})
+	for _, node := range []model.GraphNode{root, childManifest, child, leaf} {
 		if _, err := g.InsertNode(node); err != nil {
 			t.Fatalf("InsertNode(%q): %v", node.NodeID(), err)
 		}
@@ -177,12 +178,12 @@ func TestIngestGatesAreFixedPoints(t *testing.T) {
 		{"plain text", "a widget for widgets"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			once := sdk.NormalizeDescription(testCase.value)
-			if twice := sdk.NormalizeDescription(once); twice != once {
+			once := model.NormalizeDescription(testCase.value)
+			if twice := model.NormalizeDescription(once); twice != once {
 				t.Fatalf("NormalizeDescription is not idempotent: %d bytes then %d bytes", len(once), len(twice))
 			}
 
-			node, err := sdk.NewDependencyNode(sdk.Coordinates{Ecosystem: "npm", Name: "widget", Version: "1.0.0"})
+			node, err := model.NewDependencyNode(model.Coordinates{Ecosystem: "npm", Name: "widget", Version: "1.0.0"})
 			if err != nil {
 				t.Fatalf("construct node: %v", err)
 			}
@@ -192,7 +193,7 @@ func TestIngestGatesAreFixedPoints(t *testing.T) {
 			}
 			// And a second hop -- export back into a component, ingest again --
 			// keeps it, which is what the deleted workaround was protecting.
-			second, err := sdk.NewDependencyNode(sdk.Coordinates{Ecosystem: "npm", Name: "widget", Version: "1.0.0"})
+			second, err := model.NewDependencyNode(model.Coordinates{Ecosystem: "npm", Name: "widget", Version: "1.0.0"})
 			if err != nil {
 				t.Fatalf("construct node: %v", err)
 			}

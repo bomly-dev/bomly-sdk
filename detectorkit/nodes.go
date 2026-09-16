@@ -6,7 +6,7 @@ import (
 	"maps"
 	"strings"
 
-	sdk "github.com/bomly-dev/bomly-sdk"
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // EnsureNode inserts a node into a graph, or returns the node already
@@ -24,9 +24,9 @@ import (
 // asserting. A survivor of a different kind is an error rather than a silent
 // nil: two nodes sharing one ID across kinds means the ID grammars collided,
 // and a detector must not carry on with a node that is not what it built.
-func EnsureNode[T sdk.GraphNode](g *sdk.Graph, node T) (T, error) {
+func EnsureNode[T model.GraphNode](g *model.Graph, node T) (T, error) {
 	var zero T
-	if g == nil || sdk.IsNilNode(node) {
+	if g == nil || model.IsNilNode(node) {
 		return zero, nil
 	}
 	inserted, err := g.InsertNode(node)
@@ -58,7 +58,7 @@ func EnsureNode[T sdk.GraphNode](g *sdk.Graph, node T) (T, error) {
 //
 // Edges are re-added by ID, so callers must not hold node pointers across the
 // call; the returned ID is what to hold instead.
-func PromoteToModule(g *sdk.Graph, nodeID, manifestPath string) (string, error) {
+func PromoteToModule(g *model.Graph, nodeID, manifestPath string) (string, error) {
 	if g == nil || strings.TrimSpace(nodeID) == "" {
 		return nodeID, nil
 	}
@@ -68,13 +68,13 @@ func PromoteToModule(g *sdk.Graph, nodeID, manifestPath string) (string, error) 
 	}
 
 	var (
-		locations []sdk.PackageLocation
+		locations []model.PackageLocation
 		metadata  map[string]any
 	)
 	switch typed := existing.(type) {
-	case *sdk.DependencyNode:
+	case *model.DependencyNode:
 		locations, metadata = typed.Locations, typed.Metadata
-	case *sdk.ModuleNode:
+	case *model.ModuleNode:
 		if typed.DeclaringManifestPath == manifestPath {
 			return nodeID, nil
 		}
@@ -83,19 +83,19 @@ func PromoteToModule(g *sdk.Graph, nodeID, manifestPath string) (string, error) 
 		// A manifest node is already structural and declares nothing.
 		return nodeID, nil
 	}
-	coords, ok := sdk.NodeCoordinates(existing)
+	coords, ok := model.NodeCoordinates(existing)
 	if !ok {
 		return nodeID, nil
 	}
 
-	module, err := sdk.NewModuleNode(manifestPath, coords)
+	module, err := model.NewModuleNode(manifestPath, coords)
 	if err != nil {
 		return nodeID, fmt.Errorf("promote %q to a module node: %w", nodeID, err)
 	}
 	if module.NodeID() == nodeID {
 		return nodeID, nil
 	}
-	module.Locations = append([]sdk.PackageLocation(nil), locations...)
+	module.Locations = append([]model.PackageLocation(nil), locations...)
 	// Everything the detector learned before it discovered ownership. Copying
 	// only locations dropped the rest on the floor: RemoveNode below is
 	// final, and a module node holds metadata just as a dependency node does.
@@ -131,13 +131,13 @@ func PromoteToModule(g *sdk.Graph, nodeID, manifestPath string) (string, error) 
 // the kind the edge was recorded with.
 type incidentEdge struct {
 	id   string
-	kind sdk.EdgeKind
+	kind model.EdgeKind
 }
 
 // incidentEdges collects the edges into (inbound) or out of a node, with
 // their kinds, before the node is removed.
-func incidentEdges(g *sdk.Graph, nodeID string, inbound bool) []incidentEdge {
-	var neighbours []sdk.GraphNode
+func incidentEdges(g *model.Graph, nodeID string, inbound bool) []incidentEdge {
+	var neighbours []model.GraphNode
 	if inbound {
 		neighbours, _ = g.Dependents(nodeID)
 	} else {
@@ -154,11 +154,11 @@ func incidentEdges(g *sdk.Graph, nodeID string, inbound bool) []incidentEdge {
 	return edges
 }
 
-func reattach(g *sdk.Graph, fromID, toID string, kind sdk.EdgeKind) error {
+func reattach(g *model.Graph, fromID, toID string, kind model.EdgeKind) error {
 	if fromID == toID {
 		return nil
 	}
-	if err := g.AddTypedEdge(fromID, toID, kind); err != nil && !errors.Is(err, sdk.ErrSelfDependency) {
+	if err := g.AddTypedEdge(fromID, toID, kind); err != nil && !errors.Is(err, model.ErrSelfDependency) {
 		return fmt.Errorf("re-point %q -> %q: %w", fromID, toID, err)
 	}
 	return nil
@@ -194,12 +194,12 @@ func cloneMetadata(in map[string]any) map[string]any {
 // propagates, and the runtime default is not applied either. A root that is
 // present but has no direct dependencies is not that case -- the default
 // still runs, because the resolver installed whatever is there.
-func PropagateScopes(g *sdk.Graph, rootID string, seed func(*sdk.DependencyNode) sdk.Scope) {
+func PropagateScopes(g *model.Graph, rootID string, seed func(*model.DependencyNode) model.Scope) {
 	if g == nil {
 		return
 	}
 	if seed == nil {
-		seed = func(node *sdk.DependencyNode) sdk.Scope { return node.PrimaryScope() }
+		seed = func(node *model.DependencyNode) model.Scope { return node.PrimaryScope() }
 	}
 
 	directNodes, err := g.DirectDependencies(rootID)
@@ -214,21 +214,21 @@ func PropagateScopes(g *sdk.Graph, rootID string, seed func(*sdk.DependencyNode)
 		// default, so the whole pass stands down.
 		return
 	}
-	directDeps := sdk.DependencyNodesOf(directNodes)
-	propagated := make(map[string]sdk.Scope, g.Size())
-	queue := make([]*sdk.DependencyNode, 0, len(directDeps))
+	directDeps := model.DependencyNodesOf(directNodes)
+	propagated := make(map[string]model.Scope, g.Size())
+	queue := make([]*model.DependencyNode, 0, len(directDeps))
 	for _, dep := range directDeps {
 		scope := seed(dep)
-		if scope == sdk.ScopeUnknown {
-			scope = sdk.ScopeRuntime
+		if scope == model.ScopeUnknown {
+			scope = model.ScopeRuntime
 		}
 		// The node's stored scope counts here as well as on the child side.
 		// A direct dependency the caller seeds as development that already
 		// carries runtime is reachable at runtime, and seeding development
 		// alone sent development down every edge out of it -- the same defect
 		// as the child-side merge, one step earlier.
-		scope = sdk.MergeScope(scope, dep.PrimaryScope())
-		propagated[dep.NodeID()] = sdk.MergeScope(propagated[dep.NodeID()], scope)
+		scope = model.MergeScope(scope, dep.PrimaryScope())
+		propagated[dep.NodeID()] = model.MergeScope(propagated[dep.NodeID()], scope)
 		dep.AddScope(propagated[dep.NodeID()])
 		queue = append(queue, dep)
 	}
@@ -237,14 +237,14 @@ func PropagateScopes(g *sdk.Graph, rootID string, seed func(*sdk.DependencyNode)
 		current := queue[0]
 		queue = queue[1:]
 		scope := propagated[current.NodeID()]
-		if scope == sdk.ScopeUnknown {
+		if scope == model.ScopeUnknown {
 			continue
 		}
 		children, err := g.DirectDependencies(current.NodeID())
 		if err != nil {
 			continue
 		}
-		for _, child := range sdk.DependencyNodesOf(children) {
+		for _, child := range model.DependencyNodesOf(children) {
 			if child.NodeID() == rootID {
 				continue
 			}
@@ -260,7 +260,7 @@ func PropagateScopes(g *sdk.Graph, rootID string, seed func(*sdk.DependencyNode)
 			// a node re-enqueued it until the process was killed. Merging is
 			// monotone over a finite vocabulary, so comparing the propagated
 			// value alone always settles.
-			next := sdk.MergeScope(sdk.MergeScope(propagated[child.NodeID()], scope), child.PrimaryScope())
+			next := model.MergeScope(model.MergeScope(propagated[child.NodeID()], scope), child.PrimaryScope())
 			if next == propagated[child.NodeID()] {
 				continue
 			}
@@ -271,8 +271,8 @@ func PropagateScopes(g *sdk.Graph, rootID string, seed func(*sdk.DependencyNode)
 	}
 
 	for _, pkg := range g.DependencyNodes() {
-		if pkg != nil && pkg.NodeID() != rootID && pkg.PrimaryScope() == sdk.ScopeUnknown {
-			pkg.AddScope(sdk.ScopeRuntime)
+		if pkg != nil && pkg.NodeID() != rootID && pkg.PrimaryScope() == model.ScopeUnknown {
+			pkg.AddScope(model.ScopeRuntime)
 		}
 	}
 }

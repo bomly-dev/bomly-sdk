@@ -6,16 +6,17 @@ import (
 	"testing"
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
-	"github.com/bomly-dev/bomly-sdk"
+
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // scopedGraph builds a graph whose one dependency is reachable from both a
 // runtime and a development root -- the shape whose scope set the export used
 // to flatten (survey defect 2).
-func scopedGraph(t *testing.T, scopes ...sdk.Scope) *sdk.Graph {
+func scopedGraph(t *testing.T, scopes ...model.Scope) *model.Graph {
 	t.Helper()
-	g := sdk.New()
-	node, err := sdk.NewDependencyNode(sdk.Coordinates{Ecosystem: "npm", Name: "widget", Version: "1.0.0"})
+	g := model.New()
+	node, err := model.NewDependencyNode(model.Coordinates{Ecosystem: "npm", Name: "widget", Version: "1.0.0"})
 	if err != nil {
 		t.Fatalf("construct node: %v", err)
 	}
@@ -26,7 +27,7 @@ func scopedGraph(t *testing.T, scopes ...sdk.Scope) *sdk.Graph {
 	return g
 }
 
-func componentScopes(t *testing.T, doc *Document, name string) []sdk.Scope {
+func componentScopes(t *testing.T, doc *Document, name string) []model.Scope {
 	t.Helper()
 	return componentNamed(t, doc, name).Scopes
 }
@@ -37,7 +38,7 @@ func componentScopes(t *testing.T, doc *Document, name string) []sdk.Scope {
 func TestScopeSetSurvivesTheExportBoundary(t *testing.T) {
 	for _, target := range []Target{TargetSPDX23JSON, TargetCycloneDX16JSON} {
 		t.Run(string(target), func(t *testing.T) {
-			g := scopedGraph(t, sdk.ScopeRuntime, sdk.ScopeDevelopment)
+			g := scopedGraph(t, model.ScopeRuntime, model.ScopeDevelopment)
 			raw, err := MarshalDepGraphJSON(g, target, BuildOptions{}, EncodeOptions{Pretty: true})
 			if err != nil {
 				t.Fatalf("export: %v", err)
@@ -52,8 +53,8 @@ func TestScopeSetSurvivesTheExportBoundary(t *testing.T) {
 			}
 			var runtime, development bool
 			for _, scope := range got {
-				runtime = runtime || scope == sdk.ScopeRuntime
-				development = development || scope == sdk.ScopeDevelopment
+				runtime = runtime || scope == model.ScopeRuntime
+				development = development || scope == model.ScopeDevelopment
 			}
 			if !runtime || !development {
 				t.Errorf("scopes = %v, want both runtime and development", got)
@@ -66,7 +67,7 @@ func TestScopeSetSurvivesTheExportBoundary(t *testing.T) {
 // the native field gets a true statement. Runtime wins a mixed set, because a
 // package reachable at runtime ships whatever else is true of it.
 func TestCycloneDXStillWritesItsScalarScope(t *testing.T) {
-	g := scopedGraph(t, sdk.ScopeDevelopment, sdk.ScopeRuntime)
+	g := scopedGraph(t, model.ScopeDevelopment, model.ScopeRuntime)
 	raw, err := MarshalDepGraphJSON(g, TargetCycloneDX16JSON, BuildOptions{}, EncodeOptions{Pretty: true})
 	if err != nil {
 		t.Fatalf("export: %v", err)
@@ -87,7 +88,7 @@ func TestCycloneDXStillWritesItsScalarScope(t *testing.T) {
 	}
 	var carrier string
 	for _, property := range *component.Properties {
-		if property.Name == sdk.CycloneDXScopeProperty {
+		if property.Name == model.CycloneDXScopeProperty {
 			carrier = property.Value
 		}
 	}
@@ -115,11 +116,11 @@ func TestCycloneDXStillWritesItsScalarScope(t *testing.T) {
 func TestForeignCycloneDXScopesMapIntoTheSDKVocabulary(t *testing.T) {
 	for _, testCase := range []struct {
 		native string
-		want   sdk.Scope
+		want   model.Scope
 	}{
-		{"required", sdk.ScopeRuntime},
-		{"optional", sdk.ScopeDevelopment},
-		{"excluded", sdk.ScopeDevelopment},
+		{"required", model.ScopeRuntime},
+		{"optional", model.ScopeDevelopment},
+		{"excluded", model.ScopeDevelopment},
 	} {
 		t.Run(testCase.native, func(t *testing.T) {
 			raw := `{
@@ -150,7 +151,7 @@ func TestForeignCycloneDXScopesMapIntoTheSDKVocabulary(t *testing.T) {
 				t.Fatalf("nodes = %d", len(nodes))
 			}
 			for _, scope := range nodes[0].Scopes {
-				if parsed, err := sdk.ParseScope(string(scope)); err != nil || parsed != scope {
+				if parsed, err := model.ParseScope(string(scope)); err != nil || parsed != scope {
 					t.Errorf("node scope %q is outside the SDK vocabulary", scope)
 				}
 			}
@@ -176,7 +177,7 @@ func TestMalformedScopeCarrierFallsBackToTheScalar(t *testing.T) {
 		t.Fatalf("ingest: %v", err)
 	}
 	got := componentScopes(t, doc, "widget")
-	if len(got) != 1 || got[0] != sdk.ScopeDevelopment {
+	if len(got) != 1 || got[0] != model.ScopeDevelopment {
 		t.Fatalf("scopes = %v, want the scalar's [development]", got)
 	}
 }
@@ -184,7 +185,7 @@ func TestMalformedScopeCarrierFallsBackToTheScalar(t *testing.T) {
 // The SPDX carrier is the same set format in a package comment, and reads back
 // the same way.
 func TestSPDXPackageCommentCarriesTheScopeSet(t *testing.T) {
-	g := scopedGraph(t, sdk.ScopeRuntime, sdk.ScopeDevelopment)
+	g := scopedGraph(t, model.ScopeRuntime, model.ScopeDevelopment)
 	raw, err := MarshalDepGraphJSON(g, TargetSPDX23JSON, BuildOptions{}, EncodeOptions{Pretty: true})
 	if err != nil {
 		t.Fatalf("export: %v", err)
@@ -219,7 +220,7 @@ func TestAnUnscopedForeignComponentSurvivesARuntimeFilter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ingest: %v", err)
 	}
-	if got := componentScopes(t, doc, "widget"); len(got) != 1 || got[0] != sdk.ScopeRuntime {
+	if got := componentScopes(t, doc, "widget"); len(got) != 1 || got[0] != model.ScopeRuntime {
 		t.Fatalf("scopes = %v, want [runtime]: an unspecified scope takes the specification's default", got)
 	}
 
@@ -227,7 +228,7 @@ func TestAnUnscopedForeignComponentSurvivesARuntimeFilter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("to graph: %v", err)
 	}
-	filtered, report, err := sdk.FilterGraphByScopeWithReport(graph, sdk.ScopeRuntime)
+	filtered, report, err := model.FilterGraphByScopeWithReport(graph, model.ScopeRuntime)
 	if err != nil {
 		t.Fatalf("scope filter: %v", err)
 	}
@@ -275,7 +276,7 @@ func TestUnscopedSPDXPackagesSurviveARuntimeFilterAndAreReported(t *testing.T) {
 	if err != nil {
 		t.Fatalf("to graph: %v", err)
 	}
-	filtered, report, err := sdk.FilterGraphByScopeWithReport(graph, sdk.ScopeRuntime)
+	filtered, report, err := model.FilterGraphByScopeWithReport(graph, model.ScopeRuntime)
 	if err != nil {
 		t.Fatalf("scope filter: %v", err)
 	}
@@ -372,7 +373,7 @@ func TestSourceScopeYieldsToTheProjectionWhenTheSetChanges(t *testing.T) {
 	// on its own, so adding development leaves the set exactly what the word
 	// described and the word is rightly re-emitted -- which is the case the
 	// test above covers, not this one.
-	nodes[0].Scopes = append(nodes[0].Scopes, sdk.ScopeRuntime)
+	nodes[0].Scopes = append(nodes[0].Scopes, model.ScopeRuntime)
 
 	raw, err := MarshalDepGraphJSON(g, TargetCycloneDX16JSON, BuildOptions{}, EncodeOptions{Pretty: true})
 	if err != nil {
@@ -427,7 +428,7 @@ func TestUnknownScopeTokenKeepsTheKnownScopes(t *testing.T) {
 				t.Fatalf("ingest: %v", err)
 			}
 			got := componentScopes(t, doc, "widget")
-			if len(got) != 1 || got[0] != sdk.ScopeRuntime {
+			if len(got) != 1 || got[0] != model.ScopeRuntime {
 				t.Fatalf("scopes = %v, want the token this build can read", got)
 			}
 			if len(doc.UnknownScopeTokens) != 1 || doc.UnknownScopeTokens[0] != "future-scope" {
@@ -442,7 +443,7 @@ func TestUnknownScopeTokenKeepsTheKnownScopes(t *testing.T) {
 func TestAKnownCarrierReportsNoUnknownTokens(t *testing.T) {
 	for _, target := range []Target{TargetSPDX23JSON, TargetCycloneDX16JSON} {
 		t.Run(string(target), func(t *testing.T) {
-			g := scopedGraph(t, sdk.ScopeRuntime, sdk.ScopeDevelopment)
+			g := scopedGraph(t, model.ScopeRuntime, model.ScopeDevelopment)
 			raw, err := MarshalDepGraphJSON(g, target, BuildOptions{}, EncodeOptions{Pretty: true})
 			if err != nil {
 				t.Fatalf("export: %v", err)

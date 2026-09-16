@@ -10,34 +10,35 @@ import (
 	"testing"
 	"time"
 
-	sdk "github.com/bomly-dev/bomly-sdk"
+	"github.com/bomly-dev/bomly-sdk/model"
+	"github.com/bomly-dev/bomly-sdk/plugin"
 )
 
 // --- fake detector module ---------------------------------------------------
 
 type fakeDetector struct {
-	sdk.BaseDetector
+	plugin.BaseDetector
 }
 
-func (fakeDetector) Descriptor() sdk.DetectorDescriptor {
-	return sdk.DetectorDescriptor{Name: "conformance-fake-detector"}
+func (fakeDetector) Descriptor() plugin.DetectorDescriptor {
+	return plugin.DetectorDescriptor{Name: "conformance-fake-detector"}
 }
 
-func (fakeDetector) PackageManagerSupport() []sdk.PackageManagerSupport {
-	return []sdk.PackageManagerSupport{sdk.Support(sdk.PackageManagerNPM, "package-lock.json")}
+func (fakeDetector) PackageManagerSupport() []plugin.PackageManagerSupport {
+	return []plugin.PackageManagerSupport{plugin.Support(model.PackageManagerNPM, "package-lock.json")}
 }
 
-func (fakeDetector) ResolveGraph(context.Context, sdk.DetectionRequest) (sdk.DetectionResult, error) {
-	return sdk.DetectionResult{}, nil
+func (fakeDetector) ResolveGraph(context.Context, plugin.DetectionRequest) (plugin.DetectionResult, error) {
+	return plugin.DetectionResult{}, nil
 }
 
-func fakeDetectorModule() sdk.Module {
-	return sdk.Module{
-		Kind: sdk.PluginKindDetector,
-		Detector: &sdk.DetectorModule{
-			Descriptor: sdk.DetectorDescriptor{Name: "conformance-fake-detector"},
-			Support:    []sdk.PackageManagerSupport{sdk.Support(sdk.PackageManagerNPM, "package-lock.json")},
-			New: func(context.Context, sdk.HostContext) (sdk.Detector, error) {
+func fakeDetectorModule() plugin.Module {
+	return plugin.Module{
+		Kind: plugin.PluginKindDetector,
+		Detector: &plugin.DetectorModule{
+			Descriptor: plugin.DetectorDescriptor{Name: "conformance-fake-detector"},
+			Support:    []plugin.PackageManagerSupport{plugin.Support(model.PackageManagerNPM, "package-lock.json")},
+			New: func(context.Context, plugin.HostContext) (plugin.Detector, error) {
 				return fakeDetector{}, nil
 			},
 		},
@@ -51,41 +52,41 @@ type fakeMatcherConfig struct {
 }
 
 type fakeMatcher struct {
-	sdk.BaseMatcher
+	plugin.BaseMatcher
 	config fakeMatcherConfig
 }
 
-func fakeMatcherDescriptor() sdk.MatcherDescriptor {
-	return sdk.MatcherDescriptor{
+func fakeMatcherDescriptor() plugin.MatcherDescriptor {
+	return plugin.MatcherDescriptor{
 		Name:         "conformance-fake-matcher",
-		Capabilities: []string{sdk.CapabilityPackageUpdates},
-		ConfigSchema: sdk.MustConfigSchemaFor(fakeMatcherConfig{}),
+		Capabilities: []string{plugin.CapabilityPackageUpdates},
+		ConfigSchema: plugin.MustConfigSchemaFor(fakeMatcherConfig{}),
 	}
 }
 
-func (m fakeMatcher) Descriptor() sdk.MatcherDescriptor { return fakeMatcherDescriptor() }
+func (m fakeMatcher) Descriptor() plugin.MatcherDescriptor { return fakeMatcherDescriptor() }
 
-func (m fakeMatcher) Match(_ context.Context, req sdk.MatchRequest) (sdk.MatchResult, error) {
+func (m fakeMatcher) Match(_ context.Context, req plugin.MatchRequest) (plugin.MatchResult, error) {
 	if req.AcceptPackageUpdates {
-		var updates []*sdk.Package
+		var updates []*model.Package
 		if req.Registry != nil {
 			for _, pkg := range req.Registry.All() {
-				update := &sdk.Package{Coordinates: sdk.Coordinates{PURL: pkg.PURL}}
+				update := &model.Package{Coordinates: model.Coordinates{PURL: pkg.PURL}}
 				update.Metadata = map[string]any{"conformance.annotation": m.config.Annotation}
 				updates = append(updates, update)
 			}
 		}
-		return sdk.MatchResult{PackageUpdates: updates}, nil
+		return plugin.MatchResult{PackageUpdates: updates}, nil
 	}
-	return sdk.MatchResult{Registry: req.Registry}, nil
+	return plugin.MatchResult{Registry: req.Registry}, nil
 }
 
-func fakeMatcherModule() sdk.Module {
-	return sdk.Module{
-		Kind: sdk.PluginKindMatcher,
-		Matcher: &sdk.MatcherModule{
+func fakeMatcherModule() plugin.Module {
+	return plugin.Module{
+		Kind: plugin.PluginKindMatcher,
+		Matcher: &plugin.MatcherModule{
 			Descriptor: fakeMatcherDescriptor(),
-			New: func(_ context.Context, host sdk.HostContext) (sdk.Matcher, error) {
+			New: func(_ context.Context, host plugin.HostContext) (plugin.Matcher, error) {
 				matcher := fakeMatcher{}
 				if err := host.DecodeConfig(&matcher.config); err != nil {
 					return nil, fmt.Errorf("decode config: %w", err)
@@ -113,7 +114,7 @@ func TestSuiteAgainstFakeMatcher(t *testing.T) {
   "runtime": %q,
   "pluginApiVersion": %q,
   "entrypoint": {"%s/%s": "bin/conformance-fake-matcher"}
-}`, sdk.PackageManifestSchemaVersion, sdk.RuntimeHashiCorpGRPC, sdk.PluginAPIVersion, runtime.GOOS, runtime.GOARCH)
+}`, plugin.PackageManifestSchemaVersion, plugin.RuntimeHashiCorpGRPC, plugin.PluginAPIVersion, runtime.GOOS, runtime.GOARCH)
 	if err := os.WriteFile(manifestPath, []byte(manifest), 0o644); err != nil {
 		t.Fatalf("write manifest fixture: %v", err)
 	}
@@ -131,11 +132,11 @@ func TestSuiteMatcherPackageUpdatesMerge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("construct matcher: %v", err)
 	}
-	matcher := component.(sdk.Matcher)
+	matcher := component.(plugin.Matcher)
 
-	registry := sdk.NewPackageRegistry()
+	registry := model.NewPackageRegistry()
 	registry.Ensure("pkg:npm/left-pad@1.3.0")
-	result, err := matcher.Match(context.Background(), sdk.MatchRequest{
+	result, err := matcher.Match(context.Background(), plugin.MatchRequest{
 		Registry:             registry,
 		AcceptPackageUpdates: true,
 	})
@@ -145,7 +146,7 @@ func TestSuiteMatcherPackageUpdatesMerge(t *testing.T) {
 	if len(result.PackageUpdates) != 1 {
 		t.Fatalf("expected 1 package update, got %d", len(result.PackageUpdates))
 	}
-	merged := sdk.ApplyPackageUpdates(registry, result.PackageUpdates)
+	merged := model.ApplyPackageUpdates(registry, result.PackageUpdates)
 	pkg, ok := merged.Get("pkg:npm/left-pad@1.3.0")
 	if !ok {
 		t.Fatal("merged registry lost the package")
@@ -197,7 +198,7 @@ import (
 	"context"
 	"fmt"
 
-	sdk "github.com/bomly-dev/bomly-sdk"
+	"github.com/bomly-dev/bomly-sdk/plugin"
 	"github.com/bomly-dev/bomly-sdk/runtime"
 )
 
@@ -206,30 +207,30 @@ type config struct {
 }
 
 type matcher struct {
-	sdk.BaseMatcher
+	plugin.BaseMatcher
 	config config
 }
 
-func descriptor() sdk.MatcherDescriptor {
-	return sdk.MatcherDescriptor{
+func descriptor() plugin.MatcherDescriptor {
+	return plugin.MatcherDescriptor{
 		Name:         "conformance-fake-matcher",
-		Capabilities: []string{sdk.CapabilityPackageUpdates},
-		ConfigSchema: sdk.MustConfigSchemaFor(config{}),
+		Capabilities: []string{plugin.CapabilityPackageUpdates},
+		ConfigSchema: plugin.MustConfigSchemaFor(config{}),
 	}
 }
 
-func (m matcher) Descriptor() sdk.MatcherDescriptor { return descriptor() }
+func (m matcher) Descriptor() plugin.MatcherDescriptor { return descriptor() }
 
-func (m matcher) Match(_ context.Context, req sdk.MatchRequest) (sdk.MatchResult, error) {
-	return sdk.MatchResult{Registry: req.Registry}, nil
+func (m matcher) Match(_ context.Context, req plugin.MatchRequest) (plugin.MatchResult, error) {
+	return plugin.MatchResult{Registry: req.Registry}, nil
 }
 
 func main() {
-	runtime.ServeModule(sdk.Module{
-		Kind: sdk.PluginKindMatcher,
-		Matcher: &sdk.MatcherModule{
+	runtime.ServeModule(plugin.Module{
+		Kind: plugin.PluginKindMatcher,
+		Matcher: &plugin.MatcherModule{
 			Descriptor: descriptor(),
-			New: func(_ context.Context, host sdk.HostContext) (sdk.Matcher, error) {
+			New: func(_ context.Context, host plugin.HostContext) (plugin.Matcher, error) {
 				m := matcher{}
 				if err := host.DecodeConfig(&m.config); err != nil {
 					return nil, fmt.Errorf("decode config: %w", err)
@@ -252,10 +253,14 @@ func main() {
 	if out, err := tidy.CombinedOutput(); err != nil {
 		t.Skipf("cannot tidy fixture module (offline module cache incomplete?): %v\n%s", err, out)
 	}
+	// tidy already resolved every dependency, so a build failure here is a
+	// compile error in the fixture (or the contract it is written against),
+	// not a missing module cache: fail, do not skip, or a broken fixture
+	// passes silently.
 	build := exec.CommandContext(ctx, goBinary, "build", "-o", binaryPath, ".")
 	build.Dir = fixtureDir
 	if out, err := build.CombinedOutput(); err != nil {
-		t.Skipf("cannot build fixture binary (offline module cache incomplete?): %v\n%s", err, out)
+		t.Fatalf("build fixture binary: %v\n%s", err, out)
 	}
 
 	ProbeBinary(t, binaryPath)

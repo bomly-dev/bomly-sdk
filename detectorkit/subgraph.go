@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	sdk "github.com/bomly-dev/bomly-sdk"
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // SubgraphFrom returns a new graph containing rootID and every node and edge
@@ -13,7 +13,7 @@ import (
 // manifest entries: each module entry carries the module root plus its
 // reachable dependency subtree. Node pointers are shared with the source
 // graph, matching how detectors already share nodes across container entries.
-func SubgraphFrom(g *sdk.Graph, rootID string) (*sdk.Graph, error) {
+func SubgraphFrom(g *model.Graph, rootID string) (*model.Graph, error) {
 	if g == nil {
 		return nil, errors.New("subgraph from nil graph")
 	}
@@ -22,10 +22,10 @@ func SubgraphFrom(g *sdk.Graph, rootID string) (*sdk.Graph, error) {
 		return nil, fmt.Errorf("subgraph root %q not found in graph", rootID)
 	}
 
-	out := sdk.New()
+	out := model.New()
 	visited := map[string]struct{}{}
-	var walk func(pkg sdk.GraphNode) error
-	walk = func(pkg sdk.GraphNode) error {
+	var walk func(pkg model.GraphNode) error
+	walk = func(pkg model.GraphNode) error {
 		if pkg == nil {
 			return nil
 		}
@@ -50,7 +50,7 @@ func SubgraphFrom(g *sdk.Graph, rootID string) (*sdk.Graph, error) {
 			// Typed rather than bare: this rebuilds a graph, and the kind the
 			// source graph recorded is the one the subgraph must carry.
 			kind := g.EdgeKindOf(pkg.NodeID(), dep.NodeID())
-			if err := out.AddTypedEdge(pkg.NodeID(), dep.NodeID(), kind); err != nil && !errors.Is(err, sdk.ErrSelfDependency) {
+			if err := out.AddTypedEdge(pkg.NodeID(), dep.NodeID(), kind); err != nil && !errors.Is(err, model.ErrSelfDependency) {
 				return fmt.Errorf("add subgraph edge %q -> %q: %w", pkg.NodeID(), dep.NodeID(), err)
 			}
 		}

@@ -4,8 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bomly-dev/bomly-sdk"
 	"github.com/bomly-dev/bomly-sdk/testkit"
+
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // FuzzIngestedAssertions drives an arbitrary document's component assertions
@@ -33,14 +34,14 @@ func FuzzIngestedAssertions(f *testing.F) {
 
 		component := Component{
 			Name:        "widget",
-			Supplier:    &sdk.Contact{Kind: sdk.ContactKindOrganization, Name: name, URL: contactURL},
+			Supplier:    &model.Contact{Kind: model.ContactKindOrganization, Name: name, URL: contactURL},
 			Description: description,
 			Homepage:    homepage,
 			CPEs:        []string{cpe},
 			Digests:     []Digest{{Algorithm: algorithm, Value: digestValue}},
 		}
 
-		node, err := sdk.NewDependencyNode(sdk.Coordinates{Ecosystem: "npm", Name: "widget", Version: "1.0.0"})
+		node, err := model.NewDependencyNode(model.Coordinates{Ecosystem: "npm", Name: "widget", Version: "1.0.0"})
 		if err != nil {
 			t.Fatalf("construct node: %v", err)
 		}
@@ -53,10 +54,10 @@ func FuzzIngestedAssertions(f *testing.F) {
 				t.Fatalf("stored supplier %+v does not clear its own gate", node.Supplier)
 			}
 		}
-		if node.Description != sdk.NormalizeDescription(node.Description) {
+		if node.Description != model.NormalizeDescription(node.Description) {
 			t.Fatalf("stored description %q is not normalized", node.Description)
 		}
-		if node.Homepage != sdk.NormalizeHomepage(node.Homepage) {
+		if node.Homepage != model.NormalizeHomepage(node.Homepage) {
 			t.Fatalf("stored homepage %q is not normalized", node.Homepage)
 		}
 		for _, digest := range node.Digests {
@@ -78,7 +79,7 @@ func FuzzIngestedAssertions(f *testing.F) {
 
 		// Re-running ingest on what was stored changes nothing: the gates are
 		// a fixed point, so a value cannot be laundered by another hop.
-		again, err := sdk.NewDependencyNode(sdk.Coordinates{Ecosystem: "npm", Name: "widget", Version: "1.0.0"})
+		again, err := model.NewDependencyNode(model.Coordinates{Ecosystem: "npm", Name: "widget", Version: "1.0.0"})
 		if err != nil {
 			t.Fatalf("construct node: %v", err)
 		}

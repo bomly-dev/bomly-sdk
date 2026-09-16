@@ -5,20 +5,21 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bomly-dev/bomly-sdk"
 	"github.com/bomly-dev/bomly-sdk/internal/testnodes"
+
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // originGraph builds a two-package graph whose nodes carry whatever origin
 // metadata a case wants to exercise.
-func originGraph(t *testing.T, mutate func(app, pkg *sdk.DependencyNode)) *sdk.Graph {
+func originGraph(t *testing.T, mutate func(app, pkg *model.DependencyNode)) *model.Graph {
 	t.Helper()
 
-	g := sdk.New()
+	g := model.New()
 	app := testnodes.Ref("app", "1.0.0")
 	pkg := testnodes.Ref("react", "18.2.0")
 	mutate(app, pkg)
-	for _, n := range []*sdk.DependencyNode{app, pkg} {
+	for _, n := range []*model.DependencyNode{app, pkg} {
 		if err := g.AddNode(n); err != nil {
 			t.Fatalf("add package %s: %v", n.NodeID(), err)
 		}
@@ -77,7 +78,7 @@ func cycloneDXReferences(t *testing.T, raw []byte, name string) map[string]strin
 	return nil
 }
 
-func marshalBoth(t *testing.T, g *sdk.Graph) (spdxRaw, cdxRaw []byte) {
+func marshalBoth(t *testing.T, g *model.Graph) (spdxRaw, cdxRaw []byte) {
 	t.Helper()
 	opts := BuildOptions{DocumentName: "origin-test", ToolVersion: "test"}
 	spdxRaw, err := MarshalDepGraphJSON(g, TargetSPDX23JSON, opts, EncodeOptions{})
@@ -93,8 +94,8 @@ func marshalBoth(t *testing.T, g *sdk.Graph) (spdxRaw, cdxRaw []byte) {
 
 func TestArtifactOriginIsPublishedInBothFormats(t *testing.T) {
 	const artifact = "https://registry.npmjs.org/react/-/react-18.2.0.tgz"
-	g := originGraph(t, func(_, pkg *sdk.DependencyNode) {
-		pkg.Origins = sdk.MergeOrigins(nil, originsFor(artifact))
+	g := originGraph(t, func(_, pkg *model.DependencyNode) {
+		pkg.Origins = model.MergeOrigins(nil, originsFor(artifact))
 	})
 
 	spdxRaw, cdxRaw := marshalBoth(t, g)
@@ -112,8 +113,8 @@ func TestRepositoryOriginIsPublishedInBothFormats(t *testing.T) {
 		repository = "https://github.com/facebook/react"
 		revision   = "b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7"
 	)
-	g := originGraph(t, func(_, pkg *sdk.DependencyNode) {
-		pkg.Origins = sdk.MergeOrigins(nil, repositoryOriginsFor(repository, revision))
+	g := originGraph(t, func(_, pkg *model.DependencyNode) {
+		pkg.Origins = model.MergeOrigins(nil, repositoryOriginsFor(repository, revision))
 	})
 
 	spdxRaw, cdxRaw := marshalBoth(t, g)
@@ -135,8 +136,8 @@ func TestRepositoryOriginIsPublishedInBothFormats(t *testing.T) {
 
 func TestUnpinnedRepositoryOriginOmitsTheRevisionSuffix(t *testing.T) {
 	const repository = "https://github.com/facebook/react"
-	g := originGraph(t, func(_, pkg *sdk.DependencyNode) {
-		pkg.Origins = sdk.MergeOrigins(nil, repositoryOriginsFor(repository, ""))
+	g := originGraph(t, func(_, pkg *model.DependencyNode) {
+		pkg.Origins = model.MergeOrigins(nil, repositoryOriginsFor(repository, ""))
 	})
 
 	spdxRaw, _ := marshalBoth(t, g)
@@ -148,7 +149,7 @@ func TestUnpinnedRepositoryOriginOmitsTheRevisionSuffix(t *testing.T) {
 
 // A package whose detector asserted nothing must say so, not guess.
 func TestPackageWithoutOriginKeepsNOASSERTION(t *testing.T) {
-	g := originGraph(t, func(_, _ *sdk.DependencyNode) {})
+	g := originGraph(t, func(_, _ *model.DependencyNode) {})
 
 	spdxRaw, cdxRaw := marshalBoth(t, g)
 
@@ -166,21 +167,21 @@ func TestPackageWithoutOriginKeepsNOASSERTION(t *testing.T) {
 func TestExportRevalidatesOrigin(t *testing.T) {
 	hostile := []struct {
 		name   string
-		origin *sdk.DependencyOrigin
+		origin *model.DependencyOrigin
 	}{
-		{name: "credentialed artifact", origin: &sdk.DependencyOrigin{ArtifactURL: "https://build:s3cret-token-value@nexus.corp/repo/react-18.2.0.tgz"}},
-		{name: "local path", origin: &sdk.DependencyOrigin{ArtifactURL: "/Users/someone/src/project/react.tgz"}},
-		{name: "file url", origin: &sdk.DependencyOrigin{Repository: "file:///Users/someone/src/react"}},
-		{name: "registry root", origin: &sdk.DependencyOrigin{ArtifactURL: "https://registry.npmjs.org/"}},
-		{name: "revision breaking the locator grammar", origin: &sdk.DependencyOrigin{
+		{name: "credentialed artifact", origin: &model.DependencyOrigin{ArtifactURL: "https://build:s3cret-token-value@nexus.corp/repo/react-18.2.0.tgz"}},
+		{name: "local path", origin: &model.DependencyOrigin{ArtifactURL: "/Users/someone/src/project/react.tgz"}},
+		{name: "file url", origin: &model.DependencyOrigin{Repository: "file:///Users/someone/src/react"}},
+		{name: "registry root", origin: &model.DependencyOrigin{ArtifactURL: "https://registry.npmjs.org/"}},
+		{name: "revision breaking the locator grammar", origin: &model.DependencyOrigin{
 			Repository: "https://github.com/facebook/react", Revision: "main@evil.test/x",
 		}},
 	}
 
 	for _, tc := range hostile {
 		t.Run(tc.name, func(t *testing.T) {
-			g := originGraph(t, func(_, pkg *sdk.DependencyNode) {
-				pkg.Origins = []sdk.DependencyOrigin{*tc.origin}
+			g := originGraph(t, func(_, pkg *model.DependencyNode) {
+				pkg.Origins = []model.DependencyOrigin{*tc.origin}
 			})
 
 			spdxRaw, cdxRaw := marshalBoth(t, g)
@@ -217,19 +218,19 @@ func TestScorecardRepositoryFillsTheOriginGap(t *testing.T) {
 
 	build := func(t *testing.T, detectorRepository string) []byte {
 		t.Helper()
-		g := sdk.New()
-		react := testnodes.DepFrom(sdk.DependencyNode{Coordinates: sdk.Coordinates{
+		g := model.New()
+		react := testnodes.DepFrom(model.DependencyNode{Coordinates: model.Coordinates{
 			Name: "react", Version: "18.2.0", PURL: purl, Ecosystem: "npm"}})
 		if detectorRepository != "" {
-			react.Origins = sdk.MergeOrigins(nil, repositoryOriginsFor(detectorRepository, ""))
+			react.Origins = model.MergeOrigins(nil, repositoryOriginsFor(detectorRepository, ""))
 		}
 		if err := g.AddNode(react); err != nil {
 			t.Fatalf("add node: %v", err)
 		}
-		registry := sdk.NewPackageRegistry()
+		registry := model.NewPackageRegistry()
 		pkg := registry.Ensure(purl)
 		pkg.Name, pkg.Version, pkg.Matched = "react", "18.2.0", true
-		pkg.Scorecard = &sdk.PackageScorecard{Source: "api.scorecard.dev", Repository: "github.com/facebook/react"}
+		pkg.Scorecard = &model.PackageScorecard{Source: "api.scorecard.dev", Repository: "github.com/facebook/react"}
 
 		raw, err := MarshalDepGraphJSON(g, TargetCycloneDX17JSON, BuildOptions{Registry: registry}, EncodeOptions{})
 		if err != nil {
@@ -256,17 +257,17 @@ func TestScorecardRepositoryFillsTheOriginGap(t *testing.T) {
 	// both -- the repository as a vcs reference in CycloneDX, and as source
 	// info in SPDX, whose single download location the artifact holds.
 	t.Run("a repository accompanies an artifact", func(t *testing.T) {
-		g := sdk.New()
-		react := testnodes.DepFrom(sdk.DependencyNode{Coordinates: sdk.Coordinates{
+		g := model.New()
+		react := testnodes.DepFrom(model.DependencyNode{Coordinates: model.Coordinates{
 			Name: "react", Version: "18.2.0", PURL: purl, Ecosystem: "npm"}})
-		react.Origins = sdk.MergeOrigins(nil, originsFor("https://registry.npmjs.org/react/-/react-18.2.0.tgz"))
+		react.Origins = model.MergeOrigins(nil, originsFor("https://registry.npmjs.org/react/-/react-18.2.0.tgz"))
 		if err := g.AddNode(react); err != nil {
 			t.Fatal(err)
 		}
-		registry := sdk.NewPackageRegistry()
+		registry := model.NewPackageRegistry()
 		pkg := registry.Ensure(purl)
 		pkg.Name, pkg.Version, pkg.Matched = "react", "18.2.0", true
-		pkg.Scorecard = &sdk.PackageScorecard{Source: "api.scorecard.dev", Repository: "github.com/facebook/react"}
+		pkg.Scorecard = &model.PackageScorecard{Source: "api.scorecard.dev", Repository: "github.com/facebook/react"}
 
 		opts := BuildOptions{Registry: registry}
 		cdxRaw, err := MarshalDepGraphJSON(g, TargetCycloneDX17JSON, opts, EncodeOptions{})
@@ -298,8 +299,8 @@ func TestScorecardRepositoryFillsTheOriginGap(t *testing.T) {
 	// With no artifact, the repository is the download location, so repeating
 	// it as source info would say the same thing twice.
 	t.Run("a repository alone is not repeated as source info", func(t *testing.T) {
-		g := originGraph(t, func(_, pkg *sdk.DependencyNode) {
-			pkg.Origins = sdk.MergeOrigins(nil, repositoryOriginsFor("https://github.com/facebook/react", ""))
+		g := originGraph(t, func(_, pkg *model.DependencyNode) {
+			pkg.Origins = model.MergeOrigins(nil, repositoryOriginsFor("https://github.com/facebook/react", ""))
 		})
 		spdxRaw, _ := marshalBoth(t, g)
 		spdxPkg := spdxPackageByName(t, spdxRaw, "react")
@@ -309,7 +310,7 @@ func TestScorecardRepositoryFillsTheOriginGap(t *testing.T) {
 	})
 
 	t.Run("absent without enrichment", func(t *testing.T) {
-		g := originGraph(t, func(_, _ *sdk.DependencyNode) {})
+		g := originGraph(t, func(_, _ *model.DependencyNode) {})
 		_, cdxRaw := marshalBoth(t, g)
 		if refs := cycloneDXReferences(t, cdxRaw, "react"); len(refs) != 0 {
 			t.Errorf("unenriched export emitted references: %v", refs)
@@ -325,8 +326,8 @@ func TestScorecardRepositoryFillsTheOriginGap(t *testing.T) {
 // This pins the documented limitation; preserving third-party origin across
 // ingest is tracked separately.
 func TestOriginIsNotReadBackFromAnIngestedDocument(t *testing.T) {
-	g := originGraph(t, func(_, pkg *sdk.DependencyNode) {
-		pkg.Origins = sdk.MergeOrigins(nil, repositoryOriginsFor("https://github.com/facebook/react", "d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809"))
+	g := originGraph(t, func(_, pkg *model.DependencyNode) {
+		pkg.Origins = model.MergeOrigins(nil, repositoryOriginsFor("https://github.com/facebook/react", "d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809"))
 	})
 
 	exported, _ := marshalBoth(t, g)
@@ -376,12 +377,12 @@ func TestOriginIsNotReadBackFromAnIngestedDocument(t *testing.T) {
 // visible: the component for a module asserts nothing about where it came
 // from, in either format.
 func TestProjectOwnedComponentsPublishNoOrigin(t *testing.T) {
-	g := sdk.New()
+	g := model.New()
 	app := testnodes.Module("package.json", "app", "1.0.0")
-	member := testnodes.ModuleFrom("packages/react/package.json", sdk.Coordinates{
+	member := testnodes.ModuleFrom("packages/react/package.json", model.Coordinates{
 		Ecosystem: "npm", Name: "react", Version: "18.2.0",
 	})
-	for _, node := range []sdk.GraphNode{app, member} {
+	for _, node := range []model.GraphNode{app, member} {
 		if err := g.AddNode(node); err != nil {
 			t.Fatalf("add node %s: %v", node.NodeID(), err)
 		}
@@ -406,24 +407,24 @@ func TestProjectOwnedComponentsPublishNoOrigin(t *testing.T) {
 func TestScorecardRepositoryIsNotAttributedToProjectOwnedComponents(t *testing.T) {
 	const purl = "pkg:npm/helper@1.0.0"
 
-	g := sdk.New()
+	g := model.New()
 	// The workspace member and the consumed package share a package URL, so
 	// they are separated by kind: the member is a module declared by its own
 	// manifest, and its ID cannot collide with the consumed package's.
-	member := testnodes.ModuleFrom("packages/helper/package.json", sdk.Coordinates{
+	member := testnodes.ModuleFrom("packages/helper/package.json", model.Coordinates{
 		Name: "helper", Version: "1.0.0", PURL: purl, Ecosystem: "npm"})
-	consumed := testnodes.DepFrom(sdk.DependencyNode{Coordinates: sdk.Coordinates{
+	consumed := testnodes.DepFrom(model.DependencyNode{Coordinates: model.Coordinates{
 		Name: "helper", Version: "1.0.0", PURL: purl, Ecosystem: "npm"}})
-	for _, node := range []sdk.GraphNode{member, consumed} {
+	for _, node := range []model.GraphNode{member, consumed} {
 		if err := g.AddNode(node); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	registry := sdk.NewPackageRegistry()
+	registry := model.NewPackageRegistry()
 	pkg := registry.Ensure(purl)
 	pkg.Name, pkg.Version, pkg.Matched = "helper", "1.0.0", true
-	pkg.Scorecard = &sdk.PackageScorecard{Source: "api.scorecard.dev", Repository: "github.com/upstream/helper"}
+	pkg.Scorecard = &model.PackageScorecard{Source: "api.scorecard.dev", Repository: "github.com/upstream/helper"}
 
 	raw, err := MarshalDepGraphJSON(g, TargetCycloneDX17JSON, BuildOptions{Registry: registry}, EncodeOptions{})
 	if err != nil {
@@ -470,22 +471,22 @@ func TestScorecardRepositoryIsNotAttributedToProjectOwnedComponents(t *testing.T
 
 // originsFor builds the origin list an artifact URL asserts, or nothing when
 // the URL is not one the publication gates accept.
-func originsFor(artifactURL string) []sdk.DependencyOrigin {
-	origin := sdk.ArtifactOrigin(artifactURL)
+func originsFor(artifactURL string) []model.DependencyOrigin {
+	origin := model.ArtifactOrigin(artifactURL)
 	if origin == nil {
 		return nil
 	}
-	return []sdk.DependencyOrigin{*origin}
+	return []model.DependencyOrigin{*origin}
 }
 
 // repositoryOriginsFor builds the origin list a repository and revision
 // assert, or nothing when they are not a pair the publication gates accept.
-func repositoryOriginsFor(repository, revision string) []sdk.DependencyOrigin {
-	origin := sdk.RepositoryOrigin(repository, revision)
+func repositoryOriginsFor(repository, revision string) []model.DependencyOrigin {
+	origin := model.RepositoryOrigin(repository, revision)
 	if origin == nil {
 		return nil
 	}
-	return []sdk.DependencyOrigin{*origin}
+	return []model.DependencyOrigin{*origin}
 }
 
 // A component's purl field is a Package URL in both formats, and a module's
@@ -496,14 +497,14 @@ func repositoryOriginsFor(repository, revision string) []sdk.DependencyOrigin {
 // as a purl, which no consumer can parse. The bom-ref is where the identity
 // belongs; this pins both halves.
 func TestModuleComponentsPublishAPackageURLNotTheirNodeID(t *testing.T) {
-	g := sdk.New()
-	module := testnodes.ModuleFrom("apps/web/package.json", sdk.Coordinates{
-		Ecosystem: sdk.EcosystemNPM, Name: "web", Version: "1.0.0", Type: sdk.PackageTypeApplication,
+	g := model.New()
+	module := testnodes.ModuleFrom("apps/web/package.json", model.Coordinates{
+		Ecosystem: model.EcosystemNPM, Name: "web", Version: "1.0.0", Type: model.PackageTypeApplication,
 	})
-	dependency := testnodes.DepFrom(sdk.DependencyNode{Coordinates: sdk.Coordinates{
-		Ecosystem: sdk.EcosystemNPM, Name: "left-pad", Version: "1.3.0",
+	dependency := testnodes.DepFrom(model.DependencyNode{Coordinates: model.Coordinates{
+		Ecosystem: model.EcosystemNPM, Name: "left-pad", Version: "1.3.0",
 	}})
-	for _, node := range []sdk.GraphNode{module, dependency} {
+	for _, node := range []model.GraphNode{module, dependency} {
 		if err := g.AddNode(node); err != nil {
 			t.Fatal(err)
 		}
@@ -556,10 +557,10 @@ func TestExportKeepsEveryFoldedOrigin(t *testing.T) {
 		first  = "https://registry.npmjs.org/react/-/react-18.2.0.tgz"
 		second = "https://npm.internal.example.com/react/-/react-18.2.0.tgz"
 	)
-	g := originGraph(t, func(_, pkg *sdk.DependencyNode) {
+	g := originGraph(t, func(_, pkg *model.DependencyNode) {
 		for _, raw := range []string{first, second} {
-			if origin := sdk.ArtifactOrigin(raw); origin != nil {
-				pkg.Origins = sdk.MergeOrigins(pkg.Origins, []sdk.DependencyOrigin{*origin})
+			if origin := model.ArtifactOrigin(raw); origin != nil {
+				pkg.Origins = model.MergeOrigins(pkg.Origins, []model.DependencyOrigin{*origin})
 			}
 		}
 	})

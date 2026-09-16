@@ -1,98 +1,29 @@
-// Package sdk is Bomly's public Go contract for dependency graphs, package
-// enrichment, policy findings, and managed external plugins.
+// Package sdk is the module root of Bomly's public Go contract. It declares
+// nothing itself; the contract is split across four packages by what each
+// answers, and this file is the map.
 //
-// Most external developers use this package to build a managed plugin. Managed
-// plugins are native Go binaries that Bomly launches as separate subprocesses
-// over the HashiCorp go-plugin gRPC transport. A plugin implements exactly one
-// externally supported role:
+//   - model: what the data is. The dependency graph and its node kinds,
+//     packages and the registry, vulnerabilities and findings, the controlled
+//     vocabularies, and the normalization, merge, and policy rules they
+//     share. Every type here is also a wire payload.
+//   - plugin: what a component is. The Detector, Matcher, Auditor, and
+//     Analyzer interfaces, their descriptors and request/response types, the
+//     Base* defaults, and Module/HostContext, which let one component run
+//     embedded in the host or as a managed plugin without change.
+//   - runtime: how a component runs out of process. ServeModule and the
+//     Serve* entrypoints for a plugin binary's main, and Client,
+//     HandshakeConfig, and ClientPluginMap for the host that launches it,
+//     over the HashiCorp go-plugin gRPC transport.
+//   - httpkit: outbound HTTP with Bomly's proxy and CA policy, reached by a
+//     component through HostContext.HTTPClient.
 //
-//   - detector: reads project evidence and returns dependency graphs
-//   - matcher: enriches PURL-keyed package records with vulnerability, license,
-//     lifecycle, or other package metadata
-//   - auditor: evaluates graph and registry data and emits findings or risk
-//     scores
-//   - analyzer: runs code analysis (e.g. reachability) over the matched graph
-//     and annotates registry vulnerability entries
+// Which package to import: implementing a component means plugin and model;
+// a plugin binary's main means runtime; hosting plugins means runtime; the
+// helper kits (detectorkit, matcherkit, testkit, conformance, purlkit,
+// spdxkit, sbom, system, filecache, logkit) build on the same four.
 //
-// A plugin binary packages its component as a Module and serves it from main
-// through the plugin subpackage:
-//
-//	func main() {
-//		plugin.ServeModule(myModule)
-//	}
-//
-// The managed-plugin runtime -- the go-plugin gRPC transport, the host-side
-// Client, and the per-process environment -- lives in
-// github.com/bomly-dev/bomly-sdk/plugin. This package holds the contract it
-// carries: Detector, Matcher, Auditor, and Analyzer with their descriptors,
-// DetectionRequest and DetectionResult for detectors, MatchRequest and
-// MatchResult for matchers, AuditRequest and AuditResult for auditors, and
-// AnalyzeRequest and AnalyzeResult for analyzers.
-//
-// The central data model deliberately separates pipeline stages. Dependency is
-// a detection-time graph node with identity, locations, scopes, and edges.
-// PackageRegistry is a PURL-keyed set of deduplicated Package records that
-// matchers enrich once per package version. Vulnerability records are
-// OSV-aligned package enrichment data, including Bomly fields such as CVSS,
-// EPSS, KEV, fixed versions, affected symbols, and reachability. Finding is a
-// reference-style audit result: it points back to packages by PURL and, for
-// vulnerability findings, to Vulnerability.ID rather than copying the whole
-// package or advisory payload.
-//
-// Coordinates is the shared embedded identity shape used by Dependency and
-// Package. Plugin authors should prefer canonical PURLs, fill Coordinates where
-// possible, and use typed values such as Ecosystem, PackageManager,
-// PackageType, Scope, and SeverityLevel instead of raw strings. PackageManager
-// is string-backed for compatibility; use PackageManagerOther or a custom
-// PackageManager value when Bomly does not yet have a first-class constant for
-// a package manager.
-//
-// Node identity is derived, never hand-assembled (ADR-0041): the
-// constructors are the only mint — a dependency node's ID is its canonical
-// package URL (custom purl types are first-class; express any ecosystem as
-// a purl type), and module and manifest nodes carry kind-qualified
-// canonical paths. Never build a node ID by string concatenation.
-//
-// Plugin identity is split across package metadata and runtime metadata. The
-// bomly-plugin.json manifest describes packaging and install fields such as ID,
-// version, kind, runtime, plugin API version, entrypoint, homepage, and license.
-// The runtime descriptor returned by Descriptor describes the served component:
-// name, display name, aliases, tags, supported ecosystems, supported package
-// managers, and role-specific behavior. Bomly verifies that manifest identity
-// and runtime descriptor identity match when a packaged plugin is installed, and
-// records installed trust state separately.
-//
-// Attribution is per site, not per package (phase 1.4). A package's scope and
-// directness belong to the location it was found at: in a workspace the same
-// version is a direct development dependency of one module and a transitive
-// runtime dependency of another, so a node's unions answer neither question.
-// PackageLocation carries the module root, scopes, and relationship;
-// reachability is per-module-root evidence with the vulnerability annotation
-// as the derived summary; and SelectUsages joins the two within one module
-// root so a conjunctive question is a statement about a usage that exists.
-// Read scopes through AttributedScopes rather than the node field, and expect
-// both to be empty until the producers migrate.
-//
-// Merges are classed rather than hand-written. MergeFillGap, MergeUnion, and
-// MergeStrongest name the three rules every field in this model follows, and
-// each field declares which class it is in. A merge written by hand is where
-// this model has repeatedly lost data — a first-wins rule dropping a better
-// value, an early return leaving an ungated claim visible, an unsorted result
-// making a document's bytes depend on read order — so fixing a class is
-// preferred to fixing a field.
-//
-// Metadata maps carry what the typed fields do not, and the "bomly." prefix is
-// reserved for this project (IsReservedMetadataKey). A value that lives only
-// in a metadata map is invisible to every gate — not normalized, not
-// validated, not merged by a declared rule, not projected to either document
-// format — so anything a typed field can hold belongs in the typed field.
-//
-// Components reach host services only through HostContext: DecodeConfig for
-// their own configuration block and HTTPClient for outbound HTTP, backed by
-// github.com/bomly-dev/bomly-sdk/httpkit so Bomly's proxy, no-proxy, and CA
-// certificate settings are honored consistently in both execution modes.
-//
-// The repository documentation contains the workflow-oriented guides for
-// packaging, installing, testing, and distributing plugins. This package
-// documentation is the API-oriented reference for the types those guides use.
+// The plugin wire protocol, bomly.plugin.v1, is JSON over gRPC and strictly
+// additive: its payload types are the model and plugin structs, so their
+// JSON tags are the wire schema, and fields are never removed, renamed, or
+// repurposed within v1.
 package sdk

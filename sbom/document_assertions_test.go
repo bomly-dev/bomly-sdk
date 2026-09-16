@@ -8,7 +8,8 @@ import (
 	"time"
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
-	"github.com/bomly-dev/bomly-sdk"
+
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // documentRichSPDX asserts document-level claims: an identity, a name, named
@@ -66,7 +67,7 @@ func fixedExportTime() time.Time {
 
 // ingestDocument reads a document and returns the graph entry it becomes,
 // the way the sbom detector builds one.
-func ingestDocument(t *testing.T, raw string) (*sdk.Graph, sdk.GraphEntry) {
+func ingestDocument(t *testing.T, raw string) (*model.Graph, model.GraphEntry) {
 	t.Helper()
 	doc, _, err := UnmarshalAutoJSON([]byte(raw))
 	if err != nil {
@@ -76,7 +77,7 @@ func ingestDocument(t *testing.T, raw string) (*sdk.Graph, sdk.GraphEntry) {
 	if err != nil {
 		t.Fatalf("to graph: %v", err)
 	}
-	return g, sdk.GraphEntry{Graph: g, Document: DocumentAssertionsFor(doc)}
+	return g, model.GraphEntry{Graph: g, Document: DocumentAssertionsFor(doc)}
 }
 
 // An ingested document's own claims survive the graph hop, which is where
@@ -106,9 +107,9 @@ func TestDocumentClaimsSurviveTheGraphHop(t *testing.T) {
 	var org, person bool
 	for _, creator := range got.Creators {
 		switch creator.Kind {
-		case sdk.ContactKindOrganization:
+		case model.ContactKindOrganization:
 			org = org || creator.Name == "Acme Corp"
-		case sdk.ContactKindPerson:
+		case model.ContactKindPerson:
 			person = person || creator.Name == "Dana Scully"
 		}
 	}
@@ -141,13 +142,13 @@ func TestSingleSourceExportIsAFixedPoint(t *testing.T) {
 			opts := BuildOptions{ToolVersion: "0.0.0-test", RestatesSource: true}
 
 			_, entry := ingestDocument(t, supplierRichCycloneDX)
-			first, err := MarshalGraphEntriesJSON(entry.Graph, []sdk.GraphEntry{entry}, target, opts, EncodeOptions{Pretty: true})
+			first, err := MarshalGraphEntriesJSON(entry.Graph, []model.GraphEntry{entry}, target, opts, EncodeOptions{Pretty: true})
 			if err != nil {
 				t.Fatalf("first export: %v", err)
 			}
 
 			_, reingested := ingestDocument(t, string(first))
-			second, err := MarshalGraphEntriesJSON(reingested.Graph, []sdk.GraphEntry{reingested}, target, opts, EncodeOptions{Pretty: true})
+			second, err := MarshalGraphEntriesJSON(reingested.Graph, []model.GraphEntry{reingested}, target, opts, EncodeOptions{Pretty: true})
 			if err != nil {
 				t.Fatalf("second export: %v", err)
 			}
@@ -163,7 +164,7 @@ func TestSingleSourceExportIsAFixedPoint(t *testing.T) {
 // produces still says which document it restates.
 func TestSingleSourceExportAdoptsTheSourceIdentity(t *testing.T) {
 	_, entry := ingestDocument(t, documentRichSPDX)
-	doc, err := FromGraphEntries(entry.Graph, []sdk.GraphEntry{entry}, BuildOptions{RestatesSource: true})
+	doc, err := FromGraphEntries(entry.Graph, []model.GraphEntry{entry}, BuildOptions{RestatesSource: true})
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}
@@ -187,7 +188,7 @@ func TestSingleSourceExportAdoptsTheSourceIdentity(t *testing.T) {
 // still means what it says.
 func TestPinnedIdentityWinsOverTheSource(t *testing.T) {
 	_, entry := ingestDocument(t, documentRichSPDX)
-	doc, err := FromGraphEntries(entry.Graph, []sdk.GraphEntry{entry}, BuildOptions{
+	doc, err := FromGraphEntries(entry.Graph, []model.GraphEntry{entry}, BuildOptions{
 		RestatesSource: true,
 		DocumentNS:     "https://pinned.example/ns",
 		DocumentName:   "pinned-name",
@@ -209,11 +210,11 @@ func TestPinnedIdentityWinsOverTheSource(t *testing.T) {
 func TestMergedExportLinksItsSourcesInsteadOfAdoptingOne(t *testing.T) {
 	_, spdxEntry := ingestDocument(t, documentRichSPDX)
 	_, cdxEntry := ingestDocument(t, serialCycloneDX)
-	entries := []sdk.GraphEntry{spdxEntry, cdxEntry}
+	entries := []model.GraphEntry{spdxEntry, cdxEntry}
 
-	merged := sdk.New()
+	merged := model.New()
 	for _, entry := range entries {
-		if err := sdk.MergeGraph(merged, entry.Graph); err != nil {
+		if err := model.MergeGraph(merged, entry.Graph); err != nil {
 			t.Fatalf("merge: %v", err)
 		}
 	}
@@ -270,11 +271,11 @@ func TestMergedExportLinksItsSourcesInsteadOfAdoptingOne(t *testing.T) {
 func TestMergedCycloneDXExportCarriesSourceBOMLinks(t *testing.T) {
 	_, spdxEntry := ingestDocument(t, documentRichSPDX)
 	_, cdxEntry := ingestDocument(t, serialCycloneDX)
-	entries := []sdk.GraphEntry{spdxEntry, cdxEntry}
+	entries := []model.GraphEntry{spdxEntry, cdxEntry}
 
-	merged := sdk.New()
+	merged := model.New()
 	for _, entry := range entries {
-		if err := sdk.MergeGraph(merged, entry.Graph); err != nil {
+		if err := model.MergeGraph(merged, entry.Graph); err != nil {
 			t.Fatalf("merge: %v", err)
 		}
 	}
@@ -311,13 +312,13 @@ func TestMergedCycloneDXExportCarriesSourceBOMLinks(t *testing.T) {
 // external plugin, so a value written straight onto it must still be refused.
 func TestSourceClaimsAreRegatedOnExport(t *testing.T) {
 	_, entry := ingestDocument(t, supplierRichCycloneDX)
-	entry.Document = &sdk.DocumentAssertions{
+	entry.Document = &model.DocumentAssertions{
 		Identity: "not a valid iri at all",
 		Name:     "line\nbreak",
 		Comment:  strings.Repeat("x", 1<<20),
-		Creators: []sdk.Contact{{Kind: sdk.ContactKindPerson, Name: "ctrl\x00char"}},
+		Creators: []model.Contact{{Kind: model.ContactKindPerson, Name: "ctrl\x00char"}},
 	}
-	doc, err := FromGraphEntries(entry.Graph, []sdk.GraphEntry{entry}, BuildOptions{RestatesSource: true})
+	doc, err := FromGraphEntries(entry.Graph, []model.GraphEntry{entry}, BuildOptions{RestatesSource: true})
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}
@@ -343,12 +344,12 @@ func TestSourceClaimsAreRegatedOnExport(t *testing.T) {
 func TestBomlyCreditIsNotDuplicatedAcrossHops(t *testing.T) {
 	opts := BuildOptions{ToolVersion: "0.0.0-test", Created: fixedExportTime(), RestatesSource: true}
 	_, entry := ingestDocument(t, supplierRichCycloneDX)
-	first, err := MarshalGraphEntriesJSON(entry.Graph, []sdk.GraphEntry{entry}, TargetSPDX23JSON, opts, EncodeOptions{Pretty: true})
+	first, err := MarshalGraphEntriesJSON(entry.Graph, []model.GraphEntry{entry}, TargetSPDX23JSON, opts, EncodeOptions{Pretty: true})
 	if err != nil {
 		t.Fatalf("first export: %v", err)
 	}
 	_, second := ingestDocument(t, string(first))
-	doc, err := FromGraphEntries(second.Graph, []sdk.GraphEntry{second}, opts)
+	doc, err := FromGraphEntries(second.Graph, []model.GraphEntry{second}, opts)
 	if err != nil {
 		t.Fatalf("second export: %v", err)
 	}
@@ -370,7 +371,7 @@ func TestBomlyCreditIsNotDuplicatedAcrossHops(t *testing.T) {
 // says nothing at all about where it came from.
 func TestCycloneDXConversionLinksAnSPDXSourceItCannotAdopt(t *testing.T) {
 	_, entry := ingestDocument(t, documentRichSPDX)
-	raw, err := MarshalGraphEntriesJSON(entry.Graph, []sdk.GraphEntry{entry}, TargetCycloneDX16JSON, BuildOptions{RestatesSource: true}, EncodeOptions{Pretty: true})
+	raw, err := MarshalGraphEntriesJSON(entry.Graph, []model.GraphEntry{entry}, TargetCycloneDX16JSON, BuildOptions{RestatesSource: true}, EncodeOptions{Pretty: true})
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}
@@ -394,7 +395,7 @@ func TestCycloneDXConversionLinksAnSPDXSourceItCannotAdopt(t *testing.T) {
 // point at this document itself.
 func TestCycloneDXConversionDoesNotLinkTheIdentityItAdopted(t *testing.T) {
 	_, entry := ingestDocument(t, serialCycloneDX)
-	raw, err := MarshalGraphEntriesJSON(entry.Graph, []sdk.GraphEntry{entry}, TargetCycloneDX16JSON, BuildOptions{RestatesSource: true}, EncodeOptions{Pretty: true})
+	raw, err := MarshalGraphEntriesJSON(entry.Graph, []model.GraphEntry{entry}, TargetCycloneDX16JSON, BuildOptions{RestatesSource: true}, EncodeOptions{Pretty: true})
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}
@@ -435,11 +436,11 @@ func TestAnAnonymousSourceStillCountsAsASource(t *testing.T) {
 		t.Fatal("an ingested document with no claims left no record that it was read")
 	}
 	_, spdxEntry := ingestDocument(t, documentRichSPDX)
-	entries := []sdk.GraphEntry{anonEntry, spdxEntry}
+	entries := []model.GraphEntry{anonEntry, spdxEntry}
 
-	merged := sdk.New()
+	merged := model.New()
 	for _, entry := range entries {
-		if err := sdk.MergeGraph(merged, entry.Graph); err != nil {
+		if err := model.MergeGraph(merged, entry.Graph); err != nil {
 			t.Fatalf("merge: %v", err)
 		}
 	}
@@ -460,7 +461,7 @@ func TestAnAnonymousSourceStillCountsAsASource(t *testing.T) {
 // creation time is two statements that disagree.
 func TestConversionKeepsTheSourceCreationTime(t *testing.T) {
 	_, entry := ingestDocument(t, documentRichSPDX)
-	doc, err := FromGraphEntries(entry.Graph, []sdk.GraphEntry{entry}, BuildOptions{RestatesSource: true})
+	doc, err := FromGraphEntries(entry.Graph, []model.GraphEntry{entry}, BuildOptions{RestatesSource: true})
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}
@@ -474,7 +475,7 @@ func TestConversionKeepsTheSourceCreationTime(t *testing.T) {
 // configured provenance.
 func TestCycloneDXCreditsAnIngestedOrganization(t *testing.T) {
 	_, entry := ingestDocument(t, documentRichSPDX)
-	raw, err := MarshalGraphEntriesJSON(entry.Graph, []sdk.GraphEntry{entry}, TargetCycloneDX16JSON, BuildOptions{RestatesSource: true}, EncodeOptions{Pretty: true})
+	raw, err := MarshalGraphEntriesJSON(entry.Graph, []model.GraphEntry{entry}, TargetCycloneDX16JSON, BuildOptions{RestatesSource: true}, EncodeOptions{Pretty: true})
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}
@@ -494,7 +495,7 @@ func TestCycloneDXCreditsAnIngestedOrganization(t *testing.T) {
 // operator saying who produced this run.
 func TestConfiguredProvenanceOutranksAnIngestedOrganization(t *testing.T) {
 	_, entry := ingestDocument(t, documentRichSPDX)
-	doc, err := FromGraphEntries(entry.Graph, []sdk.GraphEntry{entry}, BuildOptions{
+	doc, err := FromGraphEntries(entry.Graph, []model.GraphEntry{entry}, BuildOptions{
 		RestatesSource: true,
 		Provenance:     Provenance{Manufacturer: "Operator Ltd"},
 	})
@@ -543,7 +544,7 @@ func TestCreditedToolsKeepWhatEachFormatCanHold(t *testing.T) {
 		Tool:        defaultToolName,
 		Tools:       []string{defaultToolName},
 		ToolVersion: "1.2.3",
-		Assertions: sdk.DocumentAssertions{Tools: []sdk.DocumentTool{
+		Assertions: model.DocumentAssertions{Tools: []model.DocumentTool{
 			{Vendor: "Acme", Name: "cdx-gen", Version: "9.1.0"},
 			// Same name and version as Bomly's own entry, but with a vendor
 			// the source added: the SDK's merge class keys on the whole
@@ -594,7 +595,7 @@ func TestConversionKeepsTheSourceBOMRevision(t *testing.T) {
 	if entry.Document.Identity != "urn:cdx:3e671687-395b-41f5-a30f-a58921a69b79/4" {
 		t.Fatalf("identity = %q, want the revision kept", entry.Document.Identity)
 	}
-	raw, err := MarshalGraphEntriesJSON(entry.Graph, []sdk.GraphEntry{entry}, TargetCycloneDX16JSON, BuildOptions{RestatesSource: true}, EncodeOptions{Pretty: true})
+	raw, err := MarshalGraphEntriesJSON(entry.Graph, []model.GraphEntry{entry}, TargetCycloneDX16JSON, BuildOptions{RestatesSource: true}, EncodeOptions{Pretty: true})
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}
@@ -624,7 +625,7 @@ func TestADifferentRevisionOfTheSameSerialIsStillASource(t *testing.T) {
 	doc := &Document{
 		SerialNumber:  "urn:uuid:3e671687-395b-41f5-a30f-a58921a69b79",
 		SerialVersion: 1,
-		Sources: []sdk.DocumentAssertions{
+		Sources: []model.DocumentAssertions{
 			{Identity: "urn:cdx:3e671687-395b-41f5-a30f-a58921a69b79/7"},
 		},
 	}
@@ -646,12 +647,12 @@ func TestConfiguredProvenanceDoesNotDuplicateAuthorsAcrossHops(t *testing.T) {
 		SerialNumber:   "urn:uuid:11111111-2222-4333-8444-555555555555",
 	}
 	_, entry := ingestDocument(t, supplierRichCycloneDX)
-	first, err := MarshalGraphEntriesJSON(entry.Graph, []sdk.GraphEntry{entry}, TargetCycloneDX16JSON, opts, EncodeOptions{Pretty: true})
+	first, err := MarshalGraphEntriesJSON(entry.Graph, []model.GraphEntry{entry}, TargetCycloneDX16JSON, opts, EncodeOptions{Pretty: true})
 	if err != nil {
 		t.Fatalf("first export: %v", err)
 	}
 	_, again := ingestDocument(t, string(first))
-	second, err := MarshalGraphEntriesJSON(again.Graph, []sdk.GraphEntry{again}, TargetCycloneDX16JSON, opts, EncodeOptions{Pretty: true})
+	second, err := MarshalGraphEntriesJSON(again.Graph, []model.GraphEntry{again}, TargetCycloneDX16JSON, opts, EncodeOptions{Pretty: true})
 	if err != nil {
 		t.Fatalf("second export: %v", err)
 	}

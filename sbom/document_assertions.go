@@ -4,7 +4,8 @@ import (
 	"time"
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
-	"github.com/bomly-dev/bomly-sdk"
+
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // This file decides what an export says about itself when the graph it
@@ -44,7 +45,7 @@ import (
 //
 // Exported so the detector and this package agree by construction rather than
 // by both remembering the same rule.
-func DocumentAssertionsFor(doc *Document) *sdk.DocumentAssertions {
+func DocumentAssertionsFor(doc *Document) *model.DocumentAssertions {
 	if doc == nil {
 		return nil
 	}
@@ -58,14 +59,14 @@ func DocumentAssertionsFor(doc *Document) *sdk.DocumentAssertions {
 // restates is the caller's declaration that the graph being exported is the
 // single source's graph, untransformed; it decides whether one source's
 // identity is adopted or linked, and means nothing for zero or several.
-func applySourceAssertions(doc *Document, sources []sdk.DocumentAssertions, restates bool) {
+func applySourceAssertions(doc *Document, sources []model.DocumentAssertions, restates bool) {
 	if doc == nil {
 		return
 	}
 	if len(sources) == 0 {
 		return
 	}
-	cleaned := make([]sdk.DocumentAssertions, 0, len(sources))
+	cleaned := make([]model.DocumentAssertions, 0, len(sources))
 	for _, source := range sources {
 		// Re-gated here rather than trusted from the entry: these arrived
 		// from an untrusted document, crossed the plugin boundary as part of
@@ -86,7 +87,7 @@ func applySourceAssertions(doc *Document, sources []sdk.DocumentAssertions, rest
 
 	aggregate := cleaned[0]
 	for _, source := range cleaned[1:] {
-		aggregate = sdk.MergeDocumentAssertions(aggregate, source)
+		aggregate = model.MergeDocumentAssertions(aggregate, source)
 	}
 	doc.Assertions.Creators = aggregate.Creators
 	doc.Assertions.Tools = aggregate.Tools
@@ -230,22 +231,22 @@ func (d documentIdentity) names(identity string) bool {
 // over the source document's bytes -- captured at ingest by decodeDocument, so
 // a source that arrived without one is skipped there rather than written as an
 // invalid reference.
-func documentSourceLinks(doc *Document, emitted documentIdentity) []sdk.DocumentSource {
+func documentSourceLinks(doc *Document, emitted documentIdentity) []model.DocumentSource {
 	if doc == nil || len(doc.Sources) == 0 {
 		return nil
 	}
-	candidates := make([]sdk.DocumentSource, 0, len(doc.Sources)*2)
+	candidates := make([]model.DocumentSource, 0, len(doc.Sources)*2)
 	for _, source := range doc.Sources {
-		candidates = append(candidates, sdk.DocumentSource{
+		candidates = append(candidates, model.DocumentSource{
 			Identity: source.Identity,
 			Version:  source.Version,
 			Checksum: source.Checksum,
 		})
 		candidates = append(candidates, source.Sources...)
 	}
-	folded, _ := sdk.DocumentAssertions{Sources: candidates}.Normalized()
+	folded, _ := model.DocumentAssertions{Sources: candidates}.Normalized()
 
-	links := make([]sdk.DocumentSource, 0, len(folded.Sources))
+	links := make([]model.DocumentSource, 0, len(folded.Sources))
 	for _, source := range folded.Sources {
 		if emitted.names(source.Identity) {
 			continue
@@ -268,7 +269,7 @@ func documentSourceLinks(doc *Document, emitted documentIdentity) []sdk.Document
 // source never named. The tuple is kept and the
 // copy that says less is dropped; a tool the assertions do not carry in full
 // is still written.
-func toolIsRestatedInFull(tool sdk.DocumentTool, credited []sdk.DocumentTool) bool {
+func toolIsRestatedInFull(tool model.DocumentTool, credited []model.DocumentTool) bool {
 	for _, other := range credited {
 		if other.Name == tool.Name && (tool.Version == "" || other.Version == tool.Version) {
 			return true

@@ -3,14 +3,15 @@ package detectorkit
 import (
 	"testing"
 
-	sdk "github.com/bomly-dev/bomly-sdk"
 	"github.com/bomly-dev/bomly-sdk/testkit"
+
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // Node IDs are canonical package URLs now: pkg:generic/<name>.
-func subgraphFixture(t *testing.T, edges [][2]string) *sdk.Graph {
+func subgraphFixture(t *testing.T, edges [][2]string) *model.Graph {
 	t.Helper()
-	g := sdk.New()
+	g := model.New()
 	added := map[string]struct{}{}
 	addNode := func(id string) {
 		if _, ok := added[id]; ok {

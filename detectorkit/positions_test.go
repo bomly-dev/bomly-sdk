@@ -5,29 +5,30 @@ import (
 	"path/filepath"
 	"testing"
 
-	sdk "github.com/bomly-dev/bomly-sdk"
 	"github.com/bomly-dev/bomly-sdk/testkit"
+
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 func TestAttachPositionsNilSafe(t *testing.T) {
 	// All-nil inputs must not panic.
 	AttachPositions(nil, nil, nil)
-	AttachPositions(sdk.New(), nil, func(*sdk.DependencyNode) string { return "" })
-	AttachPositions(sdk.New(), map[string]*sdk.SourcePosition{"x": {File: "f"}}, nil)
+	AttachPositions(model.New(), nil, func(*model.DependencyNode) string { return "" })
+	AttachPositions(model.New(), map[string]*model.SourcePosition{"x": {File: "f"}}, nil)
 }
 
 func TestAttachPositionsDoesNotDuplicate(t *testing.T) {
-	g := sdk.New()
-	pkg := testkit.MustDependencyCoords(t, sdk.Coordinates{Name: "foo", Version: "1.0.0", Ecosystem: "test"})
-	pkg.Locations = []sdk.PackageLocation{
-		{RealPath: "lock.txt", Position: &sdk.SourcePosition{File: "lock.txt", Line: 1}},
+	g := model.New()
+	pkg := testkit.MustDependencyCoords(t, model.Coordinates{Name: "foo", Version: "1.0.0", Ecosystem: "test"})
+	pkg.Locations = []model.PackageLocation{
+		{RealPath: "lock.txt", Position: &model.SourcePosition{File: "lock.txt", Line: 1}},
 	}
 	_ = g.AddNode(pkg)
 
-	positions := map[string]*sdk.SourcePosition{
+	positions := map[string]*model.SourcePosition{
 		"foo": {File: "lock.txt", Line: 5},
 	}
-	AttachPositions(g, positions, func(p *sdk.DependencyNode) string { return p.Name })
+	AttachPositions(g, positions, func(p *model.DependencyNode) string { return p.Name })
 
 	got, _ := g.DependencyNode(pkg.NodeID())
 	if got == nil {
@@ -39,13 +40,13 @@ func TestAttachPositionsDoesNotDuplicate(t *testing.T) {
 }
 
 func TestAttachPositionsHonorsNameKey(t *testing.T) {
-	g := sdk.New()
-	pkg := testkit.MustDependencyCoords(t, sdk.Coordinates{Name: "Foo", Version: "1", Ecosystem: "test"})
+	g := model.New()
+	pkg := testkit.MustDependencyCoords(t, model.Coordinates{Name: "Foo", Version: "1", Ecosystem: "test"})
 	_ = g.AddNode(pkg)
 
 	// Map keyed by lowercase name; nameKey lowercases the node.
-	positions := map[string]*sdk.SourcePosition{"foo": {File: "lock", Line: 42}}
-	AttachPositions(g, positions, func(p *sdk.DependencyNode) string {
+	positions := map[string]*model.SourcePosition{"foo": {File: "lock", Line: 42}}
+	AttachPositions(g, positions, func(p *model.DependencyNode) string {
 		return toLower(p.Name)
 	})
 
@@ -62,14 +63,14 @@ func TestAttachPositionsHonorsNameKey(t *testing.T) {
 }
 
 func TestAttachPositionCandidatesExactKeyStopsFallback(t *testing.T) {
-	g := sdk.New()
-	pkg := testkit.MustDependencyCoords(t, sdk.Coordinates{Name: "foo", Version: "2.0.0", Ecosystem: "test"})
+	g := model.New()
+	pkg := testkit.MustDependencyCoords(t, model.Coordinates{Name: "foo", Version: "2.0.0", Ecosystem: "test"})
 	_ = g.AddNode(pkg)
 
-	AttachPositionCandidates(g, map[string][]*sdk.SourcePosition{
+	AttachPositionCandidates(g, map[string][]*model.SourcePosition{
 		"foo@2.0.0": {{File: "lock", Line: 20}},
 		"foo":       {{File: "lock", Line: 10}},
-	}, func(p *sdk.DependencyNode) []string {
+	}, func(p *model.DependencyNode) []string {
 		return []string{p.Name + "@" + p.Version, p.Name}
 	})
 
@@ -83,16 +84,16 @@ func TestAttachPositionCandidatesExactKeyStopsFallback(t *testing.T) {
 }
 
 func TestAttachPositionCandidatesUpgradesFileOnlyLocation(t *testing.T) {
-	g := sdk.New()
-	pkg := testkit.MustDependencyCoords(t, sdk.Coordinates{Name: "foo", Version: "1.0.0", Ecosystem: "test"})
-	pkg.Locations = []sdk.PackageLocation{
+	g := model.New()
+	pkg := testkit.MustDependencyCoords(t, model.Coordinates{Name: "foo", Version: "1.0.0", Ecosystem: "test"})
+	pkg.Locations = []model.PackageLocation{
 		{RealPath: "lock", AccessPath: "lock"},
 	}
 	_ = g.AddNode(pkg)
 
-	AttachPositionCandidates(g, map[string][]*sdk.SourcePosition{
+	AttachPositionCandidates(g, map[string][]*model.SourcePosition{
 		"foo@1.0.0": {{File: "lock", Line: 8}},
-	}, func(p *sdk.DependencyNode) []string {
+	}, func(p *model.DependencyNode) []string {
 		return []string{p.Name + "@" + p.Version}
 	})
 

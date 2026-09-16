@@ -8,10 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bomly-dev/bomly-sdk"
 	"github.com/bomly-dev/bomly-sdk/spdxkit"
 	"github.com/spdx/tools-golang/spdx/v2/common"
 	v23 "github.com/spdx/tools-golang/spdx/v2/v2_3"
+
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 type spdx23Codec struct{}
@@ -66,8 +67,8 @@ func (spdx23Codec) encodeJSON(doc *Document, opts EncodeOptions) ([]byte, error)
 			PackageExternalReferences: append(spdxExternalReferences(c), spdxEmittedReferences(c.ExternalReferences)...),
 			PackageSupplier:           spdxSupplierFor(c.Supplier),
 			PackageOriginator:         spdxOriginatorFor(c.Originator),
-			PackageDescription:        sdk.NormalizeDescription(c.Description),
-			PackageHomePage:           sdk.NormalizeHomepage(c.Homepage),
+			PackageDescription:        model.NormalizeDescription(c.Description),
+			PackageHomePage:           model.NormalizeHomepage(c.Homepage),
 			PrimaryPackagePurpose:     spdxPrimaryPackagePurpose(c.Type),
 		}
 		if _, isRoot := rootComponents[c.ID]; isRoot || IsProjectRootComponent(c) {
@@ -344,7 +345,7 @@ func spdxCreatorComment(p Provenance) string {
 
 func spdxPackageComment(component Component) string {
 	fields := make([]string, 0, 4)
-	if scope := sdk.EncodeScopeSet(component.Scopes); scope != "" {
+	if scope := model.EncodeScopeSet(component.Scopes); scope != "" {
 		fields = append(fields, "scope="+scope)
 	}
 	if typ := strings.TrimSpace(component.Type); typ != "" && !strings.EqualFold(typ, "package") {
@@ -400,7 +401,7 @@ func spdxChecksums(digests []Digest) []common.Checksum {
 // An algorithm SPDX does not define returns "", which the caller drops. That
 // is a real limit of the format rather than a gap in this mapping.
 func spdxChecksumAlgorithm(algorithm string) common.ChecksumAlgorithm {
-	parsed, err := sdk.ParseDigestAlgorithm(algorithm)
+	parsed, err := model.ParseDigestAlgorithm(algorithm)
 	if err != nil {
 		return ""
 	}
@@ -431,9 +432,9 @@ func parseSPDXComponentType(p *v23.Package) string {
 // scoped "runtime,future" unscoped outright -- total loss from one token a
 // newer Bomly wrote. The tokens that were not read come back so a caller can
 // say so; they are the SDK's warning channel, since it does not log.
-func spdxCommentScopes(comment string) ([]sdk.Scope, []string) {
+func spdxCommentScopes(comment string) ([]model.Scope, []string) {
 	carrier := parseSPDXCommentField(comment, "scope")
-	decoded, err := sdk.DecodeScopeSetLenient(carrier)
+	decoded, err := model.DecodeScopeSetLenient(carrier)
 	if err != nil {
 		return nil, nil
 	}
@@ -730,8 +731,8 @@ func spdxAdditionalOriginReferences(component Component) []*v23.PackageExternalR
 // A vulnerability with no advisory URL has no SPDX 2.3 reference to write.
 func spdxVulnerabilityLocator(vuln Vulnerability) (string, bool) {
 	for _, advisory := range vuln.Advisories {
-		ref, ok := sdk.ExternalReference{
-			Category: sdk.ExternalReferenceCategorySecurity,
+		ref, ok := model.ExternalReference{
+			Category: model.ExternalReferenceCategorySecurity,
 			Type:     common.TypeSecurityAdvisory,
 			Locator:  advisory,
 		}.Normalized()
@@ -834,7 +835,7 @@ func parseSPDXPURL(refs []*v23.PackageExternalReference) string {
 
 func parseSPDXPackageManager(refs []*v23.PackageExternalReference) string {
 	purl := parseSPDXPURL(refs)
-	if manager := packageManagerForPURL(purl, "", ""); manager != sdk.PackageManagerUnknown {
+	if manager := packageManagerForPURL(purl, "", ""); manager != model.PackageManagerUnknown {
 		return manager.Name()
 	}
 	return ""

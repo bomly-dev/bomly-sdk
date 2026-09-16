@@ -1,5 +1,5 @@
 // Package conformance provides a reusable test suite that plugin authors run
-// against their sdk.Module to verify it satisfies the Bomly plugin contract
+// against their plugin.Module to verify it satisfies the Bomly plugin contract
 // before shipping: module and descriptor validity, JSON round-trip stability,
 // construction through a HostContext, the Ready/Applicable lifecycle contract,
 // role-specific capabilities such as the package-updates delta protocol, and
@@ -31,9 +31,11 @@ import (
 	hplugin "github.com/hashicorp/go-plugin"
 	"go.uber.org/zap"
 
-	sdk "github.com/bomly-dev/bomly-sdk"
 	"github.com/bomly-dev/bomly-sdk/httpkit"
 	"github.com/bomly-dev/bomly-sdk/runtime"
+
+	"github.com/bomly-dev/bomly-sdk/model"
+	"github.com/bomly-dev/bomly-sdk/plugin"
 )
 
 // cancelledContextTimeout bounds how long a component may take to return from
@@ -43,7 +45,7 @@ const cancelledContextTimeout = 5 * time.Second
 // Config configures one conformance run.
 type Config struct {
 	// Module is the module under test. Required.
-	Module sdk.Module
+	Module plugin.Module
 	// ManifestPath optionally points at the plugin's bomly-plugin.json. When
 	// set, the suite cross-checks manifest identity against the runtime
 	// descriptor (id == descriptor name, kind == module kind, runtime and
@@ -59,11 +61,11 @@ func Test(t *testing.T, cfg Config) {
 	t.Helper()
 
 	t.Run("module", func(t *testing.T) {
-		if err := sdk.ValidateModule(cfg.Module); err != nil {
+		if err := plugin.ValidateModule(cfg.Module); err != nil {
 			t.Fatalf("ValidateModule: %v", err)
 		}
 	})
-	if err := sdk.ValidateModule(cfg.Module); err != nil {
+	if err := plugin.ValidateModule(cfg.Module); err != nil {
 		// The subtest above reported the failure; the remaining checks all
 		// assume a structurally valid module.
 		return
@@ -114,14 +116,14 @@ func Test(t *testing.T, cfg Config) {
 // break every graph-carrying request.
 func testGraphWireRoundTrip(t *testing.T) {
 	t.Helper()
-	manifest, err := sdk.NewManifestNode("package.json", "")
+	manifest, err := model.NewManifestNode("package.json", "")
 	if err != nil {
 		t.Fatalf("NewManifestNode: %v", err)
 	}
 	// Coordinates that mint a package URL, so the module's legacy purl
 	// field carries something a pre-union peer would otherwise lose.
-	module, err := sdk.NewModuleNode("package.json", sdk.Coordinates{
-		Ecosystem: sdk.EcosystemNPM,
+	module, err := model.NewModuleNode("package.json", model.Coordinates{
+		Ecosystem: model.EcosystemNPM,
 		Name:      "app",
 		Version:   "1.0.0",
 	})
@@ -130,12 +132,12 @@ func testGraphWireRoundTrip(t *testing.T) {
 	}
 	// A qualifier-carrying identity: its coordinates alone cannot rebuild
 	// it, so the encoded purl field has to carry the identity itself.
-	dep, err := sdk.NewDependencyNodeFromPURL("pkg:apk/alpine/musl@1.2.5?arch=x86_64")
+	dep, err := model.NewDependencyNodeFromPURL("pkg:apk/alpine/musl@1.2.5?arch=x86_64")
 	if err != nil {
 		t.Fatalf("NewDependencyNodeFromPURL: %v", err)
 	}
-	graph := sdk.New()
-	for _, node := range []sdk.GraphNode{manifest, module, dep} {
+	graph := model.New()
+	for _, node := range []model.GraphNode{manifest, module, dep} {
 		if err := graph.AddNode(node); err != nil {
 			t.Fatalf("AddNode(%s): %v", node.NodeID(), err)
 		}
@@ -158,11 +160,11 @@ func testGraphWireRoundTrip(t *testing.T) {
 	// still round-trip here while misclassifying ambiguous nodes.
 	var emitted struct {
 		Nodes []struct {
-			ID         string          `json:"id"`
-			Kind       sdk.NodeKind    `json:"kind"`
-			Type       sdk.PackageType `json:"type"`
-			PURL       string          `json:"purl"`
-			FirstParty bool            `json:"first_party"`
+			ID         string            `json:"id"`
+			Kind       model.NodeKind    `json:"kind"`
+			Type       model.PackageType `json:"type"`
+			PURL       string            `json:"purl"`
+			FirstParty bool              `json:"first_party"`
 		} `json:"nodes"`
 		Edges []map[string]string `json:"edges"`
 	}
@@ -172,7 +174,7 @@ func testGraphWireRoundTrip(t *testing.T) {
 	if len(emitted.Nodes) != 3 {
 		t.Fatalf("encoded %d nodes, want 3", len(emitted.Nodes))
 	}
-	emittedKinds := make(map[string]sdk.NodeKind, len(emitted.Nodes))
+	emittedKinds := make(map[string]model.NodeKind, len(emitted.Nodes))
 	for _, node := range emitted.Nodes {
 		if node.Kind == "" {
 			t.Fatalf("node %q was encoded without a kind discriminator", node.ID)
@@ -182,11 +184,11 @@ func testGraphWireRoundTrip(t *testing.T) {
 		// legacy markers, so dropping them would misclassify nodes for
 		// older hosts and plugins while every check here still passed.
 		switch node.Kind {
-		case sdk.NodeKindManifest:
-			if node.Type != sdk.PackageTypeManifest {
+		case model.NodeKindManifest:
+			if node.Type != model.PackageTypeManifest {
 				t.Errorf("manifest node %q lost its legacy type marker", node.ID)
 			}
-		case sdk.NodeKindModule:
+		case model.NodeKindModule:
 			if !node.FirstParty {
 				t.Errorf("module node %q lost its legacy first-party marker", node.ID)
 			}
@@ -195,10 +197,10 @@ func testGraphWireRoundTrip(t *testing.T) {
 			if node.PURL != module.PURL() {
 				t.Errorf("module node %q encoded purl %q, want %q", node.ID, node.PURL, module.PURL())
 			}
-			if node.Type == sdk.PackageTypeManifest {
+			if node.Type == model.PackageTypeManifest {
 				t.Errorf("module node %q carries the manifest type, which outranks the first-party marker in legacy inference", node.ID)
 			}
-		case sdk.NodeKindDependency:
+		case model.NodeKindDependency:
 			if node.FirstParty {
 				t.Errorf("dependency node %q claims first-party ownership", node.ID)
 			}
@@ -211,7 +213,7 @@ func testGraphWireRoundTrip(t *testing.T) {
 			// The manifest type outranks every other legacy marker, so a
 			// dependency carrying it reads as structural to a pre-union
 			// peer and drops out of that peer's matching entirely.
-			if node.Type == sdk.PackageTypeManifest {
+			if node.Type == model.PackageTypeManifest {
 				t.Errorf("dependency node %q carries the manifest type", node.ID)
 			}
 		}
@@ -243,7 +245,7 @@ func testGraphWireRoundTrip(t *testing.T) {
 		}
 	}
 
-	var decoded sdk.Graph
+	var decoded model.Graph
 	if err := json.Unmarshal(encoded, &decoded); err != nil {
 		t.Fatalf("unmarshal graph: %v", err)
 	}
@@ -252,11 +254,11 @@ func testGraphWireRoundTrip(t *testing.T) {
 	}
 	for _, want := range []struct {
 		id   string
-		kind sdk.NodeKind
+		kind model.NodeKind
 	}{
-		{manifest.NodeID(), sdk.NodeKindManifest},
-		{module.NodeID(), sdk.NodeKindModule},
-		{dep.NodeID(), sdk.NodeKindDependency},
+		{manifest.NodeID(), model.NodeKindManifest},
+		{module.NodeID(), model.NodeKindModule},
+		{dep.NodeID(), model.NodeKindDependency},
 	} {
 		node, ok := decoded.Node(want.id)
 		if !ok || node.Kind() != want.kind {
@@ -292,14 +294,14 @@ func testGraphWireRoundTrip(t *testing.T) {
 type ProbeOption func(*probeConfig)
 
 type probeConfig struct {
-	module *sdk.Module
+	module *plugin.Module
 }
 
 // WithModule supplies the in-process module the probed binary is expected to
 // serve. When set, ProbeBinary fetches the descriptor for the module's kind
 // and asserts it equals the in-process descriptor. Without it, ProbeBinary
 // only asserts that the binary serves exactly one valid role descriptor.
-func WithModule(m sdk.Module) ProbeOption {
+func WithModule(m plugin.Module) ProbeOption {
 	return func(cfg *probeConfig) {
 		cfg.module = &m
 	}
@@ -349,21 +351,21 @@ func ProbeBinary(t *testing.T, binaryPath string, opts ...ProbeOption) {
 
 // probeModuleDescriptor fetches the descriptor for the module's kind over the
 // transport and asserts it equals the in-process descriptor.
-func probeModuleDescriptor(ctx context.Context, t *testing.T, service runtime.Client, m sdk.Module) {
+func probeModuleDescriptor(ctx context.Context, t *testing.T, service runtime.Client, m plugin.Module) {
 	t.Helper()
 	var remote, local any
 	var err error
 	switch m.Kind {
-	case sdk.PluginKindDetector:
+	case plugin.PluginKindDetector:
 		remote, err = service.DetectorDescriptor(ctx)
 		local = &m.Detector.Descriptor
-	case sdk.PluginKindMatcher:
+	case plugin.PluginKindMatcher:
 		remote, err = service.MatcherDescriptor(ctx)
 		local = &m.Matcher.Descriptor
-	case sdk.PluginKindAuditor:
+	case plugin.PluginKindAuditor:
 		remote, err = service.AuditorDescriptor(ctx)
 		local = &m.Auditor.Descriptor
-	case sdk.PluginKindAnalyzer:
+	case plugin.PluginKindAnalyzer:
 		remote, err = service.AnalyzerDescriptor(ctx)
 		local = &m.Analyzer.Descriptor
 	default:
@@ -393,28 +395,28 @@ func probeAnyDescriptor(ctx context.Context, t *testing.T, service runtime.Clien
 	t.Helper()
 	var served []string
 	if descriptor, err := service.DetectorDescriptor(ctx); err == nil {
-		if err := sdk.ValidateDetectorDescriptor(descriptor); err != nil {
+		if err := plugin.ValidateDetectorDescriptor(descriptor); err != nil {
 			t.Errorf("served detector descriptor invalid: %v", err)
 		}
-		served = append(served, string(sdk.PluginKindDetector))
+		served = append(served, string(plugin.PluginKindDetector))
 	}
 	if descriptor, err := service.MatcherDescriptor(ctx); err == nil {
-		if err := sdk.ValidateMatcherDescriptor(descriptor); err != nil {
+		if err := plugin.ValidateMatcherDescriptor(descriptor); err != nil {
 			t.Errorf("served matcher descriptor invalid: %v", err)
 		}
-		served = append(served, string(sdk.PluginKindMatcher))
+		served = append(served, string(plugin.PluginKindMatcher))
 	}
 	if descriptor, err := service.AuditorDescriptor(ctx); err == nil {
-		if err := sdk.ValidateAuditorDescriptor(descriptor); err != nil {
+		if err := plugin.ValidateAuditorDescriptor(descriptor); err != nil {
 			t.Errorf("served auditor descriptor invalid: %v", err)
 		}
-		served = append(served, string(sdk.PluginKindAuditor))
+		served = append(served, string(plugin.PluginKindAuditor))
 	}
 	if descriptor, err := service.AnalyzerDescriptor(ctx); err == nil {
-		if err := sdk.ValidateAnalyzerDescriptor(descriptor); err != nil {
+		if err := plugin.ValidateAnalyzerDescriptor(descriptor); err != nil {
 			t.Errorf("served analyzer descriptor invalid: %v", err)
 		}
-		served = append(served, string(sdk.PluginKindAnalyzer))
+		served = append(served, string(plugin.PluginKindAnalyzer))
 	}
 	if len(served) != 1 {
 		t.Fatalf("binary must serve exactly one role descriptor, served %d (%s)", len(served), strings.Join(served, ", "))
@@ -423,33 +425,33 @@ func probeAnyDescriptor(ctx context.Context, t *testing.T, service runtime.Clien
 
 // --- descriptor checks -----------------------------------------------------
 
-func testDescriptor(t *testing.T, m sdk.Module) {
+func testDescriptor(t *testing.T, m plugin.Module) {
 	t.Helper()
 	switch m.Kind {
-	case sdk.PluginKindDetector:
+	case plugin.PluginKindDetector:
 		descriptor := m.Detector.Descriptor
-		if err := sdk.ValidateDetectorDescriptor(&descriptor); err != nil {
+		if err := plugin.ValidateDetectorDescriptor(&descriptor); err != nil {
 			t.Fatalf("descriptor: %v", err)
 		}
-		requireRoundTrip(t, &descriptor, new(sdk.DetectorDescriptor))
-	case sdk.PluginKindMatcher:
+		requireRoundTrip(t, &descriptor, new(plugin.DetectorDescriptor))
+	case plugin.PluginKindMatcher:
 		descriptor := m.Matcher.Descriptor
-		if err := sdk.ValidateMatcherDescriptor(&descriptor); err != nil {
+		if err := plugin.ValidateMatcherDescriptor(&descriptor); err != nil {
 			t.Fatalf("descriptor: %v", err)
 		}
-		requireRoundTrip(t, &descriptor, new(sdk.MatcherDescriptor))
-	case sdk.PluginKindAuditor:
+		requireRoundTrip(t, &descriptor, new(plugin.MatcherDescriptor))
+	case plugin.PluginKindAuditor:
 		descriptor := m.Auditor.Descriptor
-		if err := sdk.ValidateAuditorDescriptor(&descriptor); err != nil {
+		if err := plugin.ValidateAuditorDescriptor(&descriptor); err != nil {
 			t.Fatalf("descriptor: %v", err)
 		}
-		requireRoundTrip(t, &descriptor, new(sdk.AuditorDescriptor))
-	case sdk.PluginKindAnalyzer:
+		requireRoundTrip(t, &descriptor, new(plugin.AuditorDescriptor))
+	case plugin.PluginKindAnalyzer:
 		descriptor := m.Analyzer.Descriptor
-		if err := sdk.ValidateAnalyzerDescriptor(&descriptor); err != nil {
+		if err := plugin.ValidateAnalyzerDescriptor(&descriptor); err != nil {
 			t.Fatalf("descriptor: %v", err)
 		}
-		requireRoundTrip(t, &descriptor, new(sdk.AnalyzerDescriptor))
+		requireRoundTrip(t, &descriptor, new(plugin.AnalyzerDescriptor))
 	}
 }
 
@@ -493,8 +495,8 @@ func newStubHostContext(sample json.RawMessage) *stubHostContext {
 
 func (s *stubHostContext) Logger() *zap.Logger                 { return s.logger }
 func (s *stubHostContext) HTTPClient() *httpkit.ClientProvider { return s.http }
-func (s *stubHostContext) Runtime() sdk.RuntimeInfo {
-	return sdk.RuntimeInfo{Execution: sdk.ExecutionEmbedded}
+func (s *stubHostContext) Runtime() plugin.RuntimeInfo {
+	return plugin.RuntimeInfo{Execution: plugin.ExecutionEmbedded}
 }
 
 func (s *stubHostContext) DecodeConfig(v any) error {
@@ -510,18 +512,18 @@ func (s *stubHostContext) DecodeConfig(v any) error {
 
 // constructComponent builds the module's component through its constructor and
 // returns it as the role interface value.
-func constructComponent(ctx context.Context, m sdk.Module, host sdk.HostContext) (any, error) {
+func constructComponent(ctx context.Context, m plugin.Module, host plugin.HostContext) (any, error) {
 	switch m.Kind {
-	case sdk.PluginKindDetector:
+	case plugin.PluginKindDetector:
 		component, err := m.Detector.New(ctx, host)
 		return normalizeNil(component), err
-	case sdk.PluginKindMatcher:
+	case plugin.PluginKindMatcher:
 		component, err := m.Matcher.New(ctx, host)
 		return normalizeNil(component), err
-	case sdk.PluginKindAuditor:
+	case plugin.PluginKindAuditor:
 		component, err := m.Auditor.New(ctx, host)
 		return normalizeNil(component), err
-	case sdk.PluginKindAnalyzer:
+	case plugin.PluginKindAnalyzer:
 		component, err := m.Analyzer.New(ctx, host)
 		return normalizeNil(component), err
 	}
@@ -546,7 +548,7 @@ func normalizeNil(v any) any {
 
 // --- Ready / Applicable contract -------------------------------------------
 
-func testReadyApplicable(t *testing.T, m sdk.Module, component any) {
+func testReadyApplicable(t *testing.T, m plugin.Module, component any) {
 	t.Helper()
 
 	// Zero-value request with a live context: neither call may panic. Errors
@@ -568,30 +570,30 @@ func testReadyApplicable(t *testing.T, m sdk.Module, component any) {
 	})
 }
 
-func callReady(ctx context.Context, m sdk.Module, component any) error {
+func callReady(ctx context.Context, m plugin.Module, component any) error {
 	switch m.Kind {
-	case sdk.PluginKindDetector:
-		return component.(sdk.Detector).Ready(ctx, sdk.DetectionRequest{})
-	case sdk.PluginKindMatcher:
-		return component.(sdk.Matcher).Ready(ctx, sdk.MatchRequest{})
-	case sdk.PluginKindAuditor:
-		return component.(sdk.Auditor).Ready(ctx, sdk.AuditRequest{})
-	case sdk.PluginKindAnalyzer:
-		return component.(sdk.Analyzer).Ready(ctx, sdk.AnalyzeRequest{})
+	case plugin.PluginKindDetector:
+		return component.(plugin.Detector).Ready(ctx, plugin.DetectionRequest{})
+	case plugin.PluginKindMatcher:
+		return component.(plugin.Matcher).Ready(ctx, plugin.MatchRequest{})
+	case plugin.PluginKindAuditor:
+		return component.(plugin.Auditor).Ready(ctx, plugin.AuditRequest{})
+	case plugin.PluginKindAnalyzer:
+		return component.(plugin.Analyzer).Ready(ctx, plugin.AnalyzeRequest{})
 	}
 	return fmt.Errorf("module kind %q is invalid", m.Kind)
 }
 
-func callApplicable(ctx context.Context, m sdk.Module, component any) (bool, error) {
+func callApplicable(ctx context.Context, m plugin.Module, component any) (bool, error) {
 	switch m.Kind {
-	case sdk.PluginKindDetector:
-		return component.(sdk.Detector).Applicable(ctx, sdk.DetectionRequest{})
-	case sdk.PluginKindMatcher:
-		return component.(sdk.Matcher).Applicable(ctx, sdk.MatchRequest{})
-	case sdk.PluginKindAuditor:
-		return component.(sdk.Auditor).Applicable(ctx, sdk.AuditRequest{})
-	case sdk.PluginKindAnalyzer:
-		return component.(sdk.Analyzer).Applicable(ctx, sdk.AnalyzeRequest{})
+	case plugin.PluginKindDetector:
+		return component.(plugin.Detector).Applicable(ctx, plugin.DetectionRequest{})
+	case plugin.PluginKindMatcher:
+		return component.(plugin.Matcher).Applicable(ctx, plugin.MatchRequest{})
+	case plugin.PluginKindAuditor:
+		return component.(plugin.Auditor).Applicable(ctx, plugin.AuditRequest{})
+	case plugin.PluginKindAnalyzer:
+		return component.(plugin.Analyzer).Applicable(ctx, plugin.AnalyzeRequest{})
 	}
 	return false, fmt.Errorf("module kind %q is invalid", m.Kind)
 }
@@ -634,19 +636,19 @@ func requirePromptReturn(t *testing.T, label string, fn func(context.Context)) {
 
 // --- role-specific checks --------------------------------------------------
 
-func testRoleSpecific(t *testing.T, m sdk.Module, component any) {
+func testRoleSpecific(t *testing.T, m plugin.Module, component any) {
 	t.Helper()
 	switch m.Kind {
-	case sdk.PluginKindDetector:
-		testDetectorSupport(t, m, component.(sdk.Detector))
-	case sdk.PluginKindMatcher:
-		matcher := component.(sdk.Matcher)
-		if hasCapability(m.Matcher.Descriptor.Capabilities, sdk.CapabilityPackageUpdates) {
+	case plugin.PluginKindDetector:
+		testDetectorSupport(t, m, component.(plugin.Detector))
+	case plugin.PluginKindMatcher:
+		matcher := component.(plugin.Matcher)
+		if hasCapability(m.Matcher.Descriptor.Capabilities, plugin.CapabilityPackageUpdates) {
 			testMatcherPackageUpdates(t, matcher)
 		}
-	case sdk.PluginKindAnalyzer:
-		analyzer := component.(sdk.Analyzer)
-		if hasCapability(m.Analyzer.Descriptor.Capabilities, sdk.CapabilityPackageUpdates) {
+	case plugin.PluginKindAnalyzer:
+		analyzer := component.(plugin.Analyzer)
+		if hasCapability(m.Analyzer.Descriptor.Capabilities, plugin.CapabilityPackageUpdates) {
 			testAnalyzerPackageUpdates(t, analyzer)
 		}
 	}
@@ -659,7 +661,7 @@ func hasCapability(capabilities []string, capability string) bool {
 // testDetectorSupport requires discoverable package-manager support: without
 // names and evidence patterns Bomly cannot include the detector in subproject
 // discovery or scan planning.
-func testDetectorSupport(t *testing.T, m sdk.Module, detector sdk.Detector) {
+func testDetectorSupport(t *testing.T, m plugin.Module, detector plugin.Detector) {
 	t.Helper()
 	support := m.Detector.Support
 	if len(support) == 0 {
@@ -688,11 +690,11 @@ func testDetectorSupport(t *testing.T, m sdk.Module, detector sdk.Detector) {
 
 // testMatcherPackageUpdates drives Match with AcceptPackageUpdates=true on an
 // empty registry and verifies any returned deltas merge cleanly.
-func testMatcherPackageUpdates(t *testing.T, matcher sdk.Matcher) {
+func testMatcherPackageUpdates(t *testing.T, matcher plugin.Matcher) {
 	t.Helper()
 	ctx := context.Background()
-	req := sdk.MatchRequest{
-		Registry:             sdk.NewPackageRegistry(),
+	req := plugin.MatchRequest{
+		Registry:             model.NewPackageRegistry(),
 		AcceptPackageUpdates: true,
 	}
 	if err := matcher.Ready(ctx, req); err != nil {
@@ -706,11 +708,11 @@ func testMatcherPackageUpdates(t *testing.T, matcher sdk.Matcher) {
 }
 
 // testAnalyzerPackageUpdates is the analyzer variant of the delta check.
-func testAnalyzerPackageUpdates(t *testing.T, analyzer sdk.Analyzer) {
+func testAnalyzerPackageUpdates(t *testing.T, analyzer plugin.Analyzer) {
 	t.Helper()
 	ctx := context.Background()
-	req := sdk.AnalyzeRequest{
-		Registry:             sdk.NewPackageRegistry(),
+	req := plugin.AnalyzeRequest{
+		Registry:             model.NewPackageRegistry(),
 		AcceptPackageUpdates: true,
 	}
 	if err := analyzer.Ready(ctx, req); err != nil {
@@ -725,7 +727,7 @@ func testAnalyzerPackageUpdates(t *testing.T, analyzer sdk.Analyzer) {
 
 // verifyPackageUpdatesMerge asserts every returned delta carries a PURL and
 // merges into a registry via the host's standard merge path.
-func verifyPackageUpdatesMerge(t *testing.T, updates []*sdk.Package) {
+func verifyPackageUpdatesMerge(t *testing.T, updates []*model.Package) {
 	t.Helper()
 	for idx, update := range updates {
 		if update == nil {
@@ -736,7 +738,7 @@ func verifyPackageUpdatesMerge(t *testing.T, updates []*sdk.Package) {
 			t.Errorf("package update %d has no PURL; the host merges deltas by PURL and would drop it", idx)
 		}
 	}
-	registry := sdk.ApplyPackageUpdates(sdk.NewPackageRegistry(), updates)
+	registry := model.ApplyPackageUpdates(model.NewPackageRegistry(), updates)
 	if registry == nil {
 		t.Fatal("ApplyPackageUpdates returned a nil registry")
 	}
@@ -755,7 +757,7 @@ type manifestIdentity struct {
 	Entrypoint       map[string]string `json:"entrypoint"`
 }
 
-func testManifest(t *testing.T, m sdk.Module, manifestPath string) {
+func testManifest(t *testing.T, m plugin.Module, manifestPath string) {
 	t.Helper()
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
@@ -773,14 +775,14 @@ func testManifest(t *testing.T, m sdk.Module, manifestPath string) {
 	if manifest.Kind != string(m.Kind) {
 		t.Errorf("manifest kind %q must equal the module kind %q", manifest.Kind, m.Kind)
 	}
-	if manifest.Runtime != sdk.RuntimeHashiCorpGRPC {
-		t.Errorf("manifest runtime %q must equal %q", manifest.Runtime, sdk.RuntimeHashiCorpGRPC)
+	if manifest.Runtime != plugin.RuntimeHashiCorpGRPC {
+		t.Errorf("manifest runtime %q must equal %q", manifest.Runtime, plugin.RuntimeHashiCorpGRPC)
 	}
-	if manifest.PluginAPIVersion != sdk.PluginAPIVersion {
-		t.Errorf("manifest pluginApiVersion %q must equal %q", manifest.PluginAPIVersion, sdk.PluginAPIVersion)
+	if manifest.PluginAPIVersion != plugin.PluginAPIVersion {
+		t.Errorf("manifest pluginApiVersion %q must equal %q", manifest.PluginAPIVersion, plugin.PluginAPIVersion)
 	}
-	if manifest.SchemaVersion != sdk.PackageManifestSchemaVersion {
-		t.Errorf("manifest schemaVersion %q must equal %q", manifest.SchemaVersion, sdk.PackageManifestSchemaVersion)
+	if manifest.SchemaVersion != plugin.PackageManifestSchemaVersion {
+		t.Errorf("manifest schemaVersion %q must equal %q", manifest.SchemaVersion, plugin.PackageManifestSchemaVersion)
 	}
 	if len(manifest.Entrypoint) == 0 {
 		t.Error("manifest entrypoint map must declare at least one GOOS/GOARCH binary")
@@ -788,15 +790,15 @@ func testManifest(t *testing.T, m sdk.Module, manifestPath string) {
 }
 
 // descriptorName returns the runtime descriptor name for the module's role.
-func descriptorName(m sdk.Module) string {
+func descriptorName(m plugin.Module) string {
 	switch m.Kind {
-	case sdk.PluginKindDetector:
+	case plugin.PluginKindDetector:
 		return m.Detector.Descriptor.Name
-	case sdk.PluginKindMatcher:
+	case plugin.PluginKindMatcher:
 		return m.Matcher.Descriptor.Name
-	case sdk.PluginKindAuditor:
+	case plugin.PluginKindAuditor:
 		return m.Auditor.Descriptor.Name
-	case sdk.PluginKindAnalyzer:
+	case plugin.PluginKindAnalyzer:
 		return m.Analyzer.Descriptor.Name
 	}
 	return ""

@@ -5,7 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	sdk "github.com/bomly-dev/bomly-sdk"
+	"github.com/bomly-dev/bomly-sdk/model"
+	"github.com/bomly-dev/bomly-sdk/plugin"
 )
 
 // RequireLockfilePositions resolves fixtureDir with the given detector and
@@ -18,7 +19,7 @@ import (
 // wantPositionKeys entries are graph node IDs — canonical package URLs such
 // as "pkg:npm/left-pad@1.3.0" (ADR-0041). A missing node or a node without a
 // position fails the test with the offending key.
-func RequireLockfilePositions(t *testing.T, detector sdk.Detector, fixtureDir string, wantPositionKeys []string) {
+func RequireLockfilePositions(t *testing.T, detector plugin.Detector, fixtureDir string, wantPositionKeys []string) {
 	t.Helper()
 	if detector == nil {
 		t.Fatal("RequireLockfilePositions: detector is nil")
@@ -30,10 +31,10 @@ func RequireLockfilePositions(t *testing.T, detector sdk.Detector, fixtureDir st
 		t.Fatal("RequireLockfilePositions: wantPositionKeys is empty")
 	}
 
-	request := sdk.DetectionRequest{
+	request := plugin.DetectionRequest{
 		ProjectPath: fixtureDir,
-		ExecutionTarget: sdk.ExecutionTarget{
-			Kind:     sdk.ExecutionTargetFilesystem,
+		ExecutionTarget: plugin.ExecutionTarget{
+			Kind:     plugin.ExecutionTargetFilesystem,
 			Location: fixtureDir,
 		},
 	}
@@ -65,7 +66,7 @@ func RequireLockfilePositions(t *testing.T, detector sdk.Detector, fixtureDir st
 
 // hasSourcePosition reports whether at least one location on the node carries
 // a position with a file and a 1-based line.
-func hasSourcePosition(node sdk.GraphNode) bool {
+func hasSourcePosition(node model.GraphNode) bool {
 	for _, location := range node.NodeLocations() {
 		position := location.Position
 		if position != nil && strings.TrimSpace(position.File) != "" && position.Line >= 1 {

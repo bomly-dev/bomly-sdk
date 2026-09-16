@@ -5,20 +5,21 @@ import (
 	"testing"
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
-	"github.com/bomly-dev/bomly-sdk"
 	"github.com/bomly-dev/bomly-sdk/internal/testnodes"
 	"github.com/spdx/tools-golang/spdx/v2/common"
 	v23 "github.com/spdx/tools-golang/spdx/v2/v2_3"
+
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // digestFixtureGraph builds a one-package graph carrying the digests a caller
 // hands it, spelled however the caller spelled them.
-func digestFixtureGraph(t *testing.T, digests []sdk.Digest) *sdk.Graph {
+func digestFixtureGraph(t *testing.T, digests []model.Digest) *model.Graph {
 	t.Helper()
 
-	g := sdk.New()
-	dep := testnodes.DepFrom(sdk.DependencyNode{
-		Coordinates: sdk.Coordinates{Name: "left-pad", Version: "1.3.0", Ecosystem: sdk.EcosystemNPM},
+	g := model.New()
+	dep := testnodes.DepFrom(model.DependencyNode{
+		Coordinates: model.Coordinates{Name: "left-pad", Version: "1.3.0", Ecosystem: model.EcosystemNPM},
 		Digests:     digests,
 	})
 	if err := g.AddNode(dep); err != nil {
@@ -33,8 +34,8 @@ func digestFixtureGraph(t *testing.T, digests []sdk.Digest) *sdk.Graph {
 // dropped, because the export switch was a transcription of the vocabulary
 // rather than a call into it.
 func TestMarshalDepGraphJSON_SPDX23ChecksumsCoverTheWholeRegistry(t *testing.T) {
-	g := digestFixtureGraph(t, []sdk.Digest{
-		{Algorithm: sdk.DigestAlgorithmBLAKE3, Value: "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"},
+	g := digestFixtureGraph(t, []model.Digest{
+		{Algorithm: model.DigestAlgorithmBLAKE3, Value: "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"},
 		// Spelled the way a CycloneDX document would spell it: the export
 		// resolves the spelling rather than matching it.
 		{Algorithm: "BLAKE2b-256", Value: "0e5751c026e543b2e8ab2eb06099daa1d1e5df47778f7787faab45cdf12fe3a8"},
@@ -77,11 +78,11 @@ func TestMarshalDepGraphJSON_SPDX23ChecksumsCoverTheWholeRegistry(t *testing.T) 
 // SHA224 is an SPDX member CycloneDX has no spelling for, so a document
 // ingested from SPDX cannot carry it out as CycloneDX.
 func TestMarshalDepGraphJSON_CycloneDXHashesCoverTheWholeRegistry(t *testing.T) {
-	g := digestFixtureGraph(t, []sdk.Digest{
-		{Algorithm: sdk.DigestAlgorithmBLAKE3, Value: "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"},
+	g := digestFixtureGraph(t, []model.Digest{
+		{Algorithm: model.DigestAlgorithmBLAKE3, Value: "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"},
 		{Algorithm: "blake2b-256", Value: "0e5751c026e543b2e8ab2eb06099daa1d1e5df47778f7787faab45cdf12fe3a8"},
 		{Algorithm: "SHA256", Value: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
-		{Algorithm: sdk.DigestAlgorithmSHA224, Value: "d14a028c2a3a2bc9476102bb288234c415a2b01f828ea62ac5b3e42f"},
+		{Algorithm: model.DigestAlgorithmSHA224, Value: "d14a028c2a3a2bc9476102bb288234c415a2b01f828ea62ac5b3e42f"},
 	})
 
 	out, err := MarshalDepGraphJSON(g, TargetCycloneDX16JSON, BuildOptions{ProjectRoot: &ProjectRoot{Name: "demo"}}, EncodeOptions{})
@@ -120,11 +121,11 @@ func TestMarshalDepGraphJSON_CycloneDXHashesCoverTheWholeRegistry(t *testing.T) 
 // wrote "sha256" where the schema defines "SHA-256", so an ingested document
 // changed on its second export.
 func TestCycloneDXEmittedHashes_RendersCycloneDXSpelling(t *testing.T) {
-	hashes := cycloneDXEmittedHashes([]sdk.Digest{
+	hashes := cycloneDXEmittedHashes([]model.Digest{
 		{Algorithm: "SHA-256", Value: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
-		{Algorithm: sdk.DigestAlgorithmBLAKE2b256, Value: "0e5751c026e543b2e8ab2eb06099daa1d1e5df47778f7787faab45cdf12fe3a8"},
+		{Algorithm: model.DigestAlgorithmBLAKE2b256, Value: "0e5751c026e543b2e8ab2eb06099daa1d1e5df47778f7787faab45cdf12fe3a8"},
 		// SPDX-only, so this reference claim cannot be published here.
-		{Algorithm: sdk.DigestAlgorithmADLER32, Value: "0424016d"},
+		{Algorithm: model.DigestAlgorithmADLER32, Value: "0424016d"},
 	})
 	if hashes == nil {
 		t.Fatal("expected hashes")
@@ -150,7 +151,7 @@ func TestCycloneDXEmittedHashes_RendersCycloneDXSpelling(t *testing.T) {
 func TestExportProjectsEveryRegisteredDigestAlgorithm(t *testing.T) {
 	const value = "0e5751c026e543b2e8ab2eb06099daa1d1e5df47778f7787faab45cdf12fe3a8"
 
-	for _, algorithm := range sdk.DigestAlgorithms() {
+	for _, algorithm := range model.DigestAlgorithms() {
 		digest := Digest{Algorithm: string(algorithm), Value: value}
 
 		checksums := spdxChecksums([]Digest{digest})
@@ -194,9 +195,9 @@ func TestExportProjectsEveryRegisteredDigestAlgorithm(t *testing.T) {
 // publishableDigest would be a second copy of the library's, wrong the day
 // CycloneDX adds an algorithm -- which is the defect this whole change removes.
 func TestCycloneDXHashesAreScopedToTheTargetSpecVersion(t *testing.T) {
-	g := digestFixtureGraph(t, []sdk.Digest{
-		{Algorithm: sdk.DigestAlgorithmStreebog256, Value: "3f539a213e97c802cc229d474c6aa32a825a360b2a933a949fd925208d9ce1bb"},
-		{Algorithm: sdk.DigestAlgorithmSHA256, Value: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+	g := digestFixtureGraph(t, []model.Digest{
+		{Algorithm: model.DigestAlgorithmStreebog256, Value: "3f539a213e97c802cc229d474c6aa32a825a360b2a933a949fd925208d9ce1bb"},
+		{Algorithm: model.DigestAlgorithmSHA256, Value: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
 	})
 
 	for _, tc := range []struct {

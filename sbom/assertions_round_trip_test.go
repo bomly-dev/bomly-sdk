@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bomly-dev/bomly-sdk"
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // supplierRichCycloneDX is a document asserting the fields #396 exists to
@@ -160,7 +160,7 @@ func TestIngestLeavesComponentsEligibleForEnrichment(t *testing.T) {
 			t.Fatalf("ingested %q is not eligible for enrichment", node.NodeID())
 		}
 	}
-	_ = sdk.EcosystemUnknown
+	_ = model.EcosystemUnknown
 }
 
 // A homepage survives a CycloneDX hop. The format has no homepage field, so it
@@ -344,7 +344,7 @@ func TestOriginatorKeepsItsContactKindThroughCycloneDX(t *testing.T) {
 			if got == nil {
 				t.Fatalf("the originator was lost:\n%s", raw)
 			}
-			if got.Kind != sdk.ContactKindPerson {
+			if got.Kind != model.ContactKindPerson {
 				t.Errorf("originator kind = %q, want person -- the claim was changed, not just dropped", got.Kind)
 			}
 			if got.Name != "Alice Example" {
@@ -376,7 +376,7 @@ func TestOrganizationOriginatorStillUsesPublisher(t *testing.T) {
 	if err != nil {
 		t.Fatalf("re-ingest: %v", err)
 	}
-	if got := componentNamed(t, back, "widget").Originator; got == nil || got.Kind != sdk.ContactKindOrganization {
+	if got := componentNamed(t, back, "widget").Originator; got == nil || got.Kind != model.ContactKindOrganization {
 		t.Errorf("originator = %+v, want an organization", got)
 	}
 }
