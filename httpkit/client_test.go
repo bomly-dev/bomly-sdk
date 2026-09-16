@@ -1,7 +1,6 @@
-package sdk
+package httpkit
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/url"
 	"os"
@@ -12,12 +11,12 @@ import (
 )
 
 func TestNewHTTPClientExplicitProxy(t *testing.T) {
-	client, err := NewHTTPClient(HTTPClientConfig{
+	client, err := NewClient(ClientConfig{
 		ProxyURL: "http://proxy.example:8080",
 		Timeout:  3 * time.Second,
 	})
 	if err != nil {
-		t.Fatalf("NewHTTPClient() error = %v", err)
+		t.Fatalf("NewClient() error = %v", err)
 	}
 	if client.Timeout != 3*time.Second {
 		t.Fatalf("Timeout = %v, want 3s", client.Timeout)
@@ -29,12 +28,12 @@ func TestNewHTTPClientExplicitProxy(t *testing.T) {
 }
 
 func TestNewHTTPClientNoProxyBypass(t *testing.T) {
-	client, err := NewHTTPClient(HTTPClientConfig{
+	client, err := NewClient(ClientConfig{
 		ProxyURL: "http://proxy.example:8080",
 		NoProxy:  ".corp.example",
 	})
 	if err != nil {
-		t.Fatalf("NewHTTPClient() error = %v", err)
+		t.Fatalf("NewClient() error = %v", err)
 	}
 	if proxyURL := proxyForRequest(t, client, "http://service.corp.example/v1"); proxyURL != nil {
 		t.Fatalf("proxy = %v, want bypass", proxyURL)
@@ -48,9 +47,9 @@ func TestNewHTTPClientMergesNoProxyWithStandardProxyFallback(t *testing.T) {
 	t.Setenv("NO_PROXY", ".standard.example,.shared.example")
 	t.Setenv("no_proxy", "")
 
-	client, err := NewHTTPClient(HTTPClientConfig{NoProxy: ".bomly.example,.shared.example"})
+	client, err := NewClient(ClientConfig{NoProxy: ".bomly.example,.shared.example"})
 	if err != nil {
-		t.Fatalf("NewHTTPClient() error = %v", err)
+		t.Fatalf("NewClient() error = %v", err)
 	}
 	for _, endpoint := range []string{
 		"http://service.standard.example/v1",
@@ -71,12 +70,12 @@ func TestNewHTTPClientMergesNoProxyWithExplicitProxy(t *testing.T) {
 	t.Setenv("NO_PROXY", ".standard.example")
 	t.Setenv("no_proxy", "")
 
-	client, err := NewHTTPClient(HTTPClientConfig{
+	client, err := NewClient(ClientConfig{
 		ProxyURL: "http://bomly-proxy.example:8080",
 		NoProxy:  ".bomly.example",
 	})
 	if err != nil {
-		t.Fatalf("NewHTTPClient() error = %v", err)
+		t.Fatalf("NewClient() error = %v", err)
 	}
 	for _, endpoint := range []string{
 		"http://service.standard.example/v1",
@@ -100,7 +99,7 @@ func TestMergeNoProxyPreservesOrderAndRemovesDuplicates(t *testing.T) {
 }
 
 func TestNewHTTPClientBuildsProxyFromHostPort(t *testing.T) {
-	client, err := NewHTTPClient(HTTPClientConfig{
+	client, err := NewClient(ClientConfig{
 		ProxyType:     "socks5",
 		ProxyHost:     "proxy.example",
 		ProxyPort:     1080,
@@ -108,7 +107,7 @@ func TestNewHTTPClientBuildsProxyFromHostPort(t *testing.T) {
 		ProxyPassword: "p@ss word",
 	})
 	if err != nil {
-		t.Fatalf("NewHTTPClient() error = %v", err)
+		t.Fatalf("NewClient() error = %v", err)
 	}
 	proxyURL := proxyForRequest(t, client, "http://service.example/v1")
 	if proxyURL == nil {
@@ -125,12 +124,12 @@ func TestNewHTTPClientBuildsProxyFromHostPort(t *testing.T) {
 }
 
 func TestHTTPClientProviderReusesTransportWithPerClientTimeouts(t *testing.T) {
-	provider, err := NewHTTPClientProvider(HTTPClientConfig{
+	provider, err := NewClientProvider(ClientConfig{
 		ProxyURL: "http://proxy.example:8080",
 		Timeout:  7 * time.Second,
 	})
 	if err != nil {
-		t.Fatalf("NewHTTPClientProvider() error = %v", err)
+		t.Fatalf("NewClientProvider() error = %v", err)
 	}
 	first := provider.Client(3 * time.Second)
 	second := provider.Client(5 * time.Second)
@@ -148,21 +147,21 @@ func TestHTTPClientProviderReusesTransportWithPerClientTimeouts(t *testing.T) {
 }
 
 func TestNewHTTPClientRejectsHostWithoutPort(t *testing.T) {
-	if _, err := NewHTTPClient(HTTPClientConfig{ProxyHost: "proxy.example"}); err == nil {
-		t.Fatal("NewHTTPClient() error = nil, want missing port error")
+	if _, err := NewClient(ClientConfig{ProxyHost: "proxy.example"}); err == nil {
+		t.Fatal("NewClient() error = nil, want missing port error")
 	}
 }
 
 func TestNewHTTPClientRejectsInvalidProxy(t *testing.T) {
-	if _, err := NewHTTPClient(HTTPClientConfig{ProxyURL: "proxy.example:8080"}); err == nil {
-		t.Fatal("NewHTTPClient() error = nil, want invalid proxy error")
+	if _, err := NewClient(ClientConfig{ProxyURL: "proxy.example:8080"}); err == nil {
+		t.Fatal("NewClient() error = nil, want invalid proxy error")
 	}
 }
 
 func TestNewHTTPClientRedactsCredentialsInInvalidProxy(t *testing.T) {
-	_, err := NewHTTPClient(HTTPClientConfig{ProxyURL: "http://agent:super-secret%zz@proxy.example:8080"})
+	_, err := NewClient(ClientConfig{ProxyURL: "http://agent:super-secret%zz@proxy.example:8080"})
 	if err == nil {
-		t.Fatal("NewHTTPClient() error = nil, want invalid proxy error")
+		t.Fatal("NewClient() error = nil, want invalid proxy error")
 	}
 	if strings.Contains(err.Error(), "super-secret") {
 		t.Fatalf("error leaked proxy password: %q", err.Error())
@@ -177,8 +176,8 @@ func TestNewHTTPClientRejectsInvalidCACertFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte("not a cert"), 0o600); err != nil {
 		t.Fatalf("write cert: %v", err)
 	}
-	if _, err := NewHTTPClient(HTTPClientConfig{CACertFile: path}); err == nil {
-		t.Fatal("NewHTTPClient() error = nil, want invalid CA cert error")
+	if _, err := NewClient(ClientConfig{CACertFile: path}); err == nil {
+		t.Fatal("NewClient() error = nil, want invalid CA cert error")
 	}
 }
 
@@ -191,7 +190,7 @@ func TestHTTPClientConfigFromEnvAndStandardFallback(t *testing.T) {
 	t.Setenv(EnvHTTPProxyUsername, "agent")
 	t.Setenv(EnvHTTPProxyPassword, "secret")
 	t.Setenv(EnvHTTPCACertFile, "/tmp/ca.pem")
-	cfg := HTTPClientConfigFromEnv()
+	cfg := ClientConfigFromEnv()
 	if cfg.ProxyURL != "http://bomly-proxy.example:8080" {
 		t.Fatalf("ProxyURL = %q", cfg.ProxyURL)
 	}
@@ -214,37 +213,13 @@ func TestHTTPClientConfigFromEnvAndStandardFallback(t *testing.T) {
 	t.Setenv(EnvHTTPProxyPassword, "")
 	t.Setenv(EnvHTTPCACertFile, "")
 	t.Setenv("HTTP_PROXY", "http://standard-proxy.example:8080")
-	client, err := NewHTTPClient(HTTPClientConfigFromEnv())
+	client, err := NewClient(ClientConfigFromEnv())
 	if err != nil {
-		t.Fatalf("NewHTTPClient() error = %v", err)
+		t.Fatalf("NewClient() error = %v", err)
 	}
 	proxyURL := proxyForRequest(t, client, "http://service.example/v1")
 	if proxyURL == nil || proxyURL.String() != "http://standard-proxy.example:8080" {
 		t.Fatalf("proxy = %v, want standard env proxy", proxyURL)
-	}
-}
-
-func TestDecodePluginConfigFromEnv(t *testing.T) {
-	type pluginConfig struct {
-		APIBase string `json:"api_base"`
-		Enabled bool   `json:"enabled"`
-	}
-	path := filepath.Join(t.TempDir(), "config.json")
-	data, err := json.Marshal(map[string]any{"api_base": "https://api.example.com", "enabled": true})
-	if err != nil {
-		t.Fatalf("marshal config: %v", err)
-	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-	t.Setenv(EnvPluginConfigFile, path)
-
-	var cfg pluginConfig
-	if err := DecodePluginConfigFromEnv(&cfg); err != nil {
-		t.Fatalf("DecodePluginConfigFromEnv() error = %v", err)
-	}
-	if cfg.APIBase != "https://api.example.com" || !cfg.Enabled {
-		t.Fatalf("decoded config = %#v", cfg)
 	}
 }
 

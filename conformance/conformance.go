@@ -32,6 +32,7 @@ import (
 	"go.uber.org/zap"
 
 	sdk "github.com/bomly-dev/bomly-sdk"
+	"github.com/bomly-dev/bomly-sdk/httpkit"
 )
 
 // cancelledContextTimeout bounds how long a component may take to return from
@@ -477,12 +478,12 @@ func requireRoundTrip(t *testing.T, original, decoded any) {
 // stubHostContext is a minimal HostContext for driving components under test.
 type stubHostContext struct {
 	logger *zap.Logger
-	http   *sdk.HTTPClientProvider
+	http   *httpkit.ClientProvider
 	sample json.RawMessage
 }
 
 func newStubHostContext(sample json.RawMessage) *stubHostContext {
-	provider, err := sdk.NewHTTPClientProvider(sdk.HTTPClientConfig{})
+	provider, err := httpkit.NewClientProvider(httpkit.ClientConfig{})
 	if err != nil {
 		provider = nil
 	}
@@ -490,7 +491,7 @@ func newStubHostContext(sample json.RawMessage) *stubHostContext {
 }
 
 func (s *stubHostContext) Logger() *zap.Logger                 { return s.logger }
-func (s *stubHostContext) HTTPClient() *sdk.HTTPClientProvider { return s.http }
+func (s *stubHostContext) HTTPClient() *httpkit.ClientProvider { return s.http }
 func (s *stubHostContext) Runtime() sdk.RuntimeInfo {
 	return sdk.RuntimeInfo{Execution: sdk.ExecutionEmbedded}
 }

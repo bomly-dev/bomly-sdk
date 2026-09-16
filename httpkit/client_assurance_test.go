@@ -1,4 +1,4 @@
-package sdk
+package httpkit
 
 import (
 	"context"
@@ -26,9 +26,9 @@ func TestHTTPClientRoutesRequestsThroughExplicitProxy(t *testing.T) {
 	}))
 	defer proxy.Close()
 
-	client, err := NewHTTPClient(HTTPClientConfig{ProxyURL: proxy.URL})
+	client, err := NewClient(ClientConfig{ProxyURL: proxy.URL})
 	if err != nil {
-		t.Fatalf("NewHTTPClient() error = %v", err)
+		t.Fatalf("NewClient() error = %v", err)
 	}
 	resp, err := client.Get("http://packages.example.test/advisories")
 	if err != nil {
@@ -55,12 +55,12 @@ func TestHTTPClientBypassesExplicitProxyForNoProxyDestination(t *testing.T) {
 	}))
 	defer destination.Close()
 
-	client, err := NewHTTPClient(HTTPClientConfig{
+	client, err := NewClient(ClientConfig{
 		ProxyURL: proxy.URL,
 		NoProxy:  ".internal.test",
 	})
 	if err != nil {
-		t.Fatalf("NewHTTPClient() error = %v", err)
+		t.Fatalf("NewClient() error = %v", err)
 	}
 	transport := client.Transport.(*http.Transport)
 	destinationAddress := strings.TrimPrefix(destination.URL, "http://")
@@ -82,12 +82,12 @@ func TestHTTPClientBypassesExplicitProxyForNoProxyDestination(t *testing.T) {
 }
 
 func TestHTTPClientNoProxyMatchesHostsAndNetworks(t *testing.T) {
-	client, err := NewHTTPClient(HTTPClientConfig{
+	client, err := NewClient(ClientConfig{
 		ProxyURL: "http://proxy.example.test:8080",
 		NoProxy:  "api.internal.test,.corp.test,10.0.0.0/8,192.0.2.10",
 	})
 	if err != nil {
-		t.Fatalf("NewHTTPClient() error = %v", err)
+		t.Fatalf("NewClient() error = %v", err)
 	}
 
 	tests := []struct {
@@ -129,13 +129,13 @@ func TestHTTPClientTrustsConfiguredAdditionalCA(t *testing.T) {
 		t.Fatalf("write CA certificate: %v", err)
 	}
 
-	client, err := NewHTTPClient(HTTPClientConfig{
+	client, err := NewClient(ClientConfig{
 		ProxyURL:   "http://unused-proxy.invalid",
 		NoProxy:    "*",
 		CACertFile: certificatePath,
 	})
 	if err != nil {
-		t.Fatalf("NewHTTPClient() error = %v", err)
+		t.Fatalf("NewClient() error = %v", err)
 	}
 	resp, err := client.Get(server.URL)
 	if err != nil {
@@ -162,13 +162,13 @@ func TestHTTPClientFollowsRedirectToPrivateDestinationWithoutForwardingCredentia
 	}))
 	defer origin.Close()
 
-	client, err := NewHTTPClient(HTTPClientConfig{
+	client, err := NewClient(ClientConfig{
 		ProxyURL: "http://unused-proxy.invalid",
 		NoProxy:  "*",
 		Timeout:  5 * time.Second,
 	})
 	if err != nil {
-		t.Fatalf("NewHTTPClient() error = %v", err)
+		t.Fatalf("NewClient() error = %v", err)
 	}
 	endpoint := strings.Replace(origin.URL, "http://", "http://agent:redirect-secret@", 1)
 	resp, err := client.Get(endpoint)
@@ -201,13 +201,13 @@ func TestHTTPClientPreservesCredentialsOnSameHostRedirect(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewHTTPClient(HTTPClientConfig{
+	client, err := NewClient(ClientConfig{
 		ProxyURL: "http://unused-proxy.invalid",
 		NoProxy:  "*",
 		Timeout:  5 * time.Second,
 	})
 	if err != nil {
-		t.Fatalf("NewHTTPClient() error = %v", err)
+		t.Fatalf("NewClient() error = %v", err)
 	}
 	endpoint := strings.Replace(server.URL, "http://", "http://agent:redirect-secret@", 1) + "/start"
 	resp, err := client.Get(endpoint)
@@ -231,13 +231,13 @@ func TestHTTPClientTransportErrorDoesNotExposeEndpointPassword(t *testing.T) {
 		t.Fatalf("close listener: %v", err)
 	}
 
-	client, err := NewHTTPClient(HTTPClientConfig{
+	client, err := NewClient(ClientConfig{
 		ProxyURL: "http://unused-proxy.invalid",
 		NoProxy:  "*",
 		Timeout:  time.Second,
 	})
 	if err != nil {
-		t.Fatalf("NewHTTPClient() error = %v", err)
+		t.Fatalf("NewClient() error = %v", err)
 	}
 	_, err = client.Get("http://agent:endpoint-secret@" + address)
 	if err == nil {

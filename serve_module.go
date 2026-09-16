@@ -10,6 +10,8 @@ import (
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	"github.com/bomly-dev/bomly-sdk/httpkit"
 )
 
 // EnvVerbosity mirrors the host's verbosity environment variable
@@ -45,16 +47,16 @@ func ServeModule(m Module) {
 // plugin subprocesses.
 type managedHostContext struct {
 	logger  *zap.Logger
-	http    *HTTPClientProvider
+	http    *httpkit.ClientProvider
 	runtime RuntimeInfo
 }
 
 func newManagedHostContext() *managedHostContext {
 	logger := newManagedLogger()
-	provider, err := NewHTTPClientProviderFromEnv()
+	provider, err := httpkit.NewClientProviderFromEnv()
 	if err != nil {
 		logger.Warn("bomly plugin: HTTP client environment configuration invalid; using defaults", zap.Error(err))
-		provider, _ = NewHTTPClientProvider(HTTPClientConfig{})
+		provider, _ = httpkit.NewClientProvider(httpkit.ClientConfig{})
 	}
 	return &managedHostContext{
 		logger:  logger,
@@ -70,7 +72,7 @@ func (c *managedHostContext) Logger() *zap.Logger {
 	return c.logger
 }
 
-func (c *managedHostContext) HTTPClient() *HTTPClientProvider {
+func (c *managedHostContext) HTTPClient() *httpkit.ClientProvider {
 	if c == nil {
 		return nil
 	}

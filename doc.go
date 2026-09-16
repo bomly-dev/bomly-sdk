@@ -87,7 +87,7 @@
 //
 // Plugins that need configuration should read only their per-plugin config with
 // DecodePluginConfigFromEnv. Plugins that make HTTP calls should create a
-// process-local provider with NewHTTPClientProviderFromEnv so Bomly's proxy,
+// process-local provider with httpkit.NewClientProviderFromEnv so Bomly's proxy,
 // no-proxy, and CA certificate settings are honored consistently.
 //
 // The repository documentation contains the workflow-oriented guides for

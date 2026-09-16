@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	"go.uber.org/zap"
+
+	"github.com/bomly-dev/bomly-sdk/httpkit"
 )
 
 // ExecutionMode identifies how a component instance is being executed.
@@ -33,7 +35,7 @@ type RuntimeInfo struct {
 // written against it runs unchanged in both execution modes.
 type HostContext interface {
 	Logger() *zap.Logger
-	HTTPClient() *HTTPClientProvider
+	HTTPClient() *httpkit.ClientProvider
 	Runtime() RuntimeInfo
 	// DecodeConfig unmarshals the component's own configuration block into v.
 	// Embedded execution sources it from the host config's kind-scoped

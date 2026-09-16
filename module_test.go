@@ -8,6 +8,8 @@ import (
 
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/types/known/emptypb"
+
+	"github.com/bomly-dev/bomly-sdk/httpkit"
 )
 
 func detectorModuleFixture() *DetectorModule {
@@ -140,10 +142,10 @@ func TestValidateModule(t *testing.T) {
 // fakeHostContext is a minimal in-test HostContext.
 type fakeHostContext struct{}
 
-func (fakeHostContext) Logger() *zap.Logger             { return zap.NewNop() }
-func (fakeHostContext) HTTPClient() *HTTPClientProvider { return nil }
-func (fakeHostContext) Runtime() RuntimeInfo            { return RuntimeInfo{Execution: ExecutionManaged} }
-func (fakeHostContext) DecodeConfig(any) error          { return nil }
+func (fakeHostContext) Logger() *zap.Logger                 { return zap.NewNop() }
+func (fakeHostContext) HTTPClient() *httpkit.ClientProvider { return nil }
+func (fakeHostContext) Runtime() RuntimeInfo                { return RuntimeInfo{Execution: ExecutionManaged} }
+func (fakeHostContext) DecodeConfig(any) error              { return nil }
 
 // fakeModuleDetector implements Detector (and InstallFirstDetector) for the
 // adapter round-trip tests.
