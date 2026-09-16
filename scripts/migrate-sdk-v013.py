@@ -31,68 +31,71 @@ RULES += [(re.compile(r'\b' + ALIASES + r'\.' + old + r'\b'), 'httpkit.' + new) 
 RULES.append((re.compile(r'\b' + ALIASES + r'\.(EnvHTTP[A-Za-z]+)\b'), r'httpkit.\1'))
 
 IMPORT_BLOCK = re.compile(r'^import \((.*?)^\)', re.S | re.M)
-
-def fix_imports(src):
-    """Add sdkplugin/httpkit imports next to each root import whose block's code uses them; drop unused root imports."""
-    def one(m):
-        block = m.group(1)
-        body_after = src[m.end():]
-        lines = block.split('\n')
-        out = []
-        for line in lines:
-            s = line.strip()
-            if s.endswith('"' + ROOT + '"'):
-                alias = s.split()[0] if len(s.split()) == 2 else 'sdk'
-                # find the code this block governs: up to the next `package ` line (fixture strings) or EOF
-                scope = re.split(r'^package ', body_after, maxsplit=1, flags=re.M)[0]
-                keep = re.search(r'\b' + re.escape(alias) + r'\.', scope) is not None
-                if keep:
-                    out.append(line)
-                if re.search(r'\bsdkplugin\.', scope) and 'bomly-sdk/plugin"' not in block:
-                    out.append('\tsdkplugin "' + ROOT + '/plugin"')
-                if re.search(r'\bhttpkit\.', scope) and 'bomly-sdk/httpkit"' not in block:
-                    out.append('\t"' + ROOT + '/httpkit"')
-            else:
-                out.append(line)
-        return 'import (' + '\n'.join(out) + ')'
-    # process blocks from the last to the first so `src[m.end():]` stays valid
-    pos = [m for m in IMPORT_BLOCK.finditer(src)]
-    for m in reversed(pos):
-        src = src[:m.start()] + one(m) + src[m.end():]
-    # single-line root import
-    m = re.search(r'^import (\w+ )?"' + re.escape(ROOT) + r'"\n', src, re.M)
-    if m:
-        alias = (m.group(1) or 'sdk ').strip()
-        extra = []
-        if re.search(r'\bsdkplugin\.', src): extra.append('\tsdkplugin "' + ROOT + '/plugin"')
-        if re.search(r'\bhttpkit\.', src): extra.append('\t"' + ROOT + '/httpkit"')
-        keep = re.search(r'\b' + re.escape(alias) + r'\.', src[m.end():]) is not None
-        if extra or not keep:
-            lines = ([ '\t' + m.group(0)[len('import '):].rstrip('\n') ] if keep else []) + extra
-            src = src[:m.start()] + ('import (\n' + '\n'.join(lines) + '\n)\n' if lines else '') + src[m.end():]
-    return src
-
+IMPORT_ONE = re.compile(r'^import (\w+ )?"' + re.escape(ROOT) + r'"\n', re.M)
+# A Go source embedded as a raw string (a plugin fixture a test compiles) is
+# its own document: its import block governs its body, not the file around it.
+# A fixture is often several raw strings joined around a value (`..." + id + "...`),
+# so it ends at the first backtick that opens a line, not the first backtick.
+FIXTURE = re.compile(r'`package \w+\n.*?\n`', re.S)
 # A fixture whose const name says "legacy" is compiled against the oldest
 # supported SDK on purpose (bomly-cli test/smoke); its body is left as it is.
-PROTECTED = re.compile(r'(const \w*[Ll]egacy\w* = `)(.*?)(`)', re.S)
+PROTECTED = re.compile(r'const \w*[Ll]egacy\w* = `.*?`', re.S)
 
 def rewrite(text):
     for pat, rep in RULES:
         text = pat.sub(rep, text)
     return text
 
+def wanted_imports(doc, block):
+    extra = []
+    if re.search(r'\bsdkplugin\.', doc) and 'bomly-sdk/plugin"' not in block:
+        extra.append('\tsdkplugin "' + ROOT + '/plugin"')
+    if re.search(r'\bhttpkit\.', doc) and 'bomly-sdk/httpkit"' not in block:
+        extra.append('\t"' + ROOT + '/httpkit"')
+    return extra
+
+def fix_imports(doc):
+    """One Go document: add the imports its body now needs next to the root import; drop the root import if unused."""
+    m = IMPORT_BLOCK.search(doc)
+    if m:
+        block = m.group(1)
+        out = []
+        for line in block.split('\n'):
+            s = line.strip()
+            if s.endswith('"' + ROOT + '"'):
+                alias = s.split()[0] if len(s.split()) == 2 else 'sdk'
+                if re.search(r'\b' + re.escape(alias) + r'\.', doc[m.end():]):
+                    out.append(line)
+                out.extend(wanted_imports(doc[m.end():], block))
+            else:
+                out.append(line)
+        return doc[:m.start()] + 'import (' + '\n'.join(out) + ')' + doc[m.end():]
+    m = IMPORT_ONE.search(doc)
+    if m:
+        alias = (m.group(1) or 'sdk ').strip()
+        body = doc[m.end():]
+        lines = ['\t' + m.group(0)[len('import '):].rstrip('\n')] if re.search(r'\b' + re.escape(alias) + r'\.', body) else []
+        lines += wanted_imports(body, '')
+        return doc[:m.start()] + ('import (\n' + '\n'.join(lines) + '\n)\n' if lines else '') + body
+    return doc
+
 def migrate(path):
     src = path.read_text()
-    pieces, last = [], 0
-    for m in PROTECTED.finditer(src):
-        pieces.append(rewrite(src[last:m.start()]))
-        pieces.append(m.group(0))
-        last = m.end()
-    pieces.append(rewrite(src[last:]))
-    new = ''.join(pieces)
+    protected = PROTECTED.findall(src)
+    new = rewrite(src)
     if new == src:
         return False
-    new = fix_imports(new)
+    # fix each embedded fixture's imports on its own, then the outer file with fixtures masked out
+    fixtures = []
+    def stash(m):
+        fixtures.append(fix_imports(m.group(0)))
+        return '\x00FIXTURE%d\x00' % (len(fixtures) - 1)
+    outer = FIXTURE.sub(stash, new)
+    outer = fix_imports(outer)
+    new = re.sub(r'\x00FIXTURE(\d+)\x00', lambda m: fixtures[int(m.group(1))].replace('\\', '\\\\'), outer)
+    # restore protected fixtures verbatim
+    for original in protected:
+        new = PROTECTED.sub(lambda m, o=original: o if m.group(0)[:m.group(0).index('=')] == o[:o.index('=')] else m.group(0), new, count=1)
     path.write_text(new)
     return True
 
