@@ -111,6 +111,14 @@ func (c cycloneDXCodec) decodeJSON(data []byte) (*Document, error) {
 		return nil, err
 	}
 
+	// What a document can state is fixed by the version it declares, not by
+	// the target a caller asked to read it as. The target stands in only when
+	// the document names no version.
+	specVersion := bom.SpecVersion
+	if specVersion == 0 {
+		specVersion = toCycloneDXVersion(c.version)
+	}
+
 	var inventory []cdx.Component
 	if bom.Components != nil {
 		inventory = *bom.Components
@@ -126,7 +134,7 @@ func (c cycloneDXCodec) decodeJSON(data []byte) (*Document, error) {
 	inventoryIDs := make([]string, len(inventory))
 	for index, comp := range inventory {
 		unknownScopes = mergeUnknownScopeTokens(unknownScopes, unknownScopeTokens(cycloneDXCarriedScopes(comp.Properties)))
-		component := decodeCycloneDXComponent(comp, refs.allocate(comp, index))
+		component := decodeCycloneDXComponent(comp, refs.allocate(comp, index), specVersion)
 		inventoryIDs[index] = component.ID
 		componentByID[component.ID] = component
 	}
@@ -149,7 +157,7 @@ func (c cycloneDXCodec) decodeJSON(data []byte) (*Document, error) {
 			described = []string{listedID}
 		case len(componentByID) == 0 || !isProjectRootID(primaryRef):
 			unknownScopes = mergeUnknownScopeTokens(unknownScopes, unknownScopeTokens(cycloneDXCarriedScopes(primary.Properties)))
-			component := decodeCycloneDXComponent(*primary, refs.allocate(*primary, len(inventory)))
+			component := decodeCycloneDXComponent(*primary, refs.allocate(*primary, len(inventory)), specVersion)
 			componentByID[component.ID] = component
 			described = []string{component.ID}
 		}
@@ -347,7 +355,7 @@ func decodeCycloneDXVulnerability(source cdx.Vulnerability) Vulnerability {
 // read the same fields: reading the primary component with half of them was a
 // silent hole, where supplier, description, hashes, CPE and references all
 // stopped.
-func decodeCycloneDXComponent(comp cdx.Component, id string) Component {
+func decodeCycloneDXComponent(comp cdx.Component, id string, specVersion cdx.SpecVersion) Component {
 	component := Component{
 		ID:     id,
 		Name:   comp.Name,
@@ -362,7 +370,7 @@ func decodeCycloneDXComponent(comp cdx.Component, id string) Component {
 		Version:     comp.Version,
 		PURL:        comp.PackageURL,
 		Copyright:   comp.Copyright,
-		Licenses:    parseCycloneDXLicenses(comp.Licenses),
+		Licenses:    parseCycloneDXLicenses(comp.Licenses, specVersion),
 	}
 	applyCycloneDXAssertions(&component, comp)
 	return component
@@ -1116,16 +1124,22 @@ func cycloneDXSeverity(severity string) cdx.Severity {
 // and reading the other place as a fallback would credit it with a claim it
 // never made. Observed licenses (evidence.licenses) and a BOM's own
 // metadata.licenses are not claims about the component and are not read here.
-func parseCycloneDXLicenses(licenses *cdx.Licenses) []License {
+//
+// The same holds across versions: acknowledgement arrived in 1.6, and a 1.4
+// or 1.5 document that carries it anyway has stated nothing its schema
+// defines. The decoder is lenient enough to fill the field regardless, so the
+// document's version is checked here and the value is ignored below 1.6.
+func parseCycloneDXLicenses(licenses *cdx.Licenses, specVersion cdx.SpecVersion) []License {
 	if licenses == nil || len(*licenses) == 0 {
 		return nil
 	}
+	acknowledged := specVersion >= cdx.SpecVersion1_6
 	out := make([]License, 0, len(*licenses))
 	for _, choice := range *licenses {
 		switch {
 		case choice.Expression != "":
 			license := License{SPDXExpression: choice.Expression, Value: choice.Expression}
-			if choice.Acknowledgement != nil {
+			if acknowledged && choice.Acknowledgement != nil {
 				license.Type = licenseTypeFromCycloneDX(*choice.Acknowledgement)
 			}
 			out = append(out, license)
@@ -1134,11 +1148,11 @@ func parseCycloneDXLicenses(licenses *cdx.Licenses) []License {
 			if value == "" {
 				value = choice.License.Name
 			}
-			out = append(out, License{
-				Value:          value,
-				SPDXExpression: choice.License.ID,
-				Type:           licenseTypeFromCycloneDX(choice.License.Acknowledgement),
-			})
+			license := License{Value: value, SPDXExpression: choice.License.ID}
+			if acknowledged {
+				license.Type = licenseTypeFromCycloneDX(choice.License.Acknowledgement)
+			}
+			out = append(out, license)
 		}
 	}
 	return out

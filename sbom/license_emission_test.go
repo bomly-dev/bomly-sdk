@@ -1063,3 +1063,38 @@ func TestLenientLicenseSpellingIsPublishedAsFreeText(t *testing.T) {
 		}
 	}
 }
+
+// acknowledgement is a 1.6 field. A 1.4 or 1.5 document that carries it anyway
+// states nothing its schema defines, so the claim it appears to make is not
+// read; from 1.6 on it is.
+func TestCycloneDXAcknowledgementIsReadOnlyWhereDefined(t *testing.T) {
+	for _, tc := range []struct {
+		specVersion string
+		want        string
+	}{
+		{"1.4", ""},
+		{"1.5", ""},
+		{"1.6", "concluded"},
+		{"1.7", "concluded"},
+	} {
+		t.Run(tc.specVersion, func(t *testing.T) {
+			raw := `{"bomFormat":"CycloneDX","specVersion":"` + tc.specVersion + `","version":1,` +
+				`"components":[{"type":"library","bom-ref":"a","name":"a","version":"1.0.0","purl":"pkg:npm/a@1.0.0",` +
+				`"licenses":[{"license":{"id":"MIT","acknowledgement":"concluded"}}]},` +
+				`{"type":"library","bom-ref":"b","name":"b","version":"1.0.0","purl":"pkg:npm/b@1.0.0",` +
+				`"licenses":[{"expression":"MIT OR Apache-2.0","acknowledgement":"concluded"}]}]}`
+			doc, _, err := UnmarshalAutoJSON([]byte(raw))
+			if err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			for _, component := range doc.Components {
+				if len(component.Licenses) != 1 {
+					t.Fatalf("%s: licenses = %#v, want one", component.Name, component.Licenses)
+				}
+				if got := component.Licenses[0].Type; got != tc.want {
+					t.Fatalf("%s: type = %q, want %q", component.Name, got, tc.want)
+				}
+			}
+		})
+	}
+}

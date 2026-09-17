@@ -327,7 +327,7 @@ func FuzzLicenseTypes(f *testing.F) {
 				// 1.7 always keeps the kinds apart, so reading it back must
 				// recover exactly the kinds that went in.
 				gotTypes := map[string]bool{}
-				for _, license := range parseCycloneDXLicenses(&rendered) {
+				for _, license := range parseCycloneDXLicenses(&rendered, specVersion) {
 					gotTypes[license.Type] = true
 				}
 				if len(gotTypes) != len(wantTypes) {
