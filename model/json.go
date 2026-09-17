@@ -159,7 +159,7 @@ func (w *nodeWire) decodeDependencyNode() (*DependencyNode, error) {
 	// Routed through the set merge so a digest the codec rejected does not
 	// survive as a zero element that re-encodes to an empty checksum record.
 	node.Digests = mergeDigestSet(nil, w.Digests)
-	node.Copyright = w.Copyright
+	node.Copyright = NormalizeCopyright(w.Copyright)
 	node.FoundBy = w.FoundBy
 	node.ResolvedURL = w.ResolvedURL
 	node.Origins = MergeOrigins(node.Origins, w.wireOrigins())
@@ -251,7 +251,7 @@ func encodeNodeWire(node GraphNode) nodeWire {
 			Locations:      n.Locations,
 			CPEs:           n.CPEs,
 			Digests:        mergeDigestSet(nil, n.Digests),
-			Copyright:      n.Copyright,
+			Copyright:      NormalizeCopyright(n.Copyright),
 			FoundBy:        n.FoundBy,
 			ResolvedURL:    n.ResolvedURL,
 			Origins:        n.Origins,

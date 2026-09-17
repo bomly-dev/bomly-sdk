@@ -286,10 +286,14 @@ func foldNodes(surviving, witness GraphNode) {
 		// non-empty and therefore blocks a valid incoming one, and is then
 		// dropped at encode. The result would be that a witness with a good
 		// homepage lost it to a witness that never had one.
+		survivor.Copyright = NormalizeCopyright(survivor.Copyright)
 		survivor.Description = NormalizeDescription(survivor.Description)
 		survivor.Homepage = NormalizeHomepage(survivor.Homepage)
 		survivor.Supplier = normalizedContact(survivor.Supplier)
 		survivor.Originator = normalizedContact(survivor.Originator)
+		if survivor.Copyright == "" {
+			survivor.Copyright = NormalizeCopyright(incoming.Copyright)
+		}
 		if survivor.Description == "" {
 			survivor.Description = NormalizeDescription(incoming.Description)
 		}
@@ -307,9 +311,6 @@ func foldNodes(surviving, witness GraphNode) {
 		survivor.SourceScope = NormalizeSourceScope(survivor.SourceScope)
 		if survivor.SourceScope == "" {
 			survivor.SourceScope = NormalizeSourceScope(incoming.SourceScope)
-		}
-		if survivor.Copyright == "" {
-			survivor.Copyright = incoming.Copyright
 		}
 		if survivor.FoundBy == "" {
 			survivor.FoundBy = incoming.FoundBy
