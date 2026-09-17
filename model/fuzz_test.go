@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"unicode"
 	"unicode/utf8"
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
@@ -1087,6 +1088,7 @@ func FuzzNormalizeDescription(f *testing.F) {
 		"A tidy package.", "line one\nline two\ttabbed", "clean\x00text\x07", "a\xffb",
 		"00" + strings.Repeat("\xff", 3000) + "0000", strings.Repeat("\xff", maxDescriptionLength/3),
 		strings.Repeat("a", maxDescriptionLength+1), "", "   ", "\xff", "\xef\xbf\xbd",
+		"csi\u009b31mred", "\u0085next line",
 	} {
 		f.Add(seed)
 	}
@@ -1102,7 +1104,7 @@ func FuzzNormalizeDescription(f *testing.F) {
 			t.Fatalf("output is not valid UTF-8: %q", once)
 		}
 		for _, r := range once {
-			if (r < ' ' && r != '\n' && r != '\r' && r != '\t') || r == 0x7f {
+			if unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t' {
 				t.Fatalf("output carries control character %U", r)
 			}
 		}
@@ -1120,6 +1122,7 @@ func FuzzNormalizeCopyright(f *testing.F) {
 		"Copyright (c) 2024 Acme", "Copyright Alice\nCopyright Bob\tand others", "Copyright\x00 Acme\x1b[31m",
 		"a\xffb", "00" + strings.Repeat("\xff", 3000) + "0000", strings.Repeat("\xff", maxCopyrightLength/3),
 		strings.Repeat("a", maxCopyrightLength+1), "", "   ", "NOASSERTION", "\xef\xbf\xbd",
+		"Copyright\u009b31m Acme", "\u0085Copyright Acme",
 	} {
 		f.Add(seed)
 	}
@@ -1135,7 +1138,7 @@ func FuzzNormalizeCopyright(f *testing.F) {
 			t.Fatalf("output is not valid UTF-8: %q", once)
 		}
 		for _, r := range once {
-			if (r < ' ' && r != '\n' && r != '\r' && r != '\t') || r == 0x7f {
+			if unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t' {
 				t.Fatalf("output carries control character %U", r)
 			}
 		}

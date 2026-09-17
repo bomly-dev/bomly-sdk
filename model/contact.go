@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // ContactKind says what sort of party a Contact names. SPDX writes the kind
@@ -248,6 +249,11 @@ func NormalizeCopyright(value string) string {
 // trim, bound, keep line breaks and tabs, drop every other control character,
 // and return "" for a value over the limit.
 //
+// "Control character" is the standard library's definition (unicode.IsControl,
+// the Unicode Cc category): C0, DEL, and the C1 range U+0080-U+009F. C1 is not
+// hypothetical in this position -- U+009B is the single-character form of the
+// escape sequence introducer, which a terminal rendering the value can act on.
+//
 // The result is a fixed point: normalizing it again returns it unchanged,
 // and it is within the bound. Both have to be checked on the *output*.
 // Ranging over the string repairs invalid UTF-8 by turning each bad byte
@@ -270,7 +276,7 @@ func normalizePublishedText(value string, limit int) string {
 		switch {
 		case r == '\n', r == '\r', r == '\t':
 			b.WriteRune(r)
-		case r < ' ' || r == 0x7f:
+		case unicode.IsControl(r):
 			// Dropped: a control character here came from a malformed
 			// document, never from text someone wrote.
 		default:

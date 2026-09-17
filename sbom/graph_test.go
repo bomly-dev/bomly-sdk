@@ -204,3 +204,22 @@ func TestIngestGatesAreFixedPoints(t *testing.T) {
 		})
 	}
 }
+
+// ToGraph gates a component it is handed directly, not only one a decoder
+// produced: a caller can build a Document by hand.
+func TestToGraphGatesAHandBuiltComponentCopyright(t *testing.T) {
+	doc := &Document{Components: []Component{{
+		ID:        "accept",
+		Name:      "accept",
+		Version:   "1.1.0",
+		PURL:      "pkg:npm/accept@1.1.0",
+		Copyright: "Copyright\x00 Walmart",
+	}}}
+	g, err := ToGraph(doc)
+	if err != nil {
+		t.Fatalf("to graph: %v", err)
+	}
+	if got := g.DependencyNodes()[0].Copyright; got != "Copyright Walmart" {
+		t.Fatalf("node copyright = %q, want the control character dropped", got)
+	}
+}
