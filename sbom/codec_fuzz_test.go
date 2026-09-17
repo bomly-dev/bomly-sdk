@@ -7,6 +7,7 @@ import (
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
 
+	"github.com/bomly-dev/bomly-sdk/model"
 	"github.com/bomly-dev/bomly-sdk/spdxkit"
 	testkit "github.com/bomly-dev/bomly-sdk/testkit"
 )
@@ -207,6 +208,136 @@ func FuzzSPDXLicenseValue(f *testing.F) {
 			}
 			if !strings.Contains(got, entry.RefID) {
 				t.Fatalf("extracted %q is not named by the field %q", entry.RefID, got)
+			}
+		}
+	})
+}
+
+// FuzzLicenseTypes drives both codecs with two licenses of arbitrary value and
+// kind. Whatever arrives, each SPDX field holds only something SPDX can hold
+// and only its own kind of claim, every minted reference is named by a field,
+// no CycloneDX version receives a shape or a field its schema lacks, and
+// reading each rendering back recovers the kinds that were written. It is also
+// the first fuzz coverage of the SPDX license decoder.
+func FuzzLicenseTypes(f *testing.F) {
+	for _, seed := range []struct {
+		a, b  string
+		kinds uint8
+	}{
+		{"MIT", "Apache-2.0", 0x21},
+		{"MIT OR Apache-2.0", "ISC", 0x12},
+		{"see LICENSE file", "MIT", 0x22},
+		{"LicenseRef-vendor", "(((", 0x10},
+		{"", "NOASSERTION", 0x02},
+		{"MIT", "MIT", 0x21},
+		{"GPL-2.0+", "LGPL-2.1-only WITH Classpath-exception-2.0", 0x03},
+	} {
+		f.Add(seed.a, seed.b, seed.kinds)
+	}
+	kindOf := func(bits uint8) string {
+		switch bits % 4 {
+		case 1:
+			return string(model.LicenseTypeDeclared)
+		case 2:
+			return string(model.LicenseTypeConcluded)
+		case 3:
+			return "invented"
+		default:
+			return ""
+		}
+	}
+	f.Fuzz(func(t *testing.T, a, b string, kinds uint8) {
+		if len(a)+len(b) > testkit.MaxFuzzInputSize {
+			return
+		}
+		licenses := []License{{Value: a, Type: kindOf(kinds)}, {SPDXExpression: b, Type: kindOf(kinds >> 4)}}
+
+		var hasDeclared, hasConcluded bool
+		wantTypes := map[string]bool{}
+		for _, license := range licenses {
+			if licenseExpressionValue(license) == "" {
+				continue
+			}
+			kind := ""
+			if acknowledgement, ok := cycloneDXAcknowledgement(license.Type); ok {
+				kind = licenseTypeFromCycloneDX(acknowledgement)
+			}
+			wantTypes[kind] = true
+			if kind == string(model.LicenseTypeConcluded) {
+				hasConcluded = true
+			} else {
+				hasDeclared = true
+			}
+		}
+
+		declared, concluded, extracted := spdxLicenseFields(licenses)
+		for name, field := range map[string]string{"licenseDeclared": declared, "licenseConcluded": concluded} {
+			if field != "NOASSERTION" && !spdxkit.Valid(field) {
+				t.Fatalf("%s %q does not parse as an SPDX expression", name, field)
+			}
+		}
+		if (declared != "NOASSERTION") != hasDeclared {
+			t.Fatalf("licenseDeclared = %q, but a declared or untyped claim present = %v", declared, hasDeclared)
+		}
+		if (concluded != "NOASSERTION") != hasConcluded {
+			t.Fatalf("licenseConcluded = %q, but a concluded claim present = %v", concluded, hasConcluded)
+		}
+		byRef := map[string]string{}
+		for _, entry := range extracted {
+			if !strings.Contains(declared, entry.RefID) && !strings.Contains(concluded, entry.RefID) {
+				t.Fatalf("minted reference %q is named by neither field", entry.RefID)
+			}
+			byRef[entry.RefID] = entry.Text
+		}
+		for _, license := range parseSPDXLicenses(byRef, declared, concluded) {
+			if license.Type != string(model.LicenseTypeDeclared) && license.Type != string(model.LicenseTypeConcluded) {
+				t.Fatalf("SPDX decode produced an untyped claim %+v", license)
+			}
+			if license.Type == string(model.LicenseTypeConcluded) && !hasConcluded {
+				t.Fatalf("SPDX decode found a concluded claim nobody made: %+v", license)
+			}
+		}
+
+		for _, specVersion := range []cdx.SpecVersion{cdx.SpecVersion1_4, cdx.SpecVersion1_5, cdx.SpecVersion1_6, cdx.SpecVersion1_7} {
+			rendered := cycloneDXLicenses(licenses, specVersion)
+			if (len(rendered) > 0) != (len(wantTypes) > 0) {
+				t.Fatalf("%v: rendered %d entries from %d kinds of claim", specVersion, len(rendered), len(wantTypes))
+			}
+			if specVersion < cdx.SpecVersion1_7 && !singleShapeLicenseChoices(rendered) {
+				t.Fatalf("%v: rendering mixes shapes: %+v", specVersion, rendered)
+			}
+			for _, choice := range rendered {
+				var acknowledgements []cdx.LicenseAcknowledgement
+				if choice.Acknowledgement != nil {
+					acknowledgements = append(acknowledgements, *choice.Acknowledgement)
+				}
+				if choice.License != nil && choice.License.Acknowledgement != "" {
+					acknowledgements = append(acknowledgements, choice.License.Acknowledgement)
+				}
+				for _, acknowledgement := range acknowledgements {
+					if specVersion < cdx.SpecVersion1_6 {
+						t.Fatalf("%v: acknowledgement %q written where no schema defines it", specVersion, acknowledgement)
+					}
+					if licenseTypeFromCycloneDX(acknowledgement) == "" {
+						t.Fatalf("%v: acknowledgement %q is outside the specification's vocabulary", specVersion, acknowledgement)
+					}
+				}
+			}
+			if specVersion == cdx.SpecVersion1_7 {
+				// 1.7 always keeps the kinds apart, so reading it back must
+				// recover exactly the kinds that went in.
+				gotTypes := map[string]bool{}
+				for _, license := range parseCycloneDXLicenses(&rendered) {
+					gotTypes[license.Type] = true
+				}
+				if len(gotTypes) != len(wantTypes) {
+					t.Fatalf("1.7 read back kinds %v, want %v", gotTypes, wantTypes)
+				}
+				for kind := range wantTypes {
+					if !gotTypes[kind] {
+						t.Fatalf("1.7 read back kinds %v, want %v", gotTypes, wantTypes)
+					}
+				}
 			}
 		}
 	})
