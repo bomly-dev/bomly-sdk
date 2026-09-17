@@ -158,21 +158,30 @@ func TestCanonicalExpression(t *testing.T) {
 	}
 }
 
-// A valid expression never canonicalizes to an invalid one, even where
-// go-spdx's own rendering is something its validator refuses. The input here
-// is the fuzzer's: accepted as written, rendered with spaces around WITH, and
-// the rendering rejected.
-func TestCanonicalExpressionNeverInvalidatesAValidInput(t *testing.T) {
+// A value go-spdx accepts only in a spelling it will not render back is not an
+// expression. The input is the fuzzer's: accepted as written, rendered with
+// spaces around WITH, and the rendering rejected. Publishing either spelling
+// as an expression writes a field a strict consumer refuses, so the kit calls
+// it free text everywhere and leaves it alone.
+func TestLenientSpellingWithoutAValidRenderingIsFreeText(t *testing.T) {
 	const input = "APL-1.0+WITHClAsspAth-eXCeption-2.0"
-	if !Valid(input) {
-		t.Skip("go-spdx no longer accepts the reproducer; the guard it needed may be unnecessary")
+	if _, ok := normalizeExpression(input); !ok {
+		t.Skip("go-spdx no longer accepts the reproducer; the rendering check may be unnecessary")
 	}
-	got := CanonicalExpression(input)
-	if !Valid(got) {
-		t.Fatalf("CanonicalExpression(%q) = %q, which does not validate", input, got)
+	if Valid(input) {
+		t.Fatalf("Valid(%q) = true; its rendering does not validate", input)
 	}
-	if got != input {
-		t.Fatalf("CanonicalExpression(%q) = %q; with no valid rendering the input should be kept", input, got)
+	if got := Classify(input); got != ClassFreeText {
+		t.Fatalf("Classify(%q) = %v, want free text", input, got)
+	}
+	if got := CanonicalExpression(input); got != input {
+		t.Fatalf("CanonicalExpression(%q) = %q, want free text returned unchanged", input, got)
+	}
+	if valid, invalid := ValidateAll([]string{"MIT", input}); valid || len(invalid) != 1 || invalid[0] != input {
+		t.Fatalf("ValidateAll = (%v, %q), want only the lenient spelling refused", valid, invalid)
+	}
+	if valid, invalid := ValidateAll([]string{"MIT", "Apache-2.0 OR MIT"}); !valid || len(invalid) != 0 {
+		t.Fatalf("ValidateAll of valid expressions = (%v, %q)", valid, invalid)
 	}
 }
 

@@ -1041,3 +1041,25 @@ func TestCycloneDXTypedLicensesEncodeAsValidJSON(t *testing.T) {
 		}
 	}
 }
+
+// A spelling go-spdx accepts but cannot render back is not published as an
+// expression in either format: SPDX cites it through a minted reference that
+// carries the text, and CycloneDX names it as free text.
+func TestLenientLicenseSpellingIsPublishedAsFreeText(t *testing.T) {
+	const lenient = "APL-1.0+WITHClAsspAth-eXCeption-2.0"
+	for _, licenseType := range []model.LicenseType{"", model.LicenseTypeConcluded} {
+		g := licensedGraph(t, model.PackageLicense{Value: lenient, SPDXExpression: lenient, Type: licenseType})
+		pkg := spdxPackageLicense(t, g)
+		field := pkg.PackageLicenseDeclared
+		if licenseType == model.LicenseTypeConcluded {
+			field = pkg.PackageLicenseConcluded
+		}
+		if want := spdxkit.MintLicenseRef(lenient).RefID; field != want {
+			t.Fatalf("type %q: SPDX field = %q, want the minted reference %q", licenseType, field, want)
+		}
+		licenses := cycloneDXComponentLicenses(t, g)
+		if len(licenses) != 1 || licenses[0].License == nil || licenses[0].License.Name != lenient || licenses[0].Expression != "" {
+			t.Fatalf("type %q: CycloneDX licenses = %+v, want the value as a license name", licenseType, licenses)
+		}
+	}
+}
