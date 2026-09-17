@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	cdx "github.com/CycloneDX/cyclonedx-go"
+
 	"github.com/bomly-dev/bomly-sdk/spdxkit"
 	testkit "github.com/bomly-dev/bomly-sdk/testkit"
 )
@@ -185,7 +187,9 @@ func FuzzSPDXLicenseValue(f *testing.F) {
 		// The two encoders read licenses through the same helpers, so neither
 		// may panic on any value a source can produce.
 		licenses := []License{{Value: value}, {SPDXExpression: value}}
-		_ = cycloneDXLicenses(licenses)
+		for _, specVersion := range []cdx.SpecVersion{cdx.SpecVersion1_5, cdx.SpecVersion1_6, cdx.SpecVersion1_7} {
+			_ = cycloneDXLicenses(licenses, specVersion)
+		}
 		got, extracted := spdxLicenseValue(licenses)
 		if got == "" {
 			t.Fatalf("spdx license value must never be empty, got %q for %q", got, value)

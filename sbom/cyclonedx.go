@@ -19,6 +19,7 @@ type cycloneDXCodec struct {
 }
 
 func (c cycloneDXCodec) encodeJSON(doc *Document, opts EncodeOptions) ([]byte, error) {
+	specVersion := toCycloneDXVersion(c.version)
 	bom := cdx.NewBOM()
 	bom.SerialNumber = doc.SerialNumber
 	bom.Version = doc.SerialVersionOrDefault()
@@ -31,7 +32,7 @@ func (c cycloneDXCodec) encodeJSON(doc *Document, opts EncodeOptions) ([]byte, e
 			// the component inventory would double-count it.
 			continue
 		}
-		components = append(components, cycloneDXComponent(comp))
+		components = append(components, cycloneDXComponent(comp, specVersion))
 	}
 	bom.Components = &components
 
@@ -60,7 +61,7 @@ func (c cycloneDXCodec) encodeJSON(doc *Document, opts EncodeOptions) ([]byte, e
 		// A natural root appears in both places, and a reduced copy here would
 		// describe the scanned project with less detail -- no licenses, hashes,
 		// CPE, or origin -- than the same package carries a few lines below.
-		primary := cycloneDXComponent(*root)
+		primary := cycloneDXComponent(*root, specVersion)
 		primary.Type = cycloneDXComponentType(firstNonEmpty(root.Type, "application"))
 		if refs := cycloneDXSecurityReferences(doc.Provenance); len(refs) > 0 {
 			merged := refs
@@ -97,7 +98,7 @@ func (c cycloneDXCodec) encodeJSON(doc *Document, opts EncodeOptions) ([]byte, e
 
 	var out bytes.Buffer
 	enc := cdx.NewBOMEncoder(&out, cdx.BOMFileFormatJSON).SetPretty(opts.Pretty)
-	if err := enc.EncodeVersion(bom, toCycloneDXVersion(c.version)); err != nil {
+	if err := enc.EncodeVersion(bom, specVersion); err != nil {
 		return nil, err
 	}
 	return out.Bytes(), nil
@@ -631,7 +632,7 @@ func toCycloneDXVersion(target Target) cdx.SpecVersion {
 // cycloneDXComponent renders one intermediate component into its CycloneDX
 // form. Both the component inventory and metadata.component go through it, so
 // the document describes a package the same way wherever it appears.
-func cycloneDXComponent(comp Component) cdx.Component {
+func cycloneDXComponent(comp Component, specVersion cdx.SpecVersion) cdx.Component {
 	component := cdx.Component{
 		BOMRef: comp.ID,
 		Type:   cycloneDXComponentType(comp.Type),
@@ -647,7 +648,7 @@ func cycloneDXComponent(comp Component) cdx.Component {
 		PackageURL: comp.PURL,
 		Copyright:  comp.Copyright,
 	}
-	if licenses := cycloneDXLicenses(comp.Licenses); len(licenses) > 0 {
+	if licenses := cycloneDXLicenses(comp.Licenses, specVersion); len(licenses) > 0 {
 		component.Licenses = &licenses
 	}
 	if len(comp.CPEs) > 0 {
@@ -690,7 +691,149 @@ func cycloneDXComponentAssertedReferences(comp Component) []model.ExternalRefere
 	return refs
 }
 
-// cycloneDXLicenses renders a component's licenses into CycloneDX.
+// cycloneDXLicenses renders a component's licenses into CycloneDX, each claim
+// marked with the kind of claim it is.
+//
+// CycloneDX 1.6 added acknowledgement for the distinction the model's
+// LicenseType draws: a declared license is what the package's authors
+// intended, a concluded one what an analysis confirmed (the schema's
+// licenseAcknowledgementEnumeration). The field is optional, so a claim with
+// no type carries none -- absence is the document not saying, and writing
+// "declared" would state a provenance no source gave. A set with no typed
+// claim therefore renders exactly as it did before the field existed.
+//
+// Typed claims are rendered one kind at a time by cycloneDXLicenseChoices and
+// then listed together, which the specification version constrains:
+//
+//   - 1.7 lets a license list mix objects and expressions, each with its own
+//     acknowledgement, so the kinds are always kept apart.
+//   - 1.4 to 1.6 allow a list of license objects or exactly one expression.
+//     When the kinds together fit that shape they are kept apart; when they do
+//     not -- an expression beside anything else -- no typed rendering is
+//     valid, and the set falls back to the untyped one. That keeps every
+//     license and asserts no provenance, rather than dropping a claim or
+//     labelling an expression that mixes both kinds.
+//   - Before 1.6 no schema defines acknowledgement, so none is written.
+//     Downgrading is normally EncodeVersion's job, but cyclonedx-go v0.12.0's
+//     convertLicenses clears only the license-object form and leaves the
+//     expression form's acknowledgement in place, which a 1.4 or 1.5
+//     consumer would reject. The version is checked here instead.
+func cycloneDXLicenses(licenses []License, specVersion cdx.SpecVersion) cdx.Licenses {
+	groups := licenseGroupsByType(licenses)
+	if len(groups) == 0 {
+		return nil
+	}
+	if specVersion < cdx.SpecVersion1_6 || (len(groups) == 1 && groups[0].acknowledgement == "") {
+		return cycloneDXLicenseChoices(componentLicenseValues(licenses))
+	}
+	var out cdx.Licenses
+	for _, group := range groups {
+		choices := cycloneDXLicenseChoices(componentLicenseValues(group.licenses))
+		if group.acknowledgement != "" {
+			for i := range choices {
+				setCycloneDXAcknowledgement(&choices[i], group.acknowledgement)
+			}
+		}
+		out = append(out, choices...)
+	}
+	if specVersion < cdx.SpecVersion1_7 && !singleShapeLicenseChoices(out) {
+		return cycloneDXLicenseChoices(componentLicenseValues(licenses))
+	}
+	return out
+}
+
+// licenseGroup is one kind of claim and the licenses that make it, in the
+// order they first appeared.
+type licenseGroup struct {
+	acknowledgement cdx.LicenseAcknowledgement
+	licenses        []License
+}
+
+// licenseGroupsByType splits licenses by the acknowledgement their type maps
+// to, keeping first-appearance order so output is stable. Untyped claims, and
+// claims whose type the model's gate does not recognize, share the group with
+// no acknowledgement.
+func licenseGroupsByType(licenses []License) []licenseGroup {
+	var groups []licenseGroup
+	index := make(map[cdx.LicenseAcknowledgement]int, 3)
+	for _, license := range licenses {
+		if licenseExpressionValue(license) == "" {
+			continue
+		}
+		acknowledgement, _ := cycloneDXAcknowledgement(license.Type)
+		at, ok := index[acknowledgement]
+		if !ok {
+			at = len(groups)
+			index[acknowledgement] = at
+			groups = append(groups, licenseGroup{acknowledgement: acknowledgement})
+		}
+		groups[at].licenses = append(groups[at].licenses, license)
+	}
+	return groups
+}
+
+// setCycloneDXAcknowledgement marks a rendered choice. The two shapes carry
+// the field in different places: a license object on the object, an
+// expression on the choice itself.
+func setCycloneDXAcknowledgement(choice *cdx.LicenseChoice, acknowledgement cdx.LicenseAcknowledgement) {
+	if choice.License != nil {
+		choice.License.Acknowledgement = acknowledgement
+		return
+	}
+	if choice.Expression != "" {
+		choice.Acknowledgement = &acknowledgement
+	}
+}
+
+// singleShapeLicenseChoices reports whether choices fit the license list that
+// CycloneDX 1.4 to 1.6 define: all license objects, or exactly one expression.
+func singleShapeLicenseChoices(choices cdx.Licenses) bool {
+	if len(choices) == 1 {
+		return true
+	}
+	for _, choice := range choices {
+		if choice.License == nil {
+			return false
+		}
+	}
+	return true
+}
+
+// cycloneDXAcknowledgement maps a license type onto CycloneDX's vocabulary,
+// through the model's gate so an unrecognized type is no type. Both sides are
+// the owning packages' constants; neither spelling is written here.
+func cycloneDXAcknowledgement(licenseType string) (cdx.LicenseAcknowledgement, bool) {
+	parsed, err := model.ParseLicenseType(licenseType)
+	if err != nil {
+		return "", false
+	}
+	switch parsed {
+	case model.LicenseTypeDeclared:
+		return cdx.LicenseAcknowledgementDeclared, true
+	case model.LicenseTypeConcluded:
+		return cdx.LicenseAcknowledgementConcluded, true
+	default:
+		return "", false
+	}
+}
+
+// licenseTypeFromCycloneDX maps an acknowledgement back onto the model's
+// vocabulary. A value the specification does not define yields no type rather
+// than a guess, as the model's own gate does for a provenance it does not
+// recognize.
+func licenseTypeFromCycloneDX(acknowledgement cdx.LicenseAcknowledgement) string {
+	switch acknowledgement {
+	case cdx.LicenseAcknowledgementDeclared:
+		return string(model.LicenseTypeDeclared)
+	case cdx.LicenseAcknowledgementConcluded:
+		return string(model.LicenseTypeConcluded)
+	default:
+		return ""
+	}
+}
+
+// cycloneDXLicenseChoices renders one set of license values into CycloneDX,
+// without regard to what kind of claim they are.
 //
 // The format offers three shapes and scores them differently: `license.id` is
 // a checked SPDX list entry, `expression` is a checked SPDX expression, and
@@ -715,8 +858,7 @@ func cycloneDXComponentAssertedReferences(comp Component) []model.ExternalRefere
 // mix, and an object cannot carry an expression -- so listing would degrade a
 // real expression to free text. Composing keeps it, at the cost of asserting
 // AND across the members.
-func cycloneDXLicenses(licenses []License) cdx.Licenses {
-	values := componentLicenseValues(licenses)
+func cycloneDXLicenseChoices(values []string) cdx.Licenses {
 	if len(values) == 0 {
 		return nil
 	}
@@ -965,6 +1107,15 @@ func cycloneDXSeverity(severity string) cdx.Severity {
 	}
 }
 
+// parseCycloneDXLicenses reads a component's licenses, with the kind of claim
+// each one states.
+//
+// Each shape's acknowledgement is read from where the specification puts it:
+// on the license object for the object form, on the choice for the
+// expression form. A document that put it somewhere else did not state it,
+// and reading the other place as a fallback would credit it with a claim it
+// never made. Observed licenses (evidence.licenses) and a BOM's own
+// metadata.licenses are not claims about the component and are not read here.
 func parseCycloneDXLicenses(licenses *cdx.Licenses) []License {
 	if licenses == nil || len(*licenses) == 0 {
 		return nil
@@ -973,13 +1124,21 @@ func parseCycloneDXLicenses(licenses *cdx.Licenses) []License {
 	for _, choice := range *licenses {
 		switch {
 		case choice.Expression != "":
-			out = append(out, License{SPDXExpression: choice.Expression, Value: choice.Expression})
+			license := License{SPDXExpression: choice.Expression, Value: choice.Expression}
+			if choice.Acknowledgement != nil {
+				license.Type = licenseTypeFromCycloneDX(*choice.Acknowledgement)
+			}
+			out = append(out, license)
 		case choice.License != nil:
 			value := choice.License.ID
 			if value == "" {
 				value = choice.License.Name
 			}
-			out = append(out, License{Value: value, SPDXExpression: choice.License.ID})
+			out = append(out, License{
+				Value:          value,
+				SPDXExpression: choice.License.ID,
+				Type:           licenseTypeFromCycloneDX(choice.License.Acknowledgement),
+			})
 		}
 	}
 	return out

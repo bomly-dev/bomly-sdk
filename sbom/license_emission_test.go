@@ -283,23 +283,164 @@ func TestSPDXLicenseComposition(t *testing.T) {
 	}
 }
 
-// TestSPDXLicenseConcludedIsNeverAsserted pins that Bomly does not conclude a
-// license. Concluded is the document creator's own determination; every
-// license Bomly holds is declared by a source, and Bomly analyzes no package
-// contents, so SPDX's NOASSERTION is the honest value. The declared field
-// still carries what the source said.
-func TestSPDXLicenseConcludedIsNeverAsserted(t *testing.T) {
-	for _, licenses := range [][]model.PackageLicense{
-		nil,
-		{{Value: "MIT"}},
-		{{SPDXExpression: "MIT OR Apache-2.0"}},
-		{{Value: "MIT"}, {Value: "Apache-2.0"}},
-		{{Value: "see LICENSE file"}},
+// TestSPDXLicenseFieldsSeparateDeclaredFromConcluded pins where each kind of
+// claim is published (#90). SPDX 2.3's Concluded License (7.13) is a
+// determination and its Declared License (7.15) is what the package's authors
+// said, so a concluded claim must not be published as declared. A claim with
+// no type is what a lockfile or registry says, so it stays declared, and a
+// package with no concluded claim renders exactly as before: concluded is
+// NOASSERTION, SPDX's value for "no determination was made".
+func TestSPDXLicenseFieldsSeparateDeclaredFromConcluded(t *testing.T) {
+	declared := model.LicenseTypeDeclared
+	concluded := model.LicenseTypeConcluded
+	for _, tc := range []struct {
+		name          string
+		licenses      []model.PackageLicense
+		wantDeclared  string
+		wantConcluded string
+	}{
+		{"nothing", nil, "NOASSERTION", "NOASSERTION"},
+		{"untyped", []model.PackageLicense{{Value: "MIT"}}, "MIT", "NOASSERTION"},
+		{"untyped expression", []model.PackageLicense{{SPDXExpression: "MIT OR Apache-2.0"}}, "MIT OR Apache-2.0", "NOASSERTION"},
+		{"untyped pair", []model.PackageLicense{{Value: "MIT"}, {Value: "Apache-2.0"}}, "MIT AND Apache-2.0", "NOASSERTION"},
+		{"untyped free text", []model.PackageLicense{{Value: "see LICENSE file"}}, spdxkit.MintLicenseRef("see LICENSE file").RefID, "NOASSERTION"},
+		{"declared", []model.PackageLicense{{Value: "MIT", Type: declared}}, "MIT", "NOASSERTION"},
+		{"concluded only", []model.PackageLicense{{Value: "MIT", Type: concluded}}, "NOASSERTION", "MIT"},
+		{
+			"one of each",
+			[]model.PackageLicense{{Value: "MIT", Type: declared}, {Value: "Apache-2.0", Type: concluded}},
+			"MIT", "Apache-2.0",
+		},
+		{
+			"untyped joins declared",
+			[]model.PackageLicense{{Value: "MIT"}, {Value: "BSD-3-Clause", Type: declared}, {Value: "Apache-2.0", Type: concluded}},
+			"MIT AND BSD-3-Clause", "Apache-2.0",
+		},
+		{
+			"each kind composes on its own",
+			[]model.PackageLicense{
+				{Value: "MIT", Type: concluded},
+				{SPDXExpression: "GPL-2.0-only OR MIT", Type: concluded},
+				{Value: "ISC", Type: declared},
+			},
+			"ISC", "MIT AND (GPL-2.0-only OR MIT)",
+		},
+		{
+			"the same license of both kinds",
+			[]model.PackageLicense{{Value: "MIT", Type: declared}, {Value: "MIT", Type: concluded}},
+			"MIT", "MIT",
+		},
+		{
+			"concluded free text",
+			[]model.PackageLicense{{Value: "Acme terms", Type: concluded}},
+			"NOASSERTION", spdxkit.MintLicenseRef("Acme terms").RefID,
+		},
 	} {
-		pkg := spdxPackageLicense(t, licensedGraph(t, licenses...))
-		if pkg.PackageLicenseConcluded != "NOASSERTION" {
-			t.Fatalf("expected NOASSERTION concluded for %#v, got %q", licenses, pkg.PackageLicenseConcluded)
+		t.Run(tc.name, func(t *testing.T) {
+			pkg := spdxPackageLicense(t, licensedGraph(t, tc.licenses...))
+			if pkg.PackageLicenseDeclared != tc.wantDeclared {
+				t.Errorf("licenseDeclared = %q, want %q", pkg.PackageLicenseDeclared, tc.wantDeclared)
+			}
+			if pkg.PackageLicenseConcluded != tc.wantConcluded {
+				t.Errorf("licenseConcluded = %q, want %q", pkg.PackageLicenseConcluded, tc.wantConcluded)
+			}
+		})
+	}
+}
+
+// A reference minted for concluded free text needs its text in the document as
+// much as a declared one does, or the citation dangles.
+func TestSPDXConcludedReferenceCarriesItsText(t *testing.T) {
+	out, err := MarshalDepGraphJSON(licensedGraph(t,
+		model.PackageLicense{Value: "Acme terms", Type: model.LicenseTypeConcluded},
+		model.PackageLicense{Value: "Other terms", Type: model.LicenseTypeDeclared},
+	), TargetSPDX23JSON, BuildOptions{}, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("marshal spdx: %v", err)
+	}
+	var doc v23.Document
+	if err := json.Unmarshal(out, &doc); err != nil {
+		t.Fatalf("decode spdx: %v", err)
+	}
+	texts := map[string]string{}
+	for _, other := range doc.OtherLicenses {
+		texts[other.LicenseIdentifier] = other.ExtractedText
+	}
+	for text, field := range map[string]string{
+		"Acme terms":  doc.Packages[0].PackageLicenseConcluded,
+		"Other terms": doc.Packages[0].PackageLicenseDeclared,
+	} {
+		if got, ok := texts[field]; !ok || got != text {
+			t.Fatalf("reference %q resolves to %q (present=%v), want %q", field, got, ok, text)
 		}
+	}
+}
+
+// Reading a document back keeps both claims and the kind of each (#90).
+// Taking only the first non-empty field dropped the other claim and lost the
+// provenance of the one it kept.
+func TestSPDXIngestReadsBothLicenseFields(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		declared  string
+		concluded string
+		want      []License
+	}{
+		{"both", "MIT", "Apache-2.0", []License{
+			{Value: "MIT", SPDXExpression: "MIT", Type: "declared"},
+			{Value: "Apache-2.0", SPDXExpression: "Apache-2.0", Type: "concluded"},
+		}},
+		{"the same license in both", "MIT", "MIT", []License{
+			{Value: "MIT", SPDXExpression: "MIT", Type: "declared"},
+			{Value: "MIT", SPDXExpression: "MIT", Type: "concluded"},
+		}},
+		{"declared only", "MIT", "NOASSERTION", []License{{Value: "MIT", SPDXExpression: "MIT", Type: "declared"}}},
+		{"concluded only", "NONE", "MIT", []License{{Value: "MIT", SPDXExpression: "MIT", Type: "concluded"}}},
+		{"neither", "NOASSERTION", "NONE", nil},
+		{"fields absent", "", "", nil},
+		{"referenced text", "LicenseRef-vendor", "MIT", []License{
+			{Value: "vendor terms", SPDXExpression: "LicenseRef-vendor", Type: "declared"},
+			{Value: "MIT", SPDXExpression: "MIT", Type: "concluded"},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := `{"spdxVersion":"SPDX-2.3","dataLicense":"CC0-1.0","SPDXID":"SPDXRef-DOCUMENT",` +
+				`"name":"foreign","documentNamespace":"https://example.test/foreign",` +
+				`"creationInfo":{"created":"2026-01-01T00:00:00Z","creators":["Tool: other"]},` +
+				`"hasExtractedLicensingInfos":[{"licenseId":"LicenseRef-vendor","extractedText":"vendor terms"}],` +
+				`"packages":[{"SPDXID":"SPDXRef-a","name":"a","versionInfo":"1.0.0","downloadLocation":"NOASSERTION",` +
+				`"licenseDeclared":"` + tc.declared + `","licenseConcluded":"` + tc.concluded + `",` +
+				`"externalRefs":[{"referenceCategory":"PACKAGE-MANAGER","referenceType":"purl","referenceLocator":"pkg:npm/a@1.0.0"}]}]}`
+			doc, _, err := UnmarshalAutoJSON([]byte(raw))
+			if err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			got := doc.Components[0].Licenses
+			if len(got) != len(tc.want) {
+				t.Fatalf("licenses = %#v, want %#v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("license %d = %#v, want %#v", i, got[i], tc.want[i])
+				}
+			}
+
+			// And through to the graph, where the merge must keep a declared
+			// and a concluded claim of one license as two claims.
+			g, err := ToGraph(doc)
+			if err != nil {
+				t.Fatalf("to graph: %v", err)
+			}
+			nodeLicenses := model.DetectionLicenses(g.DependencyNodes()[0])
+			if len(nodeLicenses) != len(tc.want) {
+				t.Fatalf("node licenses = %#v, want %d claims", nodeLicenses, len(tc.want))
+			}
+			for i, license := range nodeLicenses {
+				if string(license.Type) != tc.want[i].Type {
+					t.Fatalf("node license %d type = %q, want %q", i, license.Type, tc.want[i].Type)
+				}
+			}
+		})
 	}
 }
 
