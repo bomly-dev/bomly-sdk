@@ -200,6 +200,7 @@ func TestComponentNameIsBounded(t *testing.T) {
 	accepted := []string{
 		"external-depsdev",
 		"My Matcher",
+		"Caf\u00e9 Matcher",
 		" padded ",
 		longest,
 	}
@@ -215,6 +216,9 @@ func TestComponentNameIsBounded(t *testing.T) {
 		"with\ttab",
 		"with\nnewline",
 		"with\x7fdelete",
+		"with\u009bcsi",
+		"with\u0085next-line",
+		"\u0080",
 		"bad\xffutf8",
 	}
 

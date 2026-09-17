@@ -852,7 +852,8 @@ func TestLicenseSourceIsGated(t *testing.T) {
 	// Refused: a control character would corrupt SPDX's line-oriented tag
 	// form, and an unbounded value is not a name.
 	for _, source := range []string{
-		"with\ttab", "with\nnewline", strings.Repeat("s", maxLicenseSourceLength+1),
+		"with\ttab", "with\nnewline", "with\u009bcsi", "with\u0085next-line",
+		strings.Repeat("s", maxLicenseSourceLength+1),
 	} {
 		got, ok := PackageLicense{Value: "MIT", Source: source}.Normalized()
 		if !ok {
@@ -867,6 +868,7 @@ func TestLicenseSourceIsGated(t *testing.T) {
 	for _, source := range []string{
 		"external-depsdev",
 		"My Matcher",
+		"Caf\u00e9 Matcher",
 		strings.Repeat("s", maxVocabularyTokenLength+1),
 	} {
 		got, ok := PackageLicense{Value: "MIT", Source: source}.Normalized()

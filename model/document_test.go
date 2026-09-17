@@ -85,14 +85,39 @@ func TestDocumentAssertionsRejectUnpublishableValues(t *testing.T) {
 func TestDocumentToolsNeedAName(t *testing.T) {
 	got, _ := DocumentAssertions{
 		Tools: []DocumentTool{
-			{Version: "1.0.0"},                // no name
-			{Name: "bomly", Version: "0.6.0"}, // kept
-			{Name: "x\ty", Version: "1"},      // control character
-			{Name: strings.Repeat("n", 5000)}, // over the limit
+			{Version: "1.0.0"},                  // no name
+			{Name: "bomly", Version: "0.6.0"},   // kept
+			{Name: "x\ty", Version: "1"},        // control character
+			{Name: "x\u009by", Version: "1"},    // C1 control character
+			{Name: "bomly", Version: "1\u009b"}, // C1 control in the version
+			{Name: strings.Repeat("n", 5000)},   // over the limit
 		},
 	}.Normalized()
 	if len(got.Tools) != 1 || got.Tools[0].Name != "bomly" {
 		t.Errorf("tools = %+v, want only the named one", got.Tools)
+	}
+}
+
+// TestDocumentFieldsRefuseC1Controls pins the single-line document fields on
+// the C1 case: U+009B is a control sequence introducer on its own, so a name
+// or creation time carrying it is not published.
+func TestDocumentFieldsRefuseC1Controls(t *testing.T) {
+	got, _ := DocumentAssertions{
+		Name:    "app\u009b2J",
+		Created: "2024-01-01\u0085T00:00:00Z",
+		Tools:   []DocumentTool{{Vendor: "Acme\u009b", Name: "bomly"}},
+	}.Normalized()
+	if got.Name != "" {
+		t.Errorf("name = %q, want the C1 value dropped", got.Name)
+	}
+	if got.Created != "" {
+		t.Errorf("created = %q, want the C1 value dropped", got.Created)
+	}
+	if len(got.Tools) != 0 {
+		t.Errorf("tools = %+v, want the tool with a C1 vendor dropped", got.Tools)
+	}
+	if kept, _ := (DocumentAssertions{Name: "caf\u00e9"}).Normalized(); kept.Name != "caf\u00e9" {
+		t.Errorf("name = %q, want a Latin-1 name kept", kept.Name)
 	}
 }
 
