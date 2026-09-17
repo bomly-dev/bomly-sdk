@@ -74,6 +74,15 @@ func CanonicalIdentifier(value string) (canonical string, ok bool) {
 // free-text values pass through unchanged — the whole input must validate
 // before any identifier is rewritten, so text that happens to contain a
 // deprecated identifier ("use GPL-2.0 here") is never corrupted.
+//
+// A valid input always yields a valid result. go-spdx's normalized rendering
+// is not always one its own validator accepts: it accepts
+// "APL-1.0+WITHClAsspAth-eXCeption-2.0" and renders it as
+// "APL-1.0+ WITH Classpath-exception-2.0", which it then rejects. Publishing
+// that rendering would turn a value the parser accepted into a document field
+// it refuses, so a rendering is returned only when it validates, and the
+// input -- which did -- is returned otherwise. The parser stays the judge of
+// both; nothing here reads the grammar itself.
 func CanonicalExpression(expression string) string {
 	// Bound the original before normalization: callers may deliberately want
 	// invalid or free-text input returned byte-for-byte.
@@ -84,11 +93,14 @@ func CanonicalExpression(expression string) string {
 	if !ok {
 		return expression
 	}
+	if !Valid(normalized) {
+		return expression
+	}
 	rewritten, replaced := rewriteNormalizedExpression(normalized)
 	if !replaced {
 		return normalized
 	}
-	if canonical, ok := normalizeExpression(rewritten); ok {
+	if canonical, ok := normalizeExpression(rewritten); ok && Valid(canonical) {
 		return canonical
 	}
 	return normalized

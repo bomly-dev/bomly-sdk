@@ -158,6 +158,24 @@ func TestCanonicalExpression(t *testing.T) {
 	}
 }
 
+// A valid expression never canonicalizes to an invalid one, even where
+// go-spdx's own rendering is something its validator refuses. The input here
+// is the fuzzer's: accepted as written, rendered with spaces around WITH, and
+// the rendering rejected.
+func TestCanonicalExpressionNeverInvalidatesAValidInput(t *testing.T) {
+	const input = "APL-1.0+WITHClAsspAth-eXCeption-2.0"
+	if !Valid(input) {
+		t.Skip("go-spdx no longer accepts the reproducer; the guard it needed may be unnecessary")
+	}
+	got := CanonicalExpression(input)
+	if !Valid(got) {
+		t.Fatalf("CanonicalExpression(%q) = %q, which does not validate", input, got)
+	}
+	if got != input {
+		t.Fatalf("CanonicalExpression(%q) = %q; with no valid rendering the input should be kept", input, got)
+	}
+}
+
 func TestCanonicalExpressionBoundsAndContextSensitiveReplacement(t *testing.T) {
 	// A huge whitespace padding around a tiny identifier must be rejected
 	// before tokenization, not turned into per-rune allocations.
