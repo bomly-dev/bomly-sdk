@@ -579,12 +579,11 @@ func spdxOtherLicenses(extracted []spdxkit.ExtractedText) []*v23.OtherLicense {
 	return out
 }
 
+// spdxCopyrightValue renders a component's copyright text through the model's
+// gate, so a notice that could not be published on the wire is not published
+// here either. An empty result omits the field.
 func spdxCopyrightValue(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	return value
+	return model.NormalizeCopyright(value)
 }
 
 // spdxSourceInfoPrefix labels the repository recorded in PackageSourceInfo,
@@ -849,13 +848,16 @@ func parseSPDXYcosystem(refs []*v23.PackageExternalReference) string {
 	return ""
 }
 
+// parseSPDXCopyright reads PackageCopyrightText back into the model. NONE and
+// NOASSERTION are SPDX's words for "no notice" and "not determined", not
+// copyright text, so both become empty; anything else is a notice and goes
+// through the model's gate like every other ingested assertion.
 func parseSPDXCopyright(value string) string {
-	value = strings.TrimSpace(value)
-	switch value {
+	switch strings.TrimSpace(value) {
 	case "", "NOASSERTION", "NONE":
 		return ""
 	default:
-		return value
+		return model.NormalizeCopyright(value)
 	}
 }
 

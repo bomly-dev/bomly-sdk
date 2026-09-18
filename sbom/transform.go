@@ -106,7 +106,7 @@ func FromGraphEntries(g *model.Graph, entries []model.GraphEntry, opts BuildOpti
 		if dep, isDep := pkg.(*model.DependencyNode); isDep {
 			component.Scopes = append([]model.Scope(nil), dep.Scopes...)
 			component.SourceScope = dep.SourceScope
-			component.Copyright = dep.Copyright
+			component.Copyright = model.NormalizeCopyright(dep.Copyright)
 			component.Licenses = componentLicenses(model.DetectionLicenses(dep))
 			component.Digests = componentDigests(dep.Digests)
 			applyNodeAssertions(&component, dep)

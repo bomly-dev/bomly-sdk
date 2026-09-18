@@ -24,7 +24,9 @@ import (
 // node at all: a payload saying "9.9.9" beside a purl saying 1.3.0 decodes to
 // 1.3.0, and an assertion on version would hold no matter how duplicates
 // resolved. Copyright is free text with no other source, so it is the last
-// duplicate or nothing.
+// duplicate or nothing. It now passes model.NormalizeCopyright on decode
+// (bomly-sdk#89), which leaves both values here unchanged, so the assertion
+// still sees only how duplicates resolved.
 const wireV1DuplicateName = `{"graphs":{"entries":[{"graph":{"nodes":[` +
 	`{"id":"pkg:npm/left-pad@1.3.0","purl":"pkg:npm/left-pad@1.3.0","name":"left-pad",` +
 	`"version":"1.3.0","copyright":"Copyright first","copyright":"Copyright last"}]}}]}}`
@@ -95,7 +97,9 @@ func TestWireV1KeepsLenientDecoding(t *testing.T) {
 	t.Run("invalid utf-8", func(t *testing.T) {
 		node := wireV1TransportGraph(t, wireV1InvalidUTF8).DependencyNodes()[0]
 		// The replacement is v1's own behavior, restated here so a change to
-		// it is visible rather than silent.
+		// it is visible rather than silent. The copyright gate that now runs
+		// on decode keeps it: repairing one byte stays within the bound, and
+		// the repaired value is a fixed point.
 		if node.Copyright != "\uFFFD" {
 			t.Fatalf("copyright = %q, want the replacement character v1 substitutes", node.Copyright)
 		}

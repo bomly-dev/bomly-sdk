@@ -648,7 +648,15 @@ type Package struct {
 	Coordinates
 	// ID is the package registry identifier. It may be a database ID, PURL, or
 	// another stable key chosen by the package registry.
-	ID        string `json:"id,omitempty"`
+	ID string `json:"id,omitempty"`
+	// Copyright is the package's copyright text, as the source document or
+	// registry stated it. SPDX PackageCopyrightText / CycloneDX component
+	// copyright.
+	//
+	// Gate: NormalizeCopyright -- trimmed and bounded, control characters
+	// other than line breaks and tabs dropped, an over-long value cleared
+	// rather than truncated.
+	// Merge class: scalar, fill-gaps.
 	Copyright string `json:"copyright,omitempty"`
 	// ResolvedURL is detection-time evidence carried onto the registry package
 	// for matchers (repository resolution reads it). It is raw and never
@@ -848,6 +856,7 @@ func (p *Package) NormalizeAssertions() {
 	if p == nil {
 		return
 	}
+	p.Copyright = NormalizeCopyright(p.Copyright)
 	p.Description = NormalizeDescription(p.Description)
 	p.Homepage = NormalizeHomepage(p.Homepage)
 	p.Supplier = normalizedContact(p.Supplier)
@@ -932,9 +941,6 @@ func (p *Package) MergeFrom(src *Package) {
 	if p.Language == LanguageUnknown {
 		p.Language = src.Language
 	}
-	if strings.TrimSpace(p.Copyright) == "" {
-		p.Copyright = src.Copyright
-	}
 	if p.ResolvedURL == "" {
 		p.ResolvedURL = src.ResolvedURL
 	}
@@ -949,10 +955,14 @@ func (p *Package) MergeFrom(src *Package) {
 	// and so blocks this fill -- yet unpublishable, and therefore dropped
 	// again at marshal. Measuring the gap first would lose a valid update to a
 	// value that never reaches a reader.
+	p.Copyright = NormalizeCopyright(p.Copyright)
 	p.Description = NormalizeDescription(p.Description)
 	p.Homepage = NormalizeHomepage(p.Homepage)
 	p.Supplier = normalizedContact(p.Supplier)
 	p.Originator = normalizedContact(p.Originator)
+	if p.Copyright == "" {
+		p.Copyright = NormalizeCopyright(src.Copyright)
+	}
 	if p.Description == "" {
 		p.Description = NormalizeDescription(src.Description)
 	}
@@ -1123,7 +1133,7 @@ func PackageFromDependencyNode(dep *DependencyNode) *Package {
 		},
 		ID:          purl,
 		ResolvedURL: dep.ResolvedURL,
-		Copyright:   dep.Copyright,
+		Copyright:   NormalizeCopyright(dep.Copyright),
 		CPEs:        cloneStrings(dep.CPEs),
 		// The component-level assertions the detecting or ingesting source
 		// made travel with the package, so an ingested document's supplier
