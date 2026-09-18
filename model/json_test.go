@@ -205,3 +205,32 @@ func TestRejectedOptionalAssertionsLeaveNoEmptyWireObjects(t *testing.T) {
 		}
 	}
 }
+
+// TestCopyrightWireIsGatedBothWays pins the codec: a plugin is an untrusted
+// producer, and a node built in process never passed a decoder, so the gate
+// runs on the way in and on the way out.
+func TestCopyrightWireIsGatedBothWays(t *testing.T) {
+	payload := `{"nodes":[{"kind":"dependency","id":"pkg:npm/react@18.2.0","purl":"pkg:npm/react@18.2.0",` +
+		`"copyright":"Copyright\u0007 Meta\nAll rights reserved"}]}`
+	var decoded Graph
+	if err := json.Unmarshal([]byte(payload), &decoded); err != nil {
+		t.Fatalf("decode graph: %v", err)
+	}
+	if got := decoded.DependencyNodes()[0].Copyright; got != "Copyright Meta\nAll rights reserved" {
+		t.Fatalf("decoded copyright = %q, want the control character dropped and the line break kept", got)
+	}
+
+	graph := New()
+	node := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "react", Version: "18.2.0"})
+	node.Copyright = strings.Repeat("c", maxCopyrightLength+1)
+	if err := graph.AddNode(node); err != nil {
+		t.Fatalf("add node: %v", err)
+	}
+	encoded, err := json.Marshal(graph)
+	if err != nil {
+		t.Fatalf("encode graph: %v", err)
+	}
+	if strings.Contains(string(encoded), `"copyright"`) {
+		t.Fatalf("an over-long copyright reached the wire: %d bytes encoded", len(encoded))
+	}
+}

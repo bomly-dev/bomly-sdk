@@ -198,7 +198,7 @@ func ToGraph(doc *Document) (*model.Graph, error) {
 		// Through the gate, not copied: the field crosses the same trust
 		// boundary every other ingested assertion does.
 		pkg.SourceScope = model.NormalizeSourceScope(component.SourceScope)
-		pkg.Copyright = component.Copyright
+		pkg.Copyright = model.NormalizeCopyright(component.Copyright)
 		applyIngestedAssertions(pkg, component)
 		// The document's own component ID does not survive: the node answers
 		// to the identity its coordinates mint, and idMap below is what

@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"unicode"
 	"unicode/utf8"
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
@@ -1087,6 +1088,7 @@ func FuzzNormalizeDescription(f *testing.F) {
 		"A tidy package.", "line one\nline two\ttabbed", "clean\x00text\x07", "a\xffb",
 		"00" + strings.Repeat("\xff", 3000) + "0000", strings.Repeat("\xff", maxDescriptionLength/3),
 		strings.Repeat("a", maxDescriptionLength+1), "", "   ", "\xff", "\xef\xbf\xbd",
+		"csi\u009b31mred", "\u0085next line",
 	} {
 		f.Add(seed)
 	}
@@ -1102,11 +1104,45 @@ func FuzzNormalizeDescription(f *testing.F) {
 			t.Fatalf("output is not valid UTF-8: %q", once)
 		}
 		for _, r := range once {
-			if (r < ' ' && r != '\n' && r != '\r' && r != '\t') || r == 0x7f {
+			if unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t' {
 				t.Fatalf("output carries control character %U", r)
 			}
 		}
 		if twice := NormalizeDescription(once); twice != once {
+			t.Fatalf("not a fixed point: %d bytes, then %d bytes", len(once), len(twice))
+		}
+	})
+}
+
+// NormalizeCopyright is the same kind of gate on the same kind of input, re-run
+// at every hop, so it owes the same promise: output within its bound, no
+// control characters but line breaks and tabs, and a fixed point.
+func FuzzNormalizeCopyright(f *testing.F) {
+	for _, seed := range []string{
+		"Copyright (c) 2024 Acme", "Copyright Alice\nCopyright Bob\tand others", "Copyright\x00 Acme\x1b[31m",
+		"a\xffb", "00" + strings.Repeat("\xff", 3000) + "0000", strings.Repeat("\xff", maxCopyrightLength/3),
+		strings.Repeat("a", maxCopyrightLength+1), "", "   ", "NOASSERTION", "\xef\xbf\xbd",
+		"Copyright\u009b31m Acme", "\u0085Copyright Acme",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, value string) {
+		if len(value) > maxFuzzInputSize {
+			t.Skip("input exceeds fuzz bound")
+		}
+		once := NormalizeCopyright(value)
+		if len(once) > maxCopyrightLength {
+			t.Fatalf("output is %d bytes, past the %d bound", len(once), maxCopyrightLength)
+		}
+		if !utf8.ValidString(once) {
+			t.Fatalf("output is not valid UTF-8: %q", once)
+		}
+		for _, r := range once {
+			if unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t' {
+				t.Fatalf("output carries control character %U", r)
+			}
+		}
+		if twice := NormalizeCopyright(once); twice != once {
 			t.Fatalf("not a fixed point: %d bytes, then %d bytes", len(once), len(twice))
 		}
 	})

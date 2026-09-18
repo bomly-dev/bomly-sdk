@@ -1016,3 +1016,23 @@ func TestSameNameInTwoEcosystemsStaysTwoNodes(t *testing.T) {
 		t.Errorf("re-inserting %s %s@%s made %d nodes, want 2; identity is not folding", EcosystemNPM, name, version, got)
 	}
 }
+
+// TestCopyrightFoldGatesBothWitnesses pins the ordering the other fill-gaps
+// assertions follow: an unpublishable survivor must not block a valid
+// incoming notice.
+func TestCopyrightFoldGatesBothWitnesses(t *testing.T) {
+	graph := New()
+	first := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "react", Version: "18.2.0"})
+	first.Copyright = strings.Repeat("c", maxCopyrightLength+1)
+	if err := graph.AddNode(first); err != nil {
+		t.Fatalf("add first: %v", err)
+	}
+	second := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "react", Version: "18.2.0"})
+	second.Copyright = "Copyright\x07 Meta"
+	if _, err := graph.InsertNode(second); err != nil {
+		t.Fatalf("insert second: %v", err)
+	}
+	if got := graph.DependencyNodes()[0].Copyright; got != "Copyright Meta" {
+		t.Fatalf("folded copyright = %q, want the valid witness, gated", got)
+	}
+}

@@ -344,6 +344,10 @@ func TestNormalizeDescription(t *testing.T) {
 	if got := NormalizeDescription("clean\x00text\x07"); got != "cleantext" {
 		t.Fatalf("NormalizeDescription = %q, want the control characters dropped", got)
 	}
+	// Including C1: U+009B introduces an escape sequence as surely as ESC [.
+	if got := NormalizeDescription("clean\u009btext\u0080"); got != "cleantext" {
+		t.Fatalf("NormalizeDescription = %q, want the C1 controls dropped", got)
+	}
 	// Over-long input yields nothing rather than a truncation presented as a
 	// complete description.
 	if got := NormalizeDescription(strings.Repeat("a", maxDescriptionLength+1)); got != "" {
@@ -360,5 +364,45 @@ func TestNormalizeHomepageUsesTheReferenceForm(t *testing.T) {
 	}
 	if got := NormalizeHomepage("/opt/local/project"); got != "" {
 		t.Fatalf("NormalizeHomepage published a local path: %q", got)
+	}
+}
+
+func TestNormalizeCopyright(t *testing.T) {
+	if got := NormalizeCopyright("  Copyright (c) 2024 Acme  "); got != "Copyright (c) 2024 Acme" {
+		t.Fatalf("NormalizeCopyright trimmed to %q", got)
+	}
+	// A notice naming several holders is one per line, and that structure is
+	// part of the claim.
+	multi := "Copyright (c) 2020 Alice\nCopyright (c) 2021 Bob\tand contributors"
+	if got := NormalizeCopyright(multi); got != multi {
+		t.Fatalf("NormalizeCopyright damaged line structure: %q", got)
+	}
+	// Other control characters came from a malformed document; an escape
+	// sequence would otherwise reach the terminal that renders the notice.
+	if got := NormalizeCopyright("Copyright\x00 Acme\x1b[31m"); got != "Copyright Acme[31m" {
+		t.Fatalf("NormalizeCopyright = %q, want the control characters dropped", got)
+	}
+	// C1 controls are control characters too. U+009B is the one-character
+	// form of the escape sequence introducer, and U+0085 a line break a
+	// line-oriented reader does not expect.
+	if got := NormalizeCopyright("Copyright\u009b31m Acme\u0085"); got != "Copyright31m Acme" {
+		t.Fatalf("NormalizeCopyright = %q, want the C1 controls dropped", got)
+	}
+	// Over-long input yields nothing rather than a notice with holders cut off.
+	if got := NormalizeCopyright(strings.Repeat("a", maxCopyrightLength+1)); got != "" {
+		t.Fatalf("an over-long copyright survived as %d bytes", len(got))
+	}
+	if got := NormalizeCopyright(strings.Repeat("a", maxCopyrightLength)); len(got) != maxCopyrightLength {
+		t.Fatalf("a copyright at the bound was not kept whole: %d bytes", len(got))
+	}
+	// The repair that amplified descriptions past their bound (#58) is the
+	// same loop, so the same reproducer is refused here on the first pass.
+	if got := NormalizeCopyright("00" + strings.Repeat("\xff", 3000) + "0000"); got != "" {
+		t.Fatalf("a value that repairs past the bound was kept at %d bytes", len(got))
+	}
+	for _, blank := range []string{"", "   ", "\x00\x07"} {
+		if got := NormalizeCopyright(blank); got != "" {
+			t.Fatalf("NormalizeCopyright(%q) = %q, want empty", blank, got)
+		}
 	}
 }

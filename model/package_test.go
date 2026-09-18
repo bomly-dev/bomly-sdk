@@ -1019,3 +1019,34 @@ func TestPackageRemediationKeepsProtocolV1PackageJSONCompatible(t *testing.T) {
 		t.Fatalf("current remediation did not round trip: %#v", roundTrip.Remediation)
 	}
 }
+
+// TestPackageCopyrightIsGated covers the registry side: the merge, the
+// normalization hook every registry entry passes, the codec, and seeding a
+// package from a node.
+func TestPackageCopyrightIsGated(t *testing.T) {
+	dst := &Package{Copyright: strings.Repeat("c", maxCopyrightLength+1)}
+	dst.MergeFrom(&Package{Copyright: "Copyright\x00 Acme"})
+	if dst.Copyright != "Copyright Acme" {
+		t.Fatalf("merged copyright = %q, want the valid update, gated, to win over the unpublishable value", dst.Copyright)
+	}
+
+	pkg := Package{Copyright: "Copyright\x1b Acme"}
+	pkg.NormalizeAssertions()
+	if pkg.Copyright != "Copyright Acme" {
+		t.Fatalf("normalized copyright = %q, want the control character dropped", pkg.Copyright)
+	}
+
+	encoded, err := json.Marshal(Package{Copyright: strings.Repeat("c", maxCopyrightLength+1)})
+	if err != nil {
+		t.Fatalf("encode package: %v", err)
+	}
+	if strings.Contains(string(encoded), `"copyright"`) {
+		t.Fatalf("an over-long copyright reached the wire through Package")
+	}
+
+	dep := mustDep(t, Coordinates{Ecosystem: EcosystemNPM, Name: "react", Version: "18.2.0"})
+	dep.Copyright = "Copyright\x07 Meta"
+	if seeded := PackageFromDependencyNode(dep); seeded == nil || seeded.Copyright != "Copyright Meta" {
+		t.Fatalf("seeded package = %+v, want the gated copyright", seeded)
+	}
+}

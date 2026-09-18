@@ -369,7 +369,7 @@ func decodeCycloneDXComponent(comp cdx.Component, id string, specVersion cdx.Spe
 		SourceScope: model.NormalizeSourceScope(string(comp.Scope)),
 		Version:     comp.Version,
 		PURL:        comp.PackageURL,
-		Copyright:   comp.Copyright,
+		Copyright:   model.NormalizeCopyright(comp.Copyright),
 		Licenses:    parseCycloneDXLicenses(comp.Licenses, specVersion),
 	}
 	applyCycloneDXAssertions(&component, comp)
@@ -654,7 +654,7 @@ func cycloneDXComponent(comp Component, specVersion cdx.SpecVersion) cdx.Compone
 		Scope:      cdx.Scope(model.CycloneDXScopeForExport(comp.Scopes, comp.SourceScope)),
 		Version:    comp.Version,
 		PackageURL: comp.PURL,
-		Copyright:  comp.Copyright,
+		Copyright:  model.NormalizeCopyright(comp.Copyright),
 	}
 	if licenses := cycloneDXLicenses(comp.Licenses, specVersion); len(licenses) > 0 {
 		component.Licenses = &licenses

@@ -108,8 +108,16 @@ type DependencyNode struct {
 	Locations   []PackageLocation
 	CPEs        []string
 	Digests     []Digest
-	Copyright   string
-	FoundBy     string
+	// Copyright is the copyright text a source stated for this dependency:
+	// SPDX PackageCopyrightText / CycloneDX component copyright.
+	//
+	// Gate: NormalizeCopyright, on both wire directions and again when a node
+	// seeds a registry package -- trimmed, bounded, control characters other
+	// than line breaks and tabs dropped, an over-long notice cleared rather
+	// than truncated. Merge class: scalar, fill-gaps; both witnesses are gated
+	// before the gap is measured.
+	Copyright string
+	FoundBy   string
 	// ResolvedURL is the manifest's resolution field verbatim — it may be a
 	// pseudo-URL, a registry or index root, or a local path, and is never
 	// published. It is raw evidence; Origins carry the validated assertions.

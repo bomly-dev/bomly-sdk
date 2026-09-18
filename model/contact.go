@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // ContactKind says what sort of party a Contact names. SPDX writes the kind
@@ -213,6 +214,46 @@ const maxDescriptionLength = 8 * 1024
 // description attributed to a package is a false assertion where no
 // description is merely a missing one.
 //
+// The result is a fixed point within the bound; normalizePublishedText says
+// why that has to be checked on the output.
+func NormalizeDescription(value string) string {
+	return normalizePublishedText(value, maxDescriptionLength)
+}
+
+// maxCopyrightLength bounds a carried copyright notice. It is the description
+// allowance by name rather than by value: both are free text an untrusted
+// document carries per component and a published document repeats, so there
+// is no reason for one to accept what the other refuses, and tying them by
+// name keeps a later change to one from quietly leaving the other behind.
+const maxCopyrightLength = maxDescriptionLength
+
+// NormalizeCopyright is the gate for a component's copyright text. The value
+// is free text from untrusted SBOM documents and registry records, written
+// into both SBOM formats and rendered into terminals -- the same exposure as a
+// description, so it clears the same rule: trimmed, bounded, and stripped of
+// control characters other than line breaks and tabs.
+//
+// Line breaks survive because a copyright notice is legitimately multi-line:
+// a package with several holders lists one per line, and SPDX carries the
+// field as <text> for exactly that reason. The single-line rule
+// (ContainsControlChar) would refuse such a notice outright.
+//
+// Over-long input yields "" rather than a truncation: half a copyright notice
+// attributed to a package drops holders it names, which is a false assertion
+// where no notice is merely a missing one.
+func NormalizeCopyright(value string) string {
+	return normalizePublishedText(value, maxCopyrightLength)
+}
+
+// normalizePublishedText is the rule behind the multi-line free-text gates:
+// trim, bound, keep line breaks and tabs, drop every other control character,
+// and return "" for a value over the limit.
+//
+// "Control character" is the standard library's definition (unicode.IsControl,
+// the Unicode Cc category): C0, DEL, and the C1 range U+0080-U+009F. C1 is not
+// hypothetical in this position -- U+009B is the single-character form of the
+// escape sequence introducer, which a terminal rendering the value can act on.
+//
 // The result is a fixed point: normalizing it again returns it unchanged,
 // and it is within the bound. Both have to be checked on the *output*.
 // Ranging over the string repairs invalid UTF-8 by turning each bad byte
@@ -222,10 +263,11 @@ const maxDescriptionLength = 8 * 1024
 // one hop vanished on the second, which is exactly the kind of untrusted
 // input a third-party document supplies. The input check stays as a plain
 // size guard on what gets transformed; the output check is the bound the
-// doc comment promises.
-func NormalizeDescription(value string) string {
+// gate promises. There is one copy of this loop so that the fix stays applied
+// to every field that uses it.
+func normalizePublishedText(value string, limit int) string {
 	trimmed := strings.TrimSpace(value)
-	if trimmed == "" || len(trimmed) > maxDescriptionLength {
+	if trimmed == "" || len(trimmed) > limit {
 		return ""
 	}
 	var b strings.Builder
@@ -234,15 +276,15 @@ func NormalizeDescription(value string) string {
 		switch {
 		case r == '\n', r == '\r', r == '\t':
 			b.WriteRune(r)
-		case r < ' ' || r == 0x7f:
+		case unicode.IsControl(r):
 			// Dropped: a control character here came from a malformed
-			// document, never from a description someone wrote.
+			// document, never from text someone wrote.
 		default:
 			b.WriteRune(r)
 		}
 	}
 	repaired := strings.TrimSpace(b.String())
-	if len(repaired) > maxDescriptionLength {
+	if len(repaired) > limit {
 		return ""
 	}
 	return repaired
