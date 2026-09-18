@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"unicode"
 )
 
 func TestParseSPDXContact(t *testing.T) {
@@ -93,6 +94,56 @@ func TestContactNormalizedGates(t *testing.T) {
 	bareHost := Contact{Kind: ContactKindOrganization, Name: "Acme", URL: "https://acme.test"}
 	if normalized, ok = bareHost.Normalized(); !ok || normalized.URL == "" {
 		t.Fatalf("a bare-host URL was dropped: %+v ok=%v", normalized, ok)
+	}
+}
+
+// TestContainsControlChar pins the single-line gate to the Unicode Cc
+// category: C0, DEL, and the C1 range. C1 is the case that was missed --
+// U+009B is the one-character control sequence introducer, which a terminal
+// printing the value can act on exactly as it would on ESC [.
+func TestContainsControlChar(t *testing.T) {
+	for _, value := range []string{
+		"with\x00nul", "with\ttab", "with\nnewline", "with\x1bescape", "with\x7fdelete",
+		"with\u0080pad", "with\u0085next-line", "with\u009bcsi", "with\u009fapc",
+		"\u009b", "trailing\u009b",
+	} {
+		if !ContainsControlChar(value) {
+			t.Errorf("ContainsControlChar(%q) = false, want true", value)
+		}
+	}
+	// Not controls: printable Latin-1 on either side of the C1 range, the
+	// no-break space that follows it, and format characters (Cf), which are
+	// a different category and not what this gate is about.
+	for _, value := range []string{
+		"", "Acme Inc", "~", "Caf\u00e9", "no\u00a0break", "\u00ff", "zero\u200bwidth", "\u4e2d\u6587",
+	} {
+		if ContainsControlChar(value) {
+			t.Errorf("ContainsControlChar(%q) = true, want false", value)
+		}
+	}
+	// Every rune the standard library calls a control, and only those.
+	for r := rune(0); r <= 0x10ffff; r++ {
+		if r >= 0xd800 && r <= 0xdfff {
+			continue // surrogates do not survive string conversion
+		}
+		if got, want := ContainsControlChar(string(r)), unicode.IsControl(r); got != want {
+			t.Fatalf("ContainsControlChar(%U) = %v, want unicode.IsControl's %v", r, got, want)
+		}
+	}
+}
+
+// TestContactNameRefusesC1Controls pins the contact gate on the C1 case: a
+// supplier name read from a third-party document that carries U+009B is not
+// published.
+func TestContactNameRefusesC1Controls(t *testing.T) {
+	if _, ok := (Contact{Kind: ContactKindOrganization, Name: "Acme\u009b31mInc"}).Normalized(); ok {
+		t.Fatal("a name carrying U+009B was accepted")
+	}
+	if contact, ok := ParseSPDXContact("Organization: Acme\u0085Inc"); ok {
+		t.Fatalf("an SPDX supplier carrying U+0085 parsed as %+v", contact)
+	}
+	if got, ok := (Contact{Kind: ContactKindOrganization, Name: "Caf\u00e9 Inc"}).Normalized(); !ok || got.Name != "Caf\u00e9 Inc" {
+		t.Fatalf("a Latin-1 name was refused: %+v ok=%v", got, ok)
 	}
 }
 

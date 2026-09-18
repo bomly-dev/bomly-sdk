@@ -374,6 +374,8 @@ func FuzzContact(f *testing.F) {
 		"Organization: Acme Inc (info@acme.com)", "Organization:", "Acme Inc",
 		"", "person:", "PERSON: (a@b.c)", "Organization: a\nb", "Organization: (",
 		strings.Repeat("Person: a", 100), "Organization: \x00",
+		"Organization: Acme\u009b31mInc", "Person: Jane\u0085Doe", "Organization: \u0080",
+		"Organization: Caf\u00e9 Inc",
 	} {
 		f.Add(seed)
 	}
@@ -409,8 +411,8 @@ func FuzzContact(f *testing.F) {
 func assertPublishableContact(t *testing.T, contact Contact) {
 	t.Helper()
 	for _, r := range contact.Name {
-		if r < ' ' || r == 0x7f {
-			t.Fatalf("contact name %q carries a control character", contact.Name)
+		if unicode.IsControl(r) {
+			t.Fatalf("contact name %q carries control character %U", contact.Name, r)
 		}
 	}
 	if len(contact.Name) > maxContactNameLength {
@@ -442,6 +444,9 @@ func FuzzPackageLicense(f *testing.F) {
 		{"", "", "Only text.", "", "with\nnewline"},
 		{"", "", "", "", "\x00"},
 		{"MIT", "MIT", "", "invented", strings.Repeat("s", 300)},
+		{"MIT", "MIT", "", "declared", "with\u009bcsi"},
+		{"MIT", "MIT", "", "declared", "\u0085"},
+		{"MIT", "MIT", "", "declared", "Caf\u00e9 Matcher"},
 	} {
 		f.Add(seed.value, seed.expression, seed.text, seed.licenseType, seed.source)
 	}
@@ -888,6 +893,7 @@ func FuzzDocumentAssertions(f *testing.F) {
 		"https://example.test/spdxdocs/app", "CC0-1.0", "2024-01-01T00:00:00Z",
 		"not an iri", "urn:cdx:broken", "file:///etc/passwd", "//host/path",
 		"LicenseRef-thing", "a\nb", "\x00", strings.Repeat("x", 5000),
+		"app\u009b2J", "2024-01-01\u0085T00:00:00Z", "\u009f", "caf\u00e9",
 	} {
 		f.Add(seed)
 	}

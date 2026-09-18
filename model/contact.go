@@ -302,18 +302,21 @@ func NormalizeHomepage(value string) string {
 	return normalized
 }
 
-// ContainsControlChar reports whether value carries a C0 control character or
-// DEL. It is the gate every free-text field shares -- names, descriptions,
-// and the component descriptor names the plugin package validates -- so a
-// value that would corrupt a line-oriented document is refused the same way
-// at every entry point.
+// ContainsControlChar reports whether value carries a control character. It
+// is the gate every single-line free-text field shares -- contact names,
+// document fields, license sources, and the component descriptor names the
+// plugin package validates -- so a value that would corrupt a line-oriented
+// document, or be acted on by a terminal that prints it, is refused the same
+// way at every entry point.
+//
+// "Control character" is the standard library's definition (unicode.IsControl,
+// the Unicode Cc category): C0, DEL, and the C1 range U+0080-U+009F. C1 is not
+// hypothetical here -- U+009B is the single-character form of the control
+// sequence introducer. Format characters (Cf) are a different category and are
+// not refused. Invalid UTF-8 decodes to U+FFFD, which is not a control, so
+// callers that need valid UTF-8 check it themselves.
 func ContainsControlChar(value string) bool {
-	for _, r := range value {
-		if r < ' ' || r == 0x7f {
-			return true
-		}
-	}
-	return false
+	return strings.IndexFunc(value, unicode.IsControl) >= 0
 }
 
 // SPDXString renders the contact in SPDX's PackageSupplier/PackageOriginator
