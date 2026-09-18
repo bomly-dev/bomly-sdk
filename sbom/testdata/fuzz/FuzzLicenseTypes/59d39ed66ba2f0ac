@@ -1,0 +1,4 @@
+go test fuzz v1
+string(" ")
+string("APL-1.0+WITHClAsspAth-eXCeption-2.0")
+byte('\x10')

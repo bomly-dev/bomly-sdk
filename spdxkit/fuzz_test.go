@@ -11,7 +11,7 @@ func FuzzClassify(f *testing.F) {
 		"MIT", "mit", "GPL-2.0", "MIT OR Apache-2.0",
 		"GPL-2.0-only WITH Classpath-exception-2.0",
 		"non-standard", "see LICENSE file", "(((", "", "   ",
-		"MIT AND (ISC OR", "GPL-2.0+",
+		"MIT AND (ISC OR", "GPL-2.0+", "APL-1.0+WITHClAsspAth-eXCeption-2.0",
 	}
 	for _, seed := range seeds {
 		f.Add(seed)
@@ -32,7 +32,11 @@ func FuzzClassify(f *testing.F) {
 				t.Fatalf("identifier %q has no canonical form", value)
 			}
 		}
-		_ = CanonicalExpression(value)
+		// The canonical rendering is what gets published, so it must be
+		// something the parser accepts whenever the input was.
+		if canonical := CanonicalExpression(value); Valid(value) && !Valid(canonical) {
+			t.Fatalf("CanonicalExpression(%q) = %q, which does not validate", value, canonical)
+		}
 	})
 }
 

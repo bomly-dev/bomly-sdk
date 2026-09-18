@@ -3,6 +3,8 @@ package sbom
 import (
 	"bytes"
 	"encoding/json"
+	"sort"
+	"strings"
 	"testing"
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
@@ -283,23 +285,164 @@ func TestSPDXLicenseComposition(t *testing.T) {
 	}
 }
 
-// TestSPDXLicenseConcludedIsNeverAsserted pins that Bomly does not conclude a
-// license. Concluded is the document creator's own determination; every
-// license Bomly holds is declared by a source, and Bomly analyzes no package
-// contents, so SPDX's NOASSERTION is the honest value. The declared field
-// still carries what the source said.
-func TestSPDXLicenseConcludedIsNeverAsserted(t *testing.T) {
-	for _, licenses := range [][]model.PackageLicense{
-		nil,
-		{{Value: "MIT"}},
-		{{SPDXExpression: "MIT OR Apache-2.0"}},
-		{{Value: "MIT"}, {Value: "Apache-2.0"}},
-		{{Value: "see LICENSE file"}},
+// TestSPDXLicenseFieldsSeparateDeclaredFromConcluded pins where each kind of
+// claim is published (#90). SPDX 2.3's Concluded License (7.13) is a
+// determination and its Declared License (7.15) is what the package's authors
+// said, so a concluded claim must not be published as declared. A claim with
+// no type is what a lockfile or registry says, so it stays declared, and a
+// package with no concluded claim renders exactly as before: concluded is
+// NOASSERTION, SPDX's value for "no determination was made".
+func TestSPDXLicenseFieldsSeparateDeclaredFromConcluded(t *testing.T) {
+	declared := model.LicenseTypeDeclared
+	concluded := model.LicenseTypeConcluded
+	for _, tc := range []struct {
+		name          string
+		licenses      []model.PackageLicense
+		wantDeclared  string
+		wantConcluded string
+	}{
+		{"nothing", nil, "NOASSERTION", "NOASSERTION"},
+		{"untyped", []model.PackageLicense{{Value: "MIT"}}, "MIT", "NOASSERTION"},
+		{"untyped expression", []model.PackageLicense{{SPDXExpression: "MIT OR Apache-2.0"}}, "MIT OR Apache-2.0", "NOASSERTION"},
+		{"untyped pair", []model.PackageLicense{{Value: "MIT"}, {Value: "Apache-2.0"}}, "MIT AND Apache-2.0", "NOASSERTION"},
+		{"untyped free text", []model.PackageLicense{{Value: "see LICENSE file"}}, spdxkit.MintLicenseRef("see LICENSE file").RefID, "NOASSERTION"},
+		{"declared", []model.PackageLicense{{Value: "MIT", Type: declared}}, "MIT", "NOASSERTION"},
+		{"concluded only", []model.PackageLicense{{Value: "MIT", Type: concluded}}, "NOASSERTION", "MIT"},
+		{
+			"one of each",
+			[]model.PackageLicense{{Value: "MIT", Type: declared}, {Value: "Apache-2.0", Type: concluded}},
+			"MIT", "Apache-2.0",
+		},
+		{
+			"untyped joins declared",
+			[]model.PackageLicense{{Value: "MIT"}, {Value: "BSD-3-Clause", Type: declared}, {Value: "Apache-2.0", Type: concluded}},
+			"MIT AND BSD-3-Clause", "Apache-2.0",
+		},
+		{
+			"each kind composes on its own",
+			[]model.PackageLicense{
+				{Value: "MIT", Type: concluded},
+				{SPDXExpression: "GPL-2.0-only OR MIT", Type: concluded},
+				{Value: "ISC", Type: declared},
+			},
+			"ISC", "MIT AND (GPL-2.0-only OR MIT)",
+		},
+		{
+			"the same license of both kinds",
+			[]model.PackageLicense{{Value: "MIT", Type: declared}, {Value: "MIT", Type: concluded}},
+			"MIT", "MIT",
+		},
+		{
+			"concluded free text",
+			[]model.PackageLicense{{Value: "Acme terms", Type: concluded}},
+			"NOASSERTION", spdxkit.MintLicenseRef("Acme terms").RefID,
+		},
 	} {
-		pkg := spdxPackageLicense(t, licensedGraph(t, licenses...))
-		if pkg.PackageLicenseConcluded != "NOASSERTION" {
-			t.Fatalf("expected NOASSERTION concluded for %#v, got %q", licenses, pkg.PackageLicenseConcluded)
+		t.Run(tc.name, func(t *testing.T) {
+			pkg := spdxPackageLicense(t, licensedGraph(t, tc.licenses...))
+			if pkg.PackageLicenseDeclared != tc.wantDeclared {
+				t.Errorf("licenseDeclared = %q, want %q", pkg.PackageLicenseDeclared, tc.wantDeclared)
+			}
+			if pkg.PackageLicenseConcluded != tc.wantConcluded {
+				t.Errorf("licenseConcluded = %q, want %q", pkg.PackageLicenseConcluded, tc.wantConcluded)
+			}
+		})
+	}
+}
+
+// A reference minted for concluded free text needs its text in the document as
+// much as a declared one does, or the citation dangles.
+func TestSPDXConcludedReferenceCarriesItsText(t *testing.T) {
+	out, err := MarshalDepGraphJSON(licensedGraph(t,
+		model.PackageLicense{Value: "Acme terms", Type: model.LicenseTypeConcluded},
+		model.PackageLicense{Value: "Other terms", Type: model.LicenseTypeDeclared},
+	), TargetSPDX23JSON, BuildOptions{}, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("marshal spdx: %v", err)
+	}
+	var doc v23.Document
+	if err := json.Unmarshal(out, &doc); err != nil {
+		t.Fatalf("decode spdx: %v", err)
+	}
+	texts := map[string]string{}
+	for _, other := range doc.OtherLicenses {
+		texts[other.LicenseIdentifier] = other.ExtractedText
+	}
+	for text, field := range map[string]string{
+		"Acme terms":  doc.Packages[0].PackageLicenseConcluded,
+		"Other terms": doc.Packages[0].PackageLicenseDeclared,
+	} {
+		if got, ok := texts[field]; !ok || got != text {
+			t.Fatalf("reference %q resolves to %q (present=%v), want %q", field, got, ok, text)
 		}
+	}
+}
+
+// Reading a document back keeps both claims and the kind of each (#90).
+// Taking only the first non-empty field dropped the other claim and lost the
+// provenance of the one it kept.
+func TestSPDXIngestReadsBothLicenseFields(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		declared  string
+		concluded string
+		want      []License
+	}{
+		{"both", "MIT", "Apache-2.0", []License{
+			{Value: "MIT", SPDXExpression: "MIT", Type: "declared"},
+			{Value: "Apache-2.0", SPDXExpression: "Apache-2.0", Type: "concluded"},
+		}},
+		{"the same license in both", "MIT", "MIT", []License{
+			{Value: "MIT", SPDXExpression: "MIT", Type: "declared"},
+			{Value: "MIT", SPDXExpression: "MIT", Type: "concluded"},
+		}},
+		{"declared only", "MIT", "NOASSERTION", []License{{Value: "MIT", SPDXExpression: "MIT", Type: "declared"}}},
+		{"concluded only", "NONE", "MIT", []License{{Value: "MIT", SPDXExpression: "MIT", Type: "concluded"}}},
+		{"neither", "NOASSERTION", "NONE", nil},
+		{"fields absent", "", "", nil},
+		{"referenced text", "LicenseRef-vendor", "MIT", []License{
+			{Value: "vendor terms", SPDXExpression: "LicenseRef-vendor", Type: "declared"},
+			{Value: "MIT", SPDXExpression: "MIT", Type: "concluded"},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := `{"spdxVersion":"SPDX-2.3","dataLicense":"CC0-1.0","SPDXID":"SPDXRef-DOCUMENT",` +
+				`"name":"foreign","documentNamespace":"https://example.test/foreign",` +
+				`"creationInfo":{"created":"2026-01-01T00:00:00Z","creators":["Tool: other"]},` +
+				`"hasExtractedLicensingInfos":[{"licenseId":"LicenseRef-vendor","extractedText":"vendor terms"}],` +
+				`"packages":[{"SPDXID":"SPDXRef-a","name":"a","versionInfo":"1.0.0","downloadLocation":"NOASSERTION",` +
+				`"licenseDeclared":"` + tc.declared + `","licenseConcluded":"` + tc.concluded + `",` +
+				`"externalRefs":[{"referenceCategory":"PACKAGE-MANAGER","referenceType":"purl","referenceLocator":"pkg:npm/a@1.0.0"}]}]}`
+			doc, _, err := UnmarshalAutoJSON([]byte(raw))
+			if err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			got := doc.Components[0].Licenses
+			if len(got) != len(tc.want) {
+				t.Fatalf("licenses = %#v, want %#v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("license %d = %#v, want %#v", i, got[i], tc.want[i])
+				}
+			}
+
+			// And through to the graph, where the merge must keep a declared
+			// and a concluded claim of one license as two claims.
+			g, err := ToGraph(doc)
+			if err != nil {
+				t.Fatalf("to graph: %v", err)
+			}
+			nodeLicenses := model.DetectionLicenses(g.DependencyNodes()[0])
+			if len(nodeLicenses) != len(tc.want) {
+				t.Fatalf("node licenses = %#v, want %d claims", nodeLicenses, len(tc.want))
+			}
+			for i, license := range nodeLicenses {
+				if string(license.Type) != tc.want[i].Type {
+					t.Fatalf("node license %d type = %q, want %q", i, license.Type, tc.want[i].Type)
+				}
+			}
+		})
 	}
 }
 
@@ -467,5 +610,491 @@ func TestUnmappableDigestIsOmittedFromCycloneDXReferences(t *testing.T) {
 		if h.Algorithm == "sha256" {
 			t.Errorf("the SDK token was emitted instead of CycloneDX's spelling: %+v", h)
 		}
+	}
+}
+
+var cycloneDXTargets = []struct {
+	target  Target
+	version cdx.SpecVersion
+}{
+	{TargetCycloneDX14JSON, cdx.SpecVersion1_4},
+	{TargetCycloneDX15JSON, cdx.SpecVersion1_5},
+	{TargetCycloneDX16JSON, cdx.SpecVersion1_6},
+	{TargetCycloneDX17JSON, cdx.SpecVersion1_7},
+}
+
+// cycloneDXLicensesAt encodes g at target and returns the single component's
+// licenses together with the raw document.
+func cycloneDXLicensesAt(t *testing.T, g *model.Graph, target Target) (cdx.Licenses, []byte) {
+	t.Helper()
+	out, err := MarshalDepGraphJSON(g, target, BuildOptions{}, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("marshal %s: %v", target, err)
+	}
+	bom := new(cdx.BOM)
+	if err := cdx.NewBOMDecoder(bytes.NewReader(out), cdx.BOMFileFormatJSON).Decode(bom); err != nil {
+		t.Fatalf("decode %s: %v", target, err)
+	}
+	if bom.Components == nil || len(*bom.Components) != 1 {
+		t.Fatalf("%s: expected exactly 1 component, got %#v", target, bom.Components)
+	}
+	comp := (*bom.Components)[0]
+	if comp.Licenses == nil {
+		return nil, out
+	}
+	return *comp.Licenses, out
+}
+
+// renderedLicense is one published license entry, flattened for comparison.
+type renderedLicense struct {
+	value           string
+	expression      bool
+	acknowledgement cdx.LicenseAcknowledgement
+}
+
+func flattenCycloneDXLicenses(licenses cdx.Licenses) []renderedLicense {
+	out := make([]renderedLicense, 0, len(licenses))
+	for _, choice := range licenses {
+		switch {
+		case choice.Expression != "":
+			entry := renderedLicense{value: choice.Expression, expression: true}
+			if choice.Acknowledgement != nil {
+				entry.acknowledgement = *choice.Acknowledgement
+			}
+			out = append(out, entry)
+		case choice.License != nil:
+			value := choice.License.ID
+			if value == "" {
+				value = choice.License.Name
+			}
+			out = append(out, renderedLicense{value: value, acknowledgement: choice.License.Acknowledgement})
+		}
+	}
+	return out
+}
+
+// TestCycloneDXLicenseAcknowledgement pins how each kind of claim is published
+// at each specification version (#90).
+func TestCycloneDXLicenseAcknowledgement(t *testing.T) {
+	declared, concluded := model.LicenseTypeDeclared, model.LicenseTypeConcluded
+	ackDeclared, ackConcluded := cdx.LicenseAcknowledgementDeclared, cdx.LicenseAcknowledgementConcluded
+
+	for _, tc := range []struct {
+		name     string
+		licenses []model.PackageLicense
+		// want is the rendering from 1.6 on, and pre16 the rendering before
+		// it, where no acknowledgement exists. want17 overrides want for 1.7
+		// when the two differ.
+		want, want17, pre16 []renderedLicense
+	}{
+		{
+			name:     "untyped carries no acknowledgement",
+			licenses: []model.PackageLicense{{Value: "MIT"}},
+			want:     []renderedLicense{{value: "MIT"}},
+			pre16:    []renderedLicense{{value: "MIT"}},
+		},
+		{
+			name:     "declared",
+			licenses: []model.PackageLicense{{Value: "MIT", Type: declared}},
+			want:     []renderedLicense{{value: "MIT", acknowledgement: ackDeclared}},
+			pre16:    []renderedLicense{{value: "MIT"}},
+		},
+		{
+			name:     "concluded expression",
+			licenses: []model.PackageLicense{{SPDXExpression: "MIT OR Apache-2.0", Type: concluded}},
+			want:     []renderedLicense{{value: "MIT OR Apache-2.0", expression: true, acknowledgement: ackConcluded}},
+			pre16:    []renderedLicense{{value: "MIT OR Apache-2.0", expression: true}},
+		},
+		{
+			name:     "one of each, as license objects",
+			licenses: []model.PackageLicense{{Value: "MIT", Type: declared}, {Value: "Apache-2.0", Type: concluded}},
+			want: []renderedLicense{
+				{value: "MIT", acknowledgement: ackDeclared},
+				{value: "Apache-2.0", acknowledgement: ackConcluded},
+			},
+			pre16: []renderedLicense{{value: "MIT"}, {value: "Apache-2.0"}},
+		},
+		{
+			name:     "untyped beside typed is listed without a claim",
+			licenses: []model.PackageLicense{{Value: "ISC"}, {Value: "MIT", Type: concluded}},
+			want: []renderedLicense{
+				{value: "ISC"},
+				{value: "MIT", acknowledgement: ackConcluded},
+			},
+			pre16: []renderedLicense{{value: "ISC"}, {value: "MIT"}},
+		},
+		{
+			name: "free text keeps its kind",
+			licenses: []model.PackageLicense{
+				{Value: "see LICENSE file", Type: declared},
+				{Value: "MIT", Type: concluded},
+			},
+			want: []renderedLicense{
+				{value: "see LICENSE file", acknowledgement: ackDeclared},
+				{value: "MIT", acknowledgement: ackConcluded},
+			},
+			pre16: []renderedLicense{{value: "see LICENSE file"}, {value: "MIT"}},
+		},
+		{
+			// 1.6 allows one expression or a list of objects, never both, so
+			// an expression beside another claim has no valid typed form. The
+			// set renders as it would untyped: nothing dropped, no provenance
+			// stated for an expression that mixes both kinds. 1.7 can hold
+			// both, each with its own acknowledgement.
+			name: "an expression beside another kind",
+			licenses: []model.PackageLicense{
+				{SPDXExpression: "MIT OR Apache-2.0", Type: declared},
+				{Value: "MIT", Type: concluded},
+			},
+			want: []renderedLicense{{value: "(MIT OR Apache-2.0) AND MIT", expression: true}},
+			want17: []renderedLicense{
+				{value: "MIT OR Apache-2.0", expression: true, acknowledgement: ackDeclared},
+				{value: "MIT", acknowledgement: ackConcluded},
+			},
+			pre16: []renderedLicense{{value: "(MIT OR Apache-2.0) AND MIT", expression: true}},
+		},
+		{
+			name: "two expressions of different kinds",
+			licenses: []model.PackageLicense{
+				{SPDXExpression: "MIT OR Apache-2.0", Type: declared},
+				{SPDXExpression: "GPL-2.0-only WITH Classpath-exception-2.0", Type: concluded},
+			},
+			want: []renderedLicense{{value: "(MIT OR Apache-2.0) AND GPL-2.0-only WITH Classpath-exception-2.0", expression: true}},
+			want17: []renderedLicense{
+				{value: "MIT OR Apache-2.0", expression: true, acknowledgement: ackDeclared},
+				{value: "GPL-2.0-only WITH Classpath-exception-2.0", expression: true, acknowledgement: ackConcluded},
+			},
+			pre16: []renderedLicense{{value: "(MIT OR Apache-2.0) AND GPL-2.0-only WITH Classpath-exception-2.0", expression: true}},
+		},
+	} {
+		for _, target := range cycloneDXTargets {
+			t.Run(tc.name+"/"+string(target.target), func(t *testing.T) {
+				want := tc.want
+				switch {
+				case target.version < cdx.SpecVersion1_6:
+					want = tc.pre16
+				case target.version >= cdx.SpecVersion1_7 && tc.want17 != nil:
+					want = tc.want17
+				}
+				licenses, raw := cycloneDXLicensesAt(t, licensedGraph(t, tc.licenses...), target.target)
+				got := flattenCycloneDXLicenses(licenses)
+				if len(got) != len(want) {
+					t.Fatalf("licenses = %+v, want %+v", got, want)
+				}
+				for i := range got {
+					if got[i] != want[i] {
+						t.Fatalf("license %d = %+v, want %+v", i, got[i], want[i])
+					}
+				}
+				// Asserted on the bytes too: cyclonedx-go strips the object
+				// form's acknowledgement below 1.6 but not the expression
+				// form's, and a decoder reading the document back would not
+				// show a field the struct happens to drop.
+				if target.version < cdx.SpecVersion1_6 && strings.Contains(string(raw), `"acknowledgement"`) {
+					t.Fatalf("%s carries acknowledgement, which its schema does not define:\n%s", target.target, raw)
+				}
+			})
+		}
+	}
+}
+
+// A single-shape check on its own: 1.6 must never receive the mixed list that
+// only 1.7 defines, whatever mix of kinds arrives.
+func TestCycloneDX16LicenseListsKeepOneShape(t *testing.T) {
+	kinds := []model.LicenseType{"", model.LicenseTypeDeclared, model.LicenseTypeConcluded}
+	values := []string{"MIT", "MIT OR Apache-2.0", "see LICENSE file"}
+	for _, first := range kinds {
+		for _, second := range kinds {
+			for _, a := range values {
+				for _, b := range values {
+					licenses := []License{{Value: a, Type: string(first)}, {Value: b, Type: string(second)}}
+					got := cycloneDXLicenses(licenses, cdx.SpecVersion1_6)
+					if !singleShapeLicenseChoices(got) {
+						t.Fatalf("1.6 rendering of %+v mixes shapes: %+v", licenses, got)
+					}
+				}
+			}
+		}
+	}
+}
+
+// Reading a document back keeps the kind each license states, from where the
+// specification puts it, and nothing else.
+func TestCycloneDXIngestReadsAcknowledgement(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		licenses string
+		want     []License
+	}{
+		{
+			"license objects",
+			`[{"license":{"id":"MIT","acknowledgement":"declared"}},{"license":{"name":"Acme terms","acknowledgement":"concluded"}}]`,
+			[]License{
+				{Value: "MIT", SPDXExpression: "MIT", Type: "declared"},
+				{Value: "Acme terms", Type: "concluded"},
+			},
+		},
+		{
+			"expression",
+			`[{"expression":"MIT OR Apache-2.0","acknowledgement":"concluded"}]`,
+			[]License{{Value: "MIT OR Apache-2.0", SPDXExpression: "MIT OR Apache-2.0", Type: "concluded"}},
+		},
+		{
+			"no acknowledgement",
+			`[{"license":{"id":"MIT"}}]`,
+			[]License{{Value: "MIT", SPDXExpression: "MIT"}},
+		},
+		{
+			"a value the specification does not define",
+			`[{"license":{"id":"MIT","acknowledgement":"observed"}}]`,
+			[]License{{Value: "MIT", SPDXExpression: "MIT"}},
+		},
+		{
+			"mixed list, as 1.7 writes it",
+			`[{"expression":"MIT OR Apache-2.0","acknowledgement":"declared"},{"license":{"id":"ISC","acknowledgement":"concluded"}}]`,
+			[]License{
+				{Value: "MIT OR Apache-2.0", SPDXExpression: "MIT OR Apache-2.0", Type: "declared"},
+				{Value: "ISC", SPDXExpression: "ISC", Type: "concluded"},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := `{"bomFormat":"CycloneDX","specVersion":"1.7","version":1,` +
+				`"components":[{"type":"library","bom-ref":"a","name":"a","version":"1.0.0",` +
+				`"purl":"pkg:npm/a@1.0.0","licenses":` + tc.licenses + `}]}`
+			doc, _, err := UnmarshalAutoJSON([]byte(raw))
+			if err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			got := doc.Components[0].Licenses
+			if len(got) != len(tc.want) {
+				t.Fatalf("licenses = %#v, want %#v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("license %d = %#v, want %#v", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// claim is a license reduced to what a round trip must preserve.
+type claim struct {
+	value       string
+	licenseType model.LicenseType
+}
+
+func claimsOf(licenses []model.PackageLicense) []claim {
+	out := make([]claim, 0, len(licenses))
+	for _, license := range licenses {
+		value := license.SPDXExpression
+		if value == "" {
+			value = license.Value
+		}
+		out = append(out, claim{value: value, licenseType: license.Type})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].value != out[j].value {
+			return out[i].value < out[j].value
+		}
+		return out[i].licenseType < out[j].licenseType
+	})
+	return out
+}
+
+// TestTypedLicensesSurviveEveryHop is the round trip #90 asks for: a declared
+// and a concluded license on one package survive SPDX to SPDX, CycloneDX to
+// CycloneDX, and each hop between the two.
+func TestTypedLicensesSurviveEveryHop(t *testing.T) {
+	sets := map[string][]model.PackageLicense{
+		"identifiers": {
+			{Value: "MIT", SPDXExpression: "MIT", Type: model.LicenseTypeDeclared},
+			{Value: "Apache-2.0", SPDXExpression: "Apache-2.0", Type: model.LicenseTypeConcluded},
+		},
+		"one license of both kinds": {
+			{Value: "MIT", SPDXExpression: "MIT", Type: model.LicenseTypeDeclared},
+			{Value: "MIT", SPDXExpression: "MIT", Type: model.LicenseTypeConcluded},
+		},
+	}
+	// An expression beside another kind needs 1.7 on the CycloneDX side; SPDX
+	// always has a field per kind.
+	expressionSet := []model.PackageLicense{
+		{Value: "MIT OR Apache-2.0", SPDXExpression: "MIT OR Apache-2.0", Type: model.LicenseTypeDeclared},
+		{Value: "ISC", SPDXExpression: "ISC", Type: model.LicenseTypeConcluded},
+	}
+	targets := []Target{TargetSPDX23JSON, TargetCycloneDX16JSON, TargetCycloneDX17JSON}
+
+	hop := func(t *testing.T, g *model.Graph, target Target) *model.Graph {
+		t.Helper()
+		out, err := MarshalDepGraphJSON(g, target, BuildOptions{}, EncodeOptions{})
+		if err != nil {
+			t.Fatalf("marshal %s: %v", target, err)
+		}
+		doc, _, err := UnmarshalAutoJSON(out)
+		if err != nil {
+			t.Fatalf("unmarshal %s: %v", target, err)
+		}
+		next, err := ToGraph(doc)
+		if err != nil {
+			t.Fatalf("to graph from %s: %v", target, err)
+		}
+		return next
+	}
+	check := func(t *testing.T, name string, licenses []model.PackageLicense, first, second Target) {
+		t.Run(name+"/"+string(first)+"->"+string(second), func(t *testing.T) {
+			g := hop(t, hop(t, licensedGraph(t, licenses...), first), second)
+			nodes := g.DependencyNodes()
+			if len(nodes) != 1 {
+				t.Fatalf("expected 1 node, got %d", len(nodes))
+			}
+			// Exported once more, to compare what the second hop read.
+			final := hop(t, g, second).DependencyNodes()[0]
+			want := claimsOf(licenses)
+			for label, gotLicenses := range map[string][]model.PackageLicense{
+				"after two hops":   model.DetectionLicenses(nodes[0]),
+				"after three hops": model.DetectionLicenses(final),
+			} {
+				got := claimsOf(gotLicenses)
+				if len(got) != len(want) {
+					t.Fatalf("%s: claims = %+v, want %+v", label, got, want)
+				}
+				for i := range got {
+					if got[i] != want[i] {
+						t.Fatalf("%s: claim %d = %+v, want %+v", label, i, got[i], want[i])
+					}
+				}
+			}
+		})
+	}
+	for name, licenses := range sets {
+		for _, first := range targets {
+			for _, second := range targets {
+				check(t, name, licenses, first, second)
+			}
+		}
+	}
+	for _, first := range []Target{TargetSPDX23JSON, TargetCycloneDX17JSON} {
+		for _, second := range []Target{TargetSPDX23JSON, TargetCycloneDX17JSON} {
+			check(t, "an expression beside another kind", expressionSet, first, second)
+		}
+	}
+}
+
+// The acknowledgement mapping is total over the model's vocabulary and refuses
+// anything outside it, in both directions.
+func TestLicenseAcknowledgementMapping(t *testing.T) {
+	for _, licenseType := range []model.LicenseType{model.LicenseTypeDeclared, model.LicenseTypeConcluded} {
+		acknowledgement, ok := cycloneDXAcknowledgement(string(licenseType))
+		if !ok {
+			t.Fatalf("%q has no acknowledgement", licenseType)
+		}
+		if back := licenseTypeFromCycloneDX(acknowledgement); back != string(licenseType) {
+			t.Fatalf("%q maps to %q and back to %q", licenseType, acknowledgement, back)
+		}
+	}
+	for _, value := range []string{"", "observed", "DECLARED ", strings.Repeat("x", 100)} {
+		acknowledgement, ok := cycloneDXAcknowledgement(value)
+		// The model's gate folds case and space, so "DECLARED " is declared.
+		if value == "DECLARED " {
+			if !ok || acknowledgement != cdx.LicenseAcknowledgementDeclared {
+				t.Fatalf("%q = %q, %v; want the gate's reading, declared", value, acknowledgement, ok)
+			}
+			continue
+		}
+		if ok {
+			t.Fatalf("%q mapped to %q, want no acknowledgement", value, acknowledgement)
+		}
+	}
+	if got := licenseTypeFromCycloneDX("observed"); got != "" {
+		t.Fatalf("an undefined acknowledgement read as %q", got)
+	}
+}
+
+// The document a 1.6 export produces must still be one the 1.6 schema's
+// license shape accepts once encoded, not only in memory.
+func TestCycloneDXTypedLicensesEncodeAsValidJSON(t *testing.T) {
+	g := licensedGraph(t,
+		model.PackageLicense{Value: "MIT", Type: model.LicenseTypeDeclared},
+		model.PackageLicense{SPDXExpression: "MIT OR Apache-2.0", Type: model.LicenseTypeConcluded},
+	)
+	for _, target := range cycloneDXTargets {
+		_, raw := cycloneDXLicensesAt(t, g, target.target)
+		var generic map[string]any
+		if err := json.Unmarshal(raw, &generic); err != nil {
+			t.Fatalf("%s: not JSON: %v", target.target, err)
+		}
+		components := generic["components"].([]any)
+		licenses := components[0].(map[string]any)["licenses"].([]any)
+		var objects, expressions int
+		for _, entry := range licenses {
+			entryMap := entry.(map[string]any)
+			if _, ok := entryMap["expression"]; ok {
+				expressions++
+			}
+			if _, ok := entryMap["license"]; ok {
+				objects++
+			}
+		}
+		if target.version < cdx.SpecVersion1_7 && expressions > 0 && (expressions != 1 || objects != 0) {
+			t.Fatalf("%s: %d expressions beside %d objects; the schema allows one expression alone", target.target, expressions, objects)
+		}
+	}
+}
+
+// A spelling go-spdx accepts but cannot render back is not published as an
+// expression in either format: SPDX cites it through a minted reference that
+// carries the text, and CycloneDX names it as free text.
+func TestLenientLicenseSpellingIsPublishedAsFreeText(t *testing.T) {
+	const lenient = "APL-1.0+WITHClAsspAth-eXCeption-2.0"
+	for _, licenseType := range []model.LicenseType{"", model.LicenseTypeConcluded} {
+		g := licensedGraph(t, model.PackageLicense{Value: lenient, SPDXExpression: lenient, Type: licenseType})
+		pkg := spdxPackageLicense(t, g)
+		field := pkg.PackageLicenseDeclared
+		if licenseType == model.LicenseTypeConcluded {
+			field = pkg.PackageLicenseConcluded
+		}
+		if want := spdxkit.MintLicenseRef(lenient).RefID; field != want {
+			t.Fatalf("type %q: SPDX field = %q, want the minted reference %q", licenseType, field, want)
+		}
+		licenses := cycloneDXComponentLicenses(t, g)
+		if len(licenses) != 1 || licenses[0].License == nil || licenses[0].License.Name != lenient || licenses[0].Expression != "" {
+			t.Fatalf("type %q: CycloneDX licenses = %+v, want the value as a license name", licenseType, licenses)
+		}
+	}
+}
+
+// acknowledgement is a 1.6 field. A 1.4 or 1.5 document that carries it anyway
+// states nothing its schema defines, so the claim it appears to make is not
+// read; from 1.6 on it is.
+func TestCycloneDXAcknowledgementIsReadOnlyWhereDefined(t *testing.T) {
+	for _, tc := range []struct {
+		specVersion string
+		want        string
+	}{
+		{"1.4", ""},
+		{"1.5", ""},
+		{"1.6", "concluded"},
+		{"1.7", "concluded"},
+	} {
+		t.Run(tc.specVersion, func(t *testing.T) {
+			raw := `{"bomFormat":"CycloneDX","specVersion":"` + tc.specVersion + `","version":1,` +
+				`"components":[{"type":"library","bom-ref":"a","name":"a","version":"1.0.0","purl":"pkg:npm/a@1.0.0",` +
+				`"licenses":[{"license":{"id":"MIT","acknowledgement":"concluded"}}]},` +
+				`{"type":"library","bom-ref":"b","name":"b","version":"1.0.0","purl":"pkg:npm/b@1.0.0",` +
+				`"licenses":[{"expression":"MIT OR Apache-2.0","acknowledgement":"concluded"}]}]}`
+			doc, _, err := UnmarshalAutoJSON([]byte(raw))
+			if err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			for _, component := range doc.Components {
+				if len(component.Licenses) != 1 {
+					t.Fatalf("%s: licenses = %#v, want one", component.Name, component.Licenses)
+				}
+				if got := component.Licenses[0].Type; got != tc.want {
+					t.Fatalf("%s: type = %q, want %q", component.Name, got, tc.want)
+				}
+			}
+		})
 	}
 }

@@ -33,12 +33,32 @@ const maxSatisfiesOperators = 16
 // an SPDX license expression.
 // Unparseable values — free text such as "non-standard", or malformed
 // grouping — report false rather than failing the caller.
+//
+// "Parses" means go-spdx accepts both the value and its own normalized
+// rendering of it. The library is lenient with some spellings: it accepts
+// "APL-1.0+WITHClAsspAth-eXCeption-2.0", renders it as
+// "APL-1.0+ WITH Classpath-exception-2.0", and rejects that rendering. Such a
+// value has no spelling the library will stand behind, so publishing it as an
+// expression -- as written or as rendered -- writes a license field that a
+// strict consumer, or go-spdx itself, refuses. It is free text instead, which
+// both formats can carry without claiming it is an expression. The parser
+// stays the judge of both spellings; nothing here reads the grammar.
 func Valid(expression string) bool {
 	expression = strings.TrimSpace(expression)
 	if expression == "" {
 		return false
 	}
-	_, ok := normalizeExpression(expression)
+	return validRendering(expression)
+}
+
+// validRendering reports whether go-spdx accepts value and its own
+// normalization of it. See Valid.
+func validRendering(value string) bool {
+	normalized, ok := normalizeExpression(value)
+	if !ok {
+		return false
+	}
+	_, ok = normalizeExpression(normalized)
 	return ok
 }
 
@@ -70,6 +90,24 @@ func ValidateAll(values []string) (valid bool, invalid []string) {
 	}
 	oversized := invalid
 	valid, invalid = validateBounded(bounded)
+	// The batch parser answers only the first half of Valid's question. A
+	// member it accepted whose rendering it rejects is invalid too, so the two
+	// entry points never disagree about a value.
+	if len(invalid) < len(bounded) {
+		rejected := make(map[string]struct{}, len(invalid))
+		for _, value := range invalid {
+			rejected[value] = struct{}{}
+		}
+		for _, value := range bounded {
+			if _, ok := rejected[value]; ok {
+				continue
+			}
+			if !validRendering(value) {
+				invalid = append(invalid, value)
+				valid = false
+			}
+		}
+	}
 	invalid = append(oversized, invalid...)
 	return valid && len(oversized) == 0, invalid
 }

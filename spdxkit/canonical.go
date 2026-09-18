@@ -74,21 +74,33 @@ func CanonicalIdentifier(value string) (canonical string, ok bool) {
 // free-text values pass through unchanged — the whole input must validate
 // before any identifier is rewritten, so text that happens to contain a
 // deprecated identifier ("use GPL-2.0 here") is never corrupted.
+//
+// A valid input always yields a valid result. Valid already refuses a value
+// whose go-spdx rendering go-spdx rejects, so such a value is free text here
+// and comes back unchanged. The checks below keep the promise for the
+// renderings this function produces itself: a rendering is returned only
+// when it validates, and the input -- which did -- otherwise.
 func CanonicalExpression(expression string) string {
 	// Bound the original before normalization: callers may deliberately want
 	// invalid or free-text input returned byte-for-byte.
 	if len(expression) > maxInputSize {
 		return expression
 	}
+	if !Valid(expression) {
+		return expression
+	}
 	normalized, ok := normalizeExpression(expression)
 	if !ok {
+		return expression
+	}
+	if !Valid(normalized) {
 		return expression
 	}
 	rewritten, replaced := rewriteNormalizedExpression(normalized)
 	if !replaced {
 		return normalized
 	}
-	if canonical, ok := normalizeExpression(rewritten); ok {
+	if canonical, ok := normalizeExpression(rewritten); ok && Valid(canonical) {
 		return canonical
 	}
 	return normalized

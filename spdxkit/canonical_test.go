@@ -158,6 +158,33 @@ func TestCanonicalExpression(t *testing.T) {
 	}
 }
 
+// A value go-spdx accepts only in a spelling it will not render back is not an
+// expression. The input is the fuzzer's: accepted as written, rendered with
+// spaces around WITH, and the rendering rejected. Publishing either spelling
+// as an expression writes a field a strict consumer refuses, so the kit calls
+// it free text everywhere and leaves it alone.
+func TestLenientSpellingWithoutAValidRenderingIsFreeText(t *testing.T) {
+	const input = "APL-1.0+WITHClAsspAth-eXCeption-2.0"
+	if _, ok := normalizeExpression(input); !ok {
+		t.Skip("go-spdx no longer accepts the reproducer; the rendering check may be unnecessary")
+	}
+	if Valid(input) {
+		t.Fatalf("Valid(%q) = true; its rendering does not validate", input)
+	}
+	if got := Classify(input); got != ClassFreeText {
+		t.Fatalf("Classify(%q) = %v, want free text", input, got)
+	}
+	if got := CanonicalExpression(input); got != input {
+		t.Fatalf("CanonicalExpression(%q) = %q, want free text returned unchanged", input, got)
+	}
+	if valid, invalid := ValidateAll([]string{"MIT", input}); valid || len(invalid) != 1 || invalid[0] != input {
+		t.Fatalf("ValidateAll = (%v, %q), want only the lenient spelling refused", valid, invalid)
+	}
+	if valid, invalid := ValidateAll([]string{"MIT", "Apache-2.0 OR MIT"}); !valid || len(invalid) != 0 {
+		t.Fatalf("ValidateAll of valid expressions = (%v, %q)", valid, invalid)
+	}
+}
+
 func TestCanonicalExpressionBoundsAndContextSensitiveReplacement(t *testing.T) {
 	// A huge whitespace padding around a tiny identifier must be rejected
 	// before tokenization, not turned into per-rune allocations.

@@ -41,7 +41,7 @@ func (spdx23Codec) encodeJSON(doc *Document, opts EncodeOptions) ([]byte, error)
 		spdxID := common.ElementID(ids.allocate(c.ID))
 		idByComponent[c.ID] = spdxID
 
-		licenseDeclared, componentExtracted := spdxLicenseValue(c.Licenses)
+		licenseDeclared, licenseConcluded, componentExtracted := spdxLicenseFields(c.Licenses)
 		extractedLicenses = append(extractedLicenses, componentExtracted...)
 
 		pkg := &v23.Package{
@@ -52,15 +52,9 @@ func (spdx23Codec) encodeJSON(doc *Document, opts EncodeOptions) ([]byte, error)
 			FilesAnalyzed:           false,
 			PackageComment:          spdxPackageComment(c),
 			PackageLicenseDeclared:  licenseDeclared,
-
-			// Concluded is the document creator's own determination. Every
-			// license Bomly carries is declared by a lockfile or a registry --
-			// the domain model has no other kind -- and Bomly does not analyze
-			// package contents, so it has nothing of its own to conclude.
-			// SPDX names that case: NOASSERTION when the creator made no
-			// attempt to determine the field. Nothing is lost; the declared
-			// value above still carries what a source asserted.
-			PackageLicenseConcluded:   "NOASSERTION",
+			// Each field carries only the claims of its own kind; see
+			// spdxLicenseFields.
+			PackageLicenseConcluded:   licenseConcluded,
 			PackageCopyrightText:      spdxCopyrightValue(c.Copyright),
 			PackageChecksums:          spdxChecksums(c.Digests),
 			PackageSourceInfo:         spdxSourceInfo(c),
@@ -170,7 +164,7 @@ func (spdx23Codec) decodeJSON(data []byte) (*Document, error) {
 			Ecosystem:      parseSPDXYcosystem(p.PackageExternalReferences),
 			PackageManager: parseSPDXPackageManager(p.PackageExternalReferences),
 			Copyright:      parseSPDXCopyright(p.PackageCopyrightText),
-			Licenses:       parseSPDXLicenses(extractedByRef, p.PackageLicenseConcluded, p.PackageLicenseDeclared),
+			Licenses:       parseSPDXLicenses(extractedByRef, p.PackageLicenseDeclared, p.PackageLicenseConcluded),
 		}
 		applySPDXAssertions(&component, p)
 		components = append(components, component)
@@ -458,7 +452,38 @@ func parseSPDXCommentField(comment, field string) string {
 	return ""
 }
 
-// spdxLicenseValue renders a component's licenses into one SPDX license field,
+// spdxLicenseFields renders a component's licenses into SPDX's two license
+// fields, each holding only the claims of its own kind.
+//
+// SPDX 2.3 draws the distinction the model's LicenseType does. Declared
+// License (7.15) is what the package's authors declared; Concluded License
+// (7.13) is the document creator's own determination. So a claim typed
+// concluded -- an analysis's answer -- goes to licenseConcluded, and
+// publishing it as licenseDeclared would say the package stated something it
+// did not (#90). Where the creator made no determination, 7.13 has
+// NOASSERTION for that, which is what an empty group renders as.
+//
+// A claim with no type goes to licenseDeclared. SPDX has only these two
+// fields, and an untyped license comes from a lockfile, a manifest, or a
+// registry record -- what the package itself says. That is also where every
+// license went before the model carried a type, so a document with no
+// concluded claim is unchanged. An unrecognized type is read through the
+// model's gate, which treats it as untyped rather than guessing.
+func spdxLicenseFields(licenses []License) (declared, concluded string, extracted []spdxkit.ExtractedText) {
+	var declaredLicenses, concludedLicenses []License
+	for _, license := range licenses {
+		if licenseType, err := model.ParseLicenseType(license.Type); err == nil && licenseType == model.LicenseTypeConcluded {
+			concludedLicenses = append(concludedLicenses, license)
+			continue
+		}
+		declaredLicenses = append(declaredLicenses, license)
+	}
+	declared, declaredExtracted := spdxLicenseValue(declaredLicenses)
+	concluded, concludedExtracted := spdxLicenseValue(concludedLicenses)
+	return declared, concluded, append(declaredExtracted, concludedExtracted...)
+}
+
+// spdxLicenseValue renders a set of licenses into one SPDX license field,
 // with the extracted-text entries the field's references depend on.
 //
 // SPDX 2.3 has no free-text license field. licenseDeclared must hold a valid
@@ -780,21 +805,36 @@ func spdxExtractedTexts(others []*v23.OtherLicense) map[string]string {
 // first is what the document said, the second is what a human means, and
 // collapsing them would make the resolved text look like a license
 // identifier to everything downstream.
-func parseSPDXLicenses(extractedByRef map[string]string, values ...string) []License {
-	for _, value := range values {
-		value = strings.TrimSpace(value)
+//
+// Both fields are read, and each claim keeps the kind its field names:
+// licenseDeclared is what the package's authors declared (SPDX 2.3 7.15),
+// licenseConcluded what the document's creator determined (7.13). Reading
+// only the first non-empty field dropped the other claim and the provenance
+// of the one kept (#90). A package naming the same license in both fields
+// carries two claims, which the model's license merge keeps apart by type.
+// NONE and NOASSERTION in either field are not licenses and contribute
+// nothing.
+func parseSPDXLicenses(extractedByRef map[string]string, declared, concluded string) []License {
+	var out []License
+	for _, field := range []struct {
+		value       string
+		licenseType model.LicenseType
+	}{
+		{declared, model.LicenseTypeDeclared},
+		{concluded, model.LicenseTypeConcluded},
+	} {
+		value := strings.TrimSpace(field.value)
 		switch value {
 		case "", "NOASSERTION", "NONE":
 			continue
-		default:
-			license := License{SPDXExpression: value, Value: value}
-			if text, ok := resolveSingleLicenseRef(extractedByRef, value); ok {
-				license.Value = text
-			}
-			return []License{license}
 		}
+		license := License{SPDXExpression: value, Value: value, Type: string(field.licenseType)}
+		if text, ok := resolveSingleLicenseRef(extractedByRef, value); ok {
+			license.Value = text
+		}
+		out = append(out, license)
 	}
-	return nil
+	return out
 }
 
 // resolveSingleLicenseRef returns the extracted text when the expression is
