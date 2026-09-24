@@ -97,6 +97,29 @@ Two spellings changed besides the package: `containsControlChar` is now
 changes only its import path. A consumer package named `plugin` imports
 `github.com/bomly-dev/bomly-sdk/plugin` under an alias, or renames itself.
 
+## Migrating to v0.14
+
+v0.14.0 lifts the nine component-level assertions `model.DependencyNode` and
+`model.Package` both carried — `Description`, `Homepage`, `Supplier`,
+`Originator`, `ExternalReferences`, `CPEs`, `Digests`, `Licenses`,
+`Copyright` — into one embedded `model.Assertions`. Reads, writes and
+composite literals naming those fields compile unchanged through promotion;
+JSON is unchanged. What changes is the Go API surface (the fields moved), so
+the release is a v0 minor. `Graph` JSON now lists `nodes` by node ID and
+`edges` by `(fromId, toId)`, and graph and registry decoding refuse payloads
+over `model.MaxPayloadBytes`, `MaxGraphNodes`, `MaxGraphEdges` and
+`MaxRegistryPackages`.
+
+## The scan record
+
+- `scan` — the scan record: `scan.Record`, the document `bomly scan --json` emits, with its manifests, packages and findings, and what that output never said about itself — the subject, the run, the verdict, the policy and waivers, and a digest per section. `Encode` is byte-stable, `Decode` is bounded and refuses another schema, `FromGraphEntries` builds one from a pipeline's entries, registry and findings, and `Compare` reports the dependency, advisory and finding deltas between two.
+
+A record relates to an SBOM in both directions: its manifests are what the
+codec below projects into a document and reads back, so an SBOM is derivable
+from a record, and a scan that ingested an SBOM yields a record whose manifest
+carries that document's own assertions. Its packages and findings hold what
+an SBOM cannot say.
+
 ## The SBOM codec
 
 - `sbom` — the SBOM codec: projects a graph into SPDX 2.3 or CycloneDX JSON and reads such a document back into a graph, with the document model, the strict ingest preflight, and the assertions a document carries about itself.
@@ -109,7 +132,7 @@ first, then the CLI, which pins both -- and delete their copies as they do.
 
 ## Compatibility
 
-Two independent compatibility axes govern this module:
+Three independent compatibility axes govern this module:
 
 1. **In-process (Go API)** — the component interfaces and types consumed by
    embedders. Signature changes require a recompile. Embedding the `Base*`
@@ -122,6 +145,11 @@ Two independent compatibility axes govern this module:
    renamed, or repurposed within v1. A breaking wire change would ship as a
    new `bomly.plugin.v2` service negotiated alongside v1 — old binaries keep
    speaking v1.
+3. **Scan record (`bomly.scan.v1`)** — the document `scan.Encode` writes and
+   `scan.Decode` reads. Additive within v1: new optional keys only, readers
+   ignore keys they do not know, `schema_version` names the schema, and
+   `Decode` refuses another rather than guessing. A breaking change ships
+   as `bomly.scan.v2`.
 
 Plugin binaries built against an older SDK release keep working against newer
 hosts (and vice versa) as long as both speak protocol v1.

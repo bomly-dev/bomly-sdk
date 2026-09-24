@@ -20,7 +20,11 @@
 // Which package to import: implementing a component means plugin and model;
 // a plugin binary's main means runtime; hosting plugins means runtime; the
 // helper kits (detectorkit, matcherkit, testkit, conformance, purlkit,
-// spdxkit, sbom, system, filecache, logkit) build on the same four.
+// spdxkit, system, filecache, logkit) build on the same four. Two more
+// packages sit beside them: sbom, the SBOM codec, with graphview for what a
+// document may say about a node; and scan, the scan record -- the document
+// one run of `bomly scan` produces, built from graph entries, a registry and
+// findings, encoded byte-stably under the schema bomly.scan.v1.
 //
 // The plugin wire protocol, bomly.plugin.v1, is JSON over gRPC and strictly
 // additive: its payload types are the model and plugin structs, so their
