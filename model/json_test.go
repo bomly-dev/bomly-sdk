@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -316,5 +317,136 @@ func TestGraphMarshalIsInsertionOrderIndependent(t *testing.T) {
 		if prev.FromID > next.FromID || (prev.FromID == next.FromID && prev.ToID >= next.ToID) {
 			t.Fatalf("edges not in (fromId, toId) order: %v before %v", prev, next)
 		}
+	}
+}
+
+// withGraphBounds shrinks the decode bounds for one test so a refusal can be
+// exercised without building a payload the size of the real bound.
+func withGraphBounds(t *testing.T, bounds graphBounds) {
+	t.Helper()
+	previous := graphDecodeBounds
+	graphDecodeBounds = bounds
+	t.Cleanup(func() { graphDecodeBounds = previous })
+}
+
+func withRegistryBounds(t *testing.T, bounds registryBounds) {
+	t.Helper()
+	previous := registryDecodeBounds
+	registryDecodeBounds = bounds
+	t.Cleanup(func() { registryDecodeBounds = previous })
+}
+
+func TestGraphUnmarshalRefusesRepeatedSectionKeys(t *testing.T) {
+	for _, payload := range []string{
+		`{"nodes":[],"nodes":[]}`,
+		`{"edges":[],"nodes":[],"edges":[]}`,
+	} {
+		var graph Graph
+		err := json.Unmarshal([]byte(payload), &graph)
+		if err == nil || !strings.Contains(err.Error(), "key repeated") {
+			t.Fatalf("Unmarshal(%s) error = %v, want a repeated-key refusal", payload, err)
+		}
+	}
+}
+
+func TestGraphUnmarshalAcceptsEdgesBeforeNodesAndUnknownKeys(t *testing.T) {
+	payload := `{"future":{"nested":[1,2]},"edges":[{"fromId":"a","toId":"b"}],"nodes":[{"id":"a","name":"a","version":"1.0.0"},{"id":"b","name":"b","version":"1.0.0"}],"nodes_count":2}`
+	var graph Graph
+	if err := json.Unmarshal([]byte(payload), &graph); err != nil {
+		t.Fatalf("Unmarshal(): %v", err)
+	}
+	if graph.Size() != 2 {
+		t.Fatalf("size = %d, want 2", graph.Size())
+	}
+	// Wire IDs are re-minted on decode, so count the edge rather than
+	// looking it up by its wire name.
+	edges := 0
+	graph.WalkTypedEdges(func(_, _ GraphNode, _ EdgeKind) bool {
+		edges++
+		return true
+	})
+	if edges != 1 {
+		t.Fatalf("edges = %d, want 1", edges)
+	}
+}
+
+func TestGraphUnmarshalRefusesMoreNodesThanTheBound(t *testing.T) {
+	withGraphBounds(t, graphBounds{bytes: MaxPayloadBytes, nodes: 2, edges: MaxGraphEdges})
+	payload := `{"nodes":[{"id":"a","name":"a","version":"1"},{"id":"b","name":"b","version":"1"},{"id":"c","name":"c","version":"1"}]}`
+	var graph Graph
+	err := json.Unmarshal([]byte(payload), &graph)
+	if !errors.Is(err, ErrPayloadTooLarge) || !strings.Contains(err.Error(), "graph nodes") {
+		t.Fatalf("error = %v, want ErrPayloadTooLarge for graph nodes", err)
+	}
+	// The bound is a bound, not a truncation: nothing of the payload survives.
+	if graph.Size() != 0 {
+		t.Fatalf("a refused payload left %d nodes behind", graph.Size())
+	}
+}
+
+func TestGraphUnmarshalRefusesMoreEdgesThanTheBound(t *testing.T) {
+	withGraphBounds(t, graphBounds{bytes: MaxPayloadBytes, nodes: MaxGraphNodes, edges: 1})
+	payload := `{"nodes":[{"id":"a","name":"a","version":"1"},{"id":"b","name":"b","version":"1"},{"id":"c","name":"c","version":"1"}],"edges":[{"fromId":"a","toId":"b"},{"fromId":"a","toId":"c"}]}`
+	var graph Graph
+	err := json.Unmarshal([]byte(payload), &graph)
+	if !errors.Is(err, ErrPayloadTooLarge) || !strings.Contains(err.Error(), "graph edges") {
+		t.Fatalf("error = %v, want ErrPayloadTooLarge for graph edges", err)
+	}
+}
+
+func TestGraphUnmarshalRefusesOverBoundBytes(t *testing.T) {
+	withGraphBounds(t, graphBounds{bytes: 16, nodes: MaxGraphNodes, edges: MaxGraphEdges})
+	var graph Graph
+	err := json.Unmarshal([]byte(`{"nodes":[],"edges":[]}`), &graph)
+	if !errors.Is(err, ErrPayloadTooLarge) {
+		t.Fatalf("error = %v, want ErrPayloadTooLarge", err)
+	}
+	if err := json.Unmarshal([]byte(`{"nodes":[]}`), &graph); err != nil {
+		t.Fatalf("a payload within the bound was refused: %v", err)
+	}
+}
+
+func TestGraphUnmarshalRefusesTrailingData(t *testing.T) {
+	var graph Graph
+	if err := json.Unmarshal([]byte(`{"nodes":[]} {"nodes":[]}`), &graph); err == nil {
+		t.Fatal("trailing data was accepted")
+	}
+}
+
+func TestPackageRegistryUnmarshalRefusesOverBound(t *testing.T) {
+	withRegistryBounds(t, registryBounds{bytes: MaxPayloadBytes, packages: 1})
+	var registry PackageRegistry
+	err := json.Unmarshal([]byte(`{"pkg:npm/a@1.0.0":{"name":"a"},"pkg:npm/b@1.0.0":{"name":"b"}}`), &registry)
+	if !errors.Is(err, ErrPayloadTooLarge) || !strings.Contains(err.Error(), "package registry") {
+		t.Fatalf("error = %v, want ErrPayloadTooLarge for the registry", err)
+	}
+	// A repeated key is one package, not two, so it fits under the bound.
+	if err := json.Unmarshal([]byte(`{"pkg:npm/a@1.0.0":{"name":"a"},"pkg:npm/a@1.0.0":{"name":"a","matched":true}}`), &registry); err != nil {
+		t.Fatalf("repeated key refused: %v", err)
+	}
+	pkg, ok := registry.Get("pkg:npm/a@1.0.0")
+	if !ok || !pkg.Matched {
+		t.Fatalf("repeated key did not keep the last member: %+v", pkg)
+	}
+
+	withRegistryBounds(t, registryBounds{bytes: 8, packages: MaxRegistryPackages})
+	if err := json.Unmarshal([]byte(`{"pkg:npm/a@1.0.0":{}}`), &registry); !errors.Is(err, ErrPayloadTooLarge) {
+		t.Fatalf("error = %v, want ErrPayloadTooLarge for bytes", err)
+	}
+}
+
+// TestDecodeBoundsAdmitTheLargestKnownWorkspace documents what the bounds
+// are sized against: the largest real dependency graphs are a few tens of
+// thousands of nodes, and the bounds leave several times that.
+func TestDecodeBoundsAdmitTheLargestKnownWorkspace(t *testing.T) {
+	const largestKnownNodes = 50_000
+	if MaxGraphNodes < 5*largestKnownNodes {
+		t.Fatalf("MaxGraphNodes = %d leaves under 5x the largest known workspace", MaxGraphNodes)
+	}
+	if MaxGraphEdges < 8*MaxGraphNodes {
+		t.Fatalf("MaxGraphEdges = %d is under 8 per node", MaxGraphEdges)
+	}
+	if MaxRegistryPackages != MaxGraphNodes {
+		t.Fatalf("MaxRegistryPackages = %d, want MaxGraphNodes", MaxRegistryPackages)
 	}
 }

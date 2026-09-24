@@ -51,6 +51,12 @@ func FuzzGraphJSON(f *testing.F) {
 		`{"nodes":[{"kind":"manifest","id":"manifest:package.json"},{"kind":"module","id":"module:package.json#app","name":"app","declaring_manifest_path":"package.json"},{"kind":"dependency","id":"pkg:npm/left-pad@1.3.0","purl":"pkg:npm/left-pad@1.3.0","name":"left-pad","version":"1.3.0"}],"edges":[{"fromId":"module:package.json#app","toId":"pkg:npm/left-pad@1.3.0"}]}`,
 		`{"nodes":[{"id":"a","ecosystem":"npm","name":"left-pad","version":"1.3.0"},{"id":"b","ecosystem":"npm","name":"Left-Pad","version":"1.3.0"}],"edges":[{"fromId":"a","toId":"b"}]}`,
 		`{"nodes":[{"kind":"dependency","id":"legacy-opaque","version":"1.0.0"}]}`,
+		// Bound and shape edge cases: a repeated section key, sections out of
+		// order, null sections, an unknown key.
+		`{"nodes":[],"nodes":[]}`,
+		`{"edges":[{"fromId":"a","toId":"b"}],"nodes":[{"id":"a","name":"a","version":"1.0.0"},{"id":"b","name":"b","version":"1.0.0"}]}`,
+		`{"nodes":null,"edges":null}`,
+		`{"x":{"deep":[1,2,3]},"nodes":[]}`,
 		// Fan-out with the edges listed out of order: the encoder must sort
 		// them, or requireStableJSON below sees Go's map order.
 		`{"nodes":[{"id":"a","name":"a","version":"1.0.0"},{"id":"b","name":"b","version":"1.0.0"},{"id":"c","name":"c","version":"1.0.0"}],"edges":[{"fromId":"a","toId":"c"},{"fromId":"a","toId":"b"},{"fromId":"b","toId":"c"}]}`,
@@ -87,6 +93,9 @@ func FuzzPackageRegistryJSON(f *testing.F) {
 		`null`,
 		`{"pkg:npm/react@18.2.0":{"name":"react","version":"18.2.0","purl":"pkg:npm/react@18.2.0"}}`,
 		`{"pkg:golang/github.com/bomly-dev/bomly-cli@v0.1.0":{"name":"github.com/bomly-dev/bomly-cli","version":"v0.1.0"}}`,
+		// A repeated key keeps the last member; a null member is an empty package.
+		`{"pkg:npm/a@1.0.0":{"name":"a","version":"1.0.0"},"pkg:npm/a@1.0.0":{"name":"a","version":"1.0.0","matched":true}}`,
+		`{"pkg:npm/a@1.0.0":null}`,
 	} {
 		f.Add([]byte(seed))
 	}
