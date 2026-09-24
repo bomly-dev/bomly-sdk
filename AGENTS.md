@@ -14,10 +14,11 @@ types, `Module`/`HostContext`, validation), `runtime` (how a component runs
 out of process: the go-plugin gRPC transport, both ends), and `httpkit`
 (outbound HTTP policy). The module root declares nothing but the map. Around
 them sit the helper subpackages (`purlkit`, `spdxkit`, `system`, `filecache`,
-`logkit`, `detectorkit`, `matcherkit`, `testkit`, `conformance`) and the SBOM
+`logkit`, `detectorkit`, `matcherkit`, `testkit`, `conformance`), the SBOM
 codec (`sbom`, with `graphview` beside it), which the CLI and the Syft and
 Grype plugins adopt from the release that carries it in place of the copies
-they carried (bomly-cli ADR-0045).
+they carried (bomly-cli ADR-0045), and the scan record (`scan`): the
+document `bomly scan --json` emits, versioned as `bomly.scan.v1`.
 
 ## This module is the source of truth
 
@@ -151,13 +152,20 @@ Two axes, with different rules (see `README.md` for the full policy):
   stay insulated from interface growth.
 - **Wire (`bomly.plugin.v1`)** — strictly additive, forever. Payloads are
   JSON over gRPC, so struct JSON tags *are* the wire schema. New fields must
-  be optional and tagged `omitempty` (`TestWireV1NewFieldsAreOmitEmpty`
-  guards this for the payloads and fields it enumerates — extend its
-  enumeration when adding wire surface; a field outside it is not covered);
+  be optional and tagged `omitempty` (`TestWireV1TaggedFieldsDeclareOmitEmpty`
+  walks every type reachable from the wire roots and enforces it;
+  `TestWireV1NewFieldsAreOmitEmpty` additionally pins the zero-value keys of
+  the payloads and fields it enumerates — extend its enumeration when adding
+  wire surface);
   frozen fixtures must keep decoding
   (`TestWireV1FixturesDecode` — never "fix" a fixture); fields and RPCs are
   never removed, renamed, or repurposed within v1. A breaking change ships
   as `bomly.plugin.v2` negotiated alongside v1.
+- **Scan record (`bomly.scan.v1`)** — the document `scan.Encode` writes:
+  additive within v1, `schema_version` names it, `scan.Decode` refuses
+  another. `scan/record_test.go` is its own omitempty guard, because the
+  plugin walk stops at `plugin` and `model`. Nothing in `scan` moves a
+  record anywhere; how one travels is not this module's to decide.
 
 Release ordering: **this module tags first, plugin repositories adopt the new
 tag, then bomly-cli updates its pin.** Never ask consumers to pin a commit or
@@ -201,8 +209,11 @@ branch.
 
 Four packages carry the contract, and the dependency direction between them
 is fixed: `runtime` imports `plugin`, `plugin` imports `model`, `model`
-imports only `purlkit`, `spdxkit`, and the standard library; `httpkit` is a
-leaf that `plugin` reaches for `HostContext`. Nothing imports upward. The
+imports only `purlkit`, `spdxkit`, the standard library, and the two format
+libraries whose vocabularies it cites by constant (cyclonedx-go,
+spdx/tools-golang); `httpkit` is a leaf that `plugin` reaches for
+`HostContext`; `scan` imports `model`, `plugin` and `graphview`, and nothing
+imports `scan`. Nothing imports upward. The
 module root holds `doc.go` (the map) and `repo_guards_test.go` (the import
 boundary and the AGENTS.md/CLAUDE.md mirror, both keyed on the root
 directory) and nothing else; do not add code there.
@@ -215,9 +226,12 @@ type that already has a home. What lives where:
 - `model/` — graph core: `node.go`, `node_access.go`, `dependency.go`,
   `coordinates.go`, `graph.go`, `edge.go`, `relationship.go`,
   `container.go`; packages and enrichment: `package.go`, `registry.go`,
-  `vulnerability.go`, `usage.go`, `attestation.go`, `scorecard.go`,
-  `metadata.go`; format vocabularies: `contact.go`, `digest.go`,
-  `external_reference.go`, `document.go`, `origin.go`; vocabularies and
+  `vulnerability.go`, `vulnerability_analysis.go` (VEX impact analysis,
+  citing cyclonedx-go's constants), `assertions.go` (the component-level
+  claims `DependencyNode` and `Package` embed), `usage.go`,
+  `attestation.go`, `scorecard.go`, `metadata.go`; format vocabularies:
+  `contact.go`, `digest.go`, `external_reference.go`, `document.go`,
+  `origin.go`; vocabularies and
   identity: `ecosystem.go`, `package_manager.go`, `language.go`, `purl.go`,
   `normalization.go`; wire codecs and adapters: `json.go`,
   `scope_cyclonedx.go`; merge and policy: `merge.go`, `policy.go`,
@@ -240,6 +254,10 @@ type that already has a home. What lives where:
   (the per-process environment). `boundary_test.go` fails on any json-tagged
   struct here: the transport carries payloads and declares none.
 - `httpkit/` — `client.go`, `proxy.go`.
+- `scan/` — `record.go` (the record and its sections, `SchemaVersion`),
+  `encode.go` (`Encode`, `Decode`, `Digest`, the bounds), `build.go`
+  (`FromGraphEntries`, `VerdictOf`), `compare.go`. Guard: `record_test.go`
+  (every struct reachable from `Record` declares omitempty or omitzero).
 
 The managed-plugin transport (go-plugin, gRPC, protobuf) lives only in
 `runtime/`; `repo_guards_test.go` fails an import of those libraries anywhere

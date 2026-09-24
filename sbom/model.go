@@ -332,6 +332,12 @@ type Vulnerability struct {
 	// Recommendation is remediation guidance derived from known fixed
 	// versions (CycloneDX `recommendation`; SPDX 2.3 has no equivalent).
 	Recommendation string
+
+	// Analysis is the VEX impact analysis the source attached to this
+	// advisory for this component (CycloneDX `analysis`; SPDX 2.3 has no
+	// equivalent). The SDK type is used directly, as the other assertions
+	// are (ADR-0037): a projection would have to be re-gated on both sides.
+	Analysis *model.VulnerabilityAnalysis
 }
 
 // EOL is a format-agnostic projection of end-of-life enrichment for a component.

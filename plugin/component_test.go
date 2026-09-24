@@ -250,3 +250,31 @@ func TestComponentNameIsBounded(t *testing.T) {
 		}
 	}
 }
+
+func TestDescriptorVersionIsGatedLikeTheName(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		ok      bool
+	}{
+		{"", true},
+		{"1.2.3", true},
+		{"v0.4.0-rc1+build.7", true},
+		{"1.0\x00", false},
+		{strings.Repeat("9", model.MaxComponentNameLength+1), false},
+		{"\xff", false},
+	} {
+		err := ValidateMatcherDescriptor(&MatcherDescriptor{Name: "m", Version: tc.version})
+		if (err == nil) != tc.ok {
+			t.Errorf("version %q: err = %v, want ok=%v", tc.version, err, tc.ok)
+		}
+	}
+	for kind, err := range map[string]error{
+		"detector": ValidateDetectorDescriptor(&DetectorDescriptor{Name: "d", Version: "1.0"}),
+		"auditor":  ValidateAuditorDescriptor(&AuditorDescriptor{Name: "a", Version: "1.0"}),
+		"analyzer": ValidateAnalyzerDescriptor(&AnalyzerDescriptor{Name: "n", Version: "1.0"}),
+	} {
+		if err != nil {
+			t.Errorf("%s with a version: %v", kind, err)
+		}
+	}
+}

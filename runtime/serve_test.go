@@ -3,9 +3,13 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"net"
+	"strings"
 	"testing"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
@@ -139,5 +143,81 @@ func TestServiceServerAnalyzerDescriptorValidated(t *testing.T) {
 	_, err := server.AnalyzerDescriptor(context.Background(), &emptypb.Empty{})
 	if status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("expected InvalidArgument for empty name, got %v", err)
+	}
+}
+
+type stubDetector struct {
+	detect func(context.Context, *plugin.DetectRequest) (*plugin.DetectResponse, error)
+}
+
+func (d stubDetector) Descriptor(context.Context) (*plugin.DetectorDescriptor, error) {
+	return &plugin.DetectorDescriptor{Name: "stub"}, nil
+}
+
+func (d stubDetector) PackageManagerSupport(context.Context) ([]plugin.PackageManagerSupport, error) {
+	return nil, nil
+}
+
+func (d stubDetector) Ready(context.Context, *plugin.DetectRequest) (*plugin.ReadyResponse, error) {
+	return &plugin.ReadyResponse{Ready: true}, nil
+}
+
+func (d stubDetector) Applicable(context.Context, *plugin.DetectRequest) (*plugin.ApplicableResponse, error) {
+	return &plugin.ApplicableResponse{Applicable: true}, nil
+}
+
+func (d stubDetector) Detect(ctx context.Context, req *plugin.DetectRequest) (*plugin.DetectResponse, error) {
+	return d.detect(ctx, req)
+}
+
+// serveOverLoopback starts the plugin service the way serve does, minus
+// go-plugin's process handshake, and hands back a client on the same bound.
+func serveOverLoopback(t *testing.T, impl *serviceServer) *serviceClient {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	server := grpc.NewServer(serverOptions(nil)...)
+	registerPluginService(server, impl)
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(server.Stop)
+	conn, err := grpc.NewClient(listener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	return &serviceClient{conn: conn}
+}
+
+// TestManagedTransportCarriesAPayloadAboveTheGRPCDefault pins that both
+// ends of the transport accept a message larger than gRPC's 4 MiB default:
+// the request on the plugin side, the reply on the host side. Before the
+// bound was set, a graph of a few thousand nodes was refused with
+// ResourceExhausted on its way to a matcher.
+func TestManagedTransportCarriesAPayloadAboveTheGRPCDefault(t *testing.T) {
+	const above = 6 << 20
+	var received int
+	client := serveOverLoopback(t, &serviceServer{detector: stubDetector{
+		detect: func(_ context.Context, req *plugin.DetectRequest) (*plugin.DetectResponse, error) {
+			received = len(req.ProjectPath)
+			return &plugin.DetectResponse{Warnings: []plugin.DetectorWarning{{Type: "test", Message: strings.Repeat("y", above)}}}, nil
+		},
+	}})
+	resp, err := client.Detect(context.Background(), &plugin.DetectRequest{ProjectPath: strings.Repeat("x", above)})
+	if err != nil {
+		t.Fatalf("Detect over loopback: %v", err)
+	}
+	if received != above {
+		t.Fatalf("plugin side received %d bytes of project path, want %d", received, above)
+	}
+	if len(resp.Warnings) != 1 || len(resp.Warnings[0].Message) != above {
+		t.Fatalf("host side received %d warnings, want one of %d bytes", len(resp.Warnings), above)
+	}
+}
+
+func TestTransportBoundIsTwoPayloads(t *testing.T) {
+	if maxMessageBytes != 2*model.MaxPayloadBytes {
+		t.Fatalf("maxMessageBytes = %d, want 2 * model.MaxPayloadBytes", maxMessageBytes)
 	}
 }

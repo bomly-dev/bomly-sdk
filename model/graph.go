@@ -259,53 +259,18 @@ func foldNodes(surviving, witness GraphNode) {
 		}
 		survivor.Origins = MergeOrigins(survivor.Origins, incoming.Origins)
 		mergeDependencySources(survivor, incoming)
-		// Every witness's assertions about one package survive the fold:
-		// security identifiers and integrity claims union, detection
-		// scalars and metadata fill gaps. Dropping them would lose CPEs or
+		// Every witness's assertions about one package survive the fold
+		// under the classes Assertions declares: sets union, scalars fill
+		// gaps, both sides gated first. Dropping them would lose CPEs or
 		// digests from a second SBOM witness on insertion order alone.
-		survivor.CPEs = mergeStringSet(survivor.CPEs, incoming.CPEs)
-		survivor.Digests = mergeDigestSet(survivor.Digests, incoming.Digests)
-		// License claims are a set for the same reason they are on Package: a
-		// declaration and a conclusion are two claims about one package, and
-		// two witnesses that read different sources both have something to
-		// say.
-		// DetectionLicenses on both sides, not the typed field alone: a
-		// witness built before the typed field existed carries its claims in
-		// the deprecated metadata stash, and metadata merging keeps the
+		//
+		// DetectionLicenses on both sides first, not the typed field alone:
+		// a witness built before the typed field existed carries its claims
+		// in the deprecated metadata stash, and metadata merging keeps the
 		// survivor's value -- so the incoming witness's licenses would be
 		// dropped before seeding ever saw them.
 		survivor.Licenses = MergeLicenses(DetectionLicenses(survivor), DetectionLicenses(incoming))
-		survivor.ExternalReferences = MergeExternalReferences(survivor.ExternalReferences, incoming.ExternalReferences)
-		// The component-level document assertions are scalars — one supplier,
-		// one homepage — so a later witness contributes only what the first
-		// did not know.
-		//
-		// Both sides are gated before the gap is measured, not after. A node
-		// built in process never passed a codec, so a survivor could hold an
-		// unpublishable value — a homepage carrying credentials — which is
-		// non-empty and therefore blocks a valid incoming one, and is then
-		// dropped at encode. The result would be that a witness with a good
-		// homepage lost it to a witness that never had one.
-		survivor.Copyright = NormalizeCopyright(survivor.Copyright)
-		survivor.Description = NormalizeDescription(survivor.Description)
-		survivor.Homepage = NormalizeHomepage(survivor.Homepage)
-		survivor.Supplier = normalizedContact(survivor.Supplier)
-		survivor.Originator = normalizedContact(survivor.Originator)
-		if survivor.Copyright == "" {
-			survivor.Copyright = NormalizeCopyright(incoming.Copyright)
-		}
-		if survivor.Description == "" {
-			survivor.Description = NormalizeDescription(incoming.Description)
-		}
-		if survivor.Homepage == "" {
-			survivor.Homepage = NormalizeHomepage(incoming.Homepage)
-		}
-		if survivor.Supplier == nil {
-			survivor.Supplier = normalizedContact(incoming.Supplier)
-		}
-		if survivor.Originator == nil {
-			survivor.Originator = normalizedContact(incoming.Originator)
-		}
+		survivor.MergeFrom(incoming.Assertions)
 		// The source's own scope word fills a gap like the other document
 		// assertions, gated on both sides first for the same reason.
 		survivor.SourceScope = NormalizeSourceScope(survivor.SourceScope)

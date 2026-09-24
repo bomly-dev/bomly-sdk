@@ -193,11 +193,17 @@ func (v Vulnerability) MatchesConstraints(constraints []FailOnConstraint) bool {
 }
 
 // FindingPolicyDecision is a resolver's proposed policy status for one
-// finding. Source and Reason provide diagnostic provenance.
+// finding. Source and Reason provide diagnostic provenance: which resolver
+// decided, and why. It is also a wire value, carried on Finding.Decision, so
+// a verdict can be explained after the run that produced it has ended.
+//
+// Gate: Status is a FindingPolicyStatus or empty; Source and Reason are
+// free text. Merge class: scalar, fill-gaps -- a decision already recorded
+// is not overwritten by a later resolver's.
 type FindingPolicyDecision struct {
-	Status FindingPolicyStatus
-	Source string
-	Reason string
+	Status FindingPolicyStatus `json:"status,omitempty"`
+	Source string              `json:"source,omitempty"`
+	Reason string              `json:"reason,omitempty"`
 }
 
 // FindingPolicyResolver may refine a finding's policy status during auditing.

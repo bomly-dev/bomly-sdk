@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"github.com/bomly-dev/bomly-sdk/model"
+	"strings"
 )
 
 // ExecutionTargetKind identifies the top-level source selected by the user for one scan execution.
@@ -22,6 +23,30 @@ type ExecutionTarget struct {
 	Location      string              `json:"location,omitempty"`
 	RepositoryURL string              `json:"repositoryUrl,omitempty"`
 	Ref           string              `json:"ref,omitempty"`
+	// CommitSHA is the commit the scan actually ran against, resolved from
+	// Ref by the host: Ref is what was asked for, CommitSHA is what was
+	// found. Gate: NormalizeCommitSHA, applied by the producer. Optional;
+	// empty when the target is not a revision of a repository.
+	CommitSHA string `json:"commitSha,omitempty"`
+}
+
+// NormalizeCommitSHA returns value as a lowercase hexadecimal commit
+// identifier of 7 to 64 digits -- an abbreviated or full SHA-1, or a
+// SHA-256 -- or "" when value is not one. A producer applies it before
+// recording ExecutionTarget.CommitSHA so a ref name or a path can never be
+// mistaken for a commit.
+func NormalizeCommitSHA(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if len(value) < 7 || len(value) > 64 {
+		return ""
+	}
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return ""
+		}
+	}
+	return value
 }
 
 // Subproject identifies one package-manager root discovered beneath the execution target.

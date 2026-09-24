@@ -660,3 +660,47 @@ func TestConfiguredProvenanceDoesNotDuplicateAuthorsAcrossHops(t *testing.T) {
 		t.Errorf("a provenance-configured export is not a fixed point.\nfirst:\n%s\nsecond:\n%s", first, second)
 	}
 }
+
+// TestEveryTargetSurvivesIngestAsTheDocumentFormat pins that a decoded
+// document knows which format and specification version it was read as,
+// for every target the codec map names, and that a conversion never writes
+// that token into its output.
+func TestEveryTargetSurvivesIngestAsTheDocumentFormat(t *testing.T) {
+	for target := range codecs {
+		if target == TargetSyftJSON {
+			continue
+		}
+		g := mustGraph(t)
+		data, err := MarshalDepGraphJSON(g, target, BuildOptions{DocumentName: "format", DocumentNS: "https://example.test/format", ToolName: "test"}, EncodeOptions{})
+		if err != nil {
+			t.Fatalf("%s: marshal: %v", target, err)
+		}
+		doc, detected, err := UnmarshalAutoJSON(data)
+		if err != nil {
+			t.Fatalf("%s: ingest: %v", target, err)
+		}
+		if detected != target {
+			t.Fatalf("%s: detected as %s", target, detected)
+		}
+		if got := DocumentAssertionsFor(doc).Format; got != string(target) {
+			t.Fatalf("%s: assertions format = %q", target, got)
+		}
+		explicit, err := UnmarshalJSON(data, target)
+		if err != nil {
+			t.Fatalf("%s: explicit ingest: %v", target, err)
+		}
+		if explicit.Assertions.Format != string(target) {
+			t.Fatalf("%s: explicit ingest format = %q", target, explicit.Assertions.Format)
+		}
+		// Re-export from a graph that restates the source: the token must
+		// not appear anywhere in the bytes beyond the format's own header.
+		entries := []model.GraphEntry{{Graph: g, Manifest: model.ManifestMetadata{Kind: model.ManifestKindSBOM}, Document: DocumentAssertionsFor(doc)}}
+		out, err := MarshalGraphEntriesJSON(g, entries, target, BuildOptions{RestatesSource: true, ToolName: "test"}, EncodeOptions{})
+		if err != nil {
+			t.Fatalf("%s: re-export: %v", target, err)
+		}
+		if bytes.Contains(out, []byte(string(target))) {
+			t.Fatalf("%s: the source format token leaked into the export: %s", target, out)
+		}
+	}
+}

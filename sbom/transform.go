@@ -615,6 +615,7 @@ func vulnerabilitiesFromPackage(packageName string, vulns []model.Vulnerability)
 			FixedVersions:  append([]string(nil), v.FixedVersions...),
 			Description:    v.Details,
 			Recommendation: vulnerabilityRecommendation(packageName, v.FixedVersions),
+			Analysis:       v.Analysis.Clone(),
 		}
 		if vuln.Source == "" {
 			vuln.Source = v.DataSource

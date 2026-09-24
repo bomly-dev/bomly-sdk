@@ -1,13 +1,57 @@
 package model
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"path"
 	"sort"
 	"strings"
 )
+
+// Decode bounds. A payload past any of them is refused before it is
+// materialized, so what a reader allocates is bounded by what it accepted,
+// not by what it was sent. The numbers are deliberately dumb -- bytes and
+// counts -- and are frozen once pinned; there is nothing to tune in them.
+const (
+	// MaxPayloadBytes is the most a graph or registry payload may occupy on
+	// the wire. It equals the SBOM ingest cap in package sbom: a graph is
+	// what one ingestable document decodes to, and a payload that could not
+	// have come from one is not accepted either.
+	MaxPayloadBytes = 256 << 20
+	// MaxGraphNodes bounds the nodes of one graph payload. The largest real
+	// workspaces resolve to a few tens of thousands of dependencies; this is
+	// five times that, and a decoder that admits it still allocates in
+	// proportion to a count it has checked.
+	MaxGraphNodes = 1 << 18
+	// MaxGraphEdges bounds the edges of one graph payload: eight per node at
+	// the node bound. Lockfile graphs average two to four edges a node, and
+	// a dense workspace stays well under eight.
+	MaxGraphEdges = 1 << 21
+	// MaxRegistryPackages bounds one registry payload. A registry holds one
+	// package per distinct package URL and never outgrows the dependency
+	// nodes that seed it.
+	MaxRegistryPackages = MaxGraphNodes
+)
+
+// ErrPayloadTooLarge is returned, wrapped with what was too large, by the
+// graph and registry decoders when a payload exceeds a decode bound.
+var ErrPayloadTooLarge = errors.New("payload exceeds the decode bound")
+
+// The bounds a decoder consults. They are package variables rather than
+// the constants directly so a test can shrink them and exercise a refusal
+// without building a payload the size of the real bound.
+var (
+	graphDecodeBounds    = graphBounds{bytes: MaxPayloadBytes, nodes: MaxGraphNodes, edges: MaxGraphEdges}
+	registryDecodeBounds = registryBounds{bytes: MaxPayloadBytes, packages: MaxRegistryPackages}
+)
+
+type graphBounds struct{ bytes, nodes, edges int }
+
+type registryBounds struct{ bytes, packages int }
 
 // nodeWire is the flat protocol-v1 node payload: the legacy field set plus
 // the additive kind discriminator, origins list, and declaring manifest
@@ -324,6 +368,14 @@ type DependencyEdge struct {
 }
 
 // MarshalJSON encodes a graph as a stable transport-friendly adjacency list.
+//
+// Stable means byte-stable: nodes are written in ascending node-ID order and
+// edges in ascending (fromId, toId) order, so two graphs with the same
+// content encode to the same bytes whatever order their nodes were added in,
+// and whether a node was removed and added back. The slot order the graph
+// keeps internally reuses freed slots and the adjacency maps iterate in Go's
+// randomized order, so walking either would put the insertion history into
+// the payload -- which is what a digest over these bytes must not see.
 func (g *Graph) MarshalJSON() ([]byte, error) {
 	if g == nil {
 		return []byte("null"), nil
@@ -331,24 +383,36 @@ func (g *Graph) MarshalJSON() ([]byte, error) {
 	payload := graphJSON{
 		Nodes: make([]nodeWire, 0, g.Size()),
 	}
-	g.WalkNodes(func(node GraphNode) bool {
-		payload.Nodes = append(payload.Nodes, encodeNodeWire(node))
-		return true
-	})
-	g.WalkTypedEdges(func(from, to GraphNode, kind EdgeKind) bool {
-		edge := DependencyEdge{FromID: from.NodeID(), ToID: to.NodeID()}
-		// The kind is written only when the structure does not already imply
-		// it. A decoder derives an absent kind from the nodes, so writing a
-		// derived value would add bytes that say nothing -- and would change
-		// every existing payload, which is exactly what an additive field must
-		// not do. What survives here is a kind that contradicts derivation,
-		// which is the only kind a reader could not reconstruct.
-		if kind != DeriveEdgeKind(from, to) {
-			edge.Kind = kind
+	order := g.sortedIndices()
+	for _, idx := range order {
+		payload.Nodes = append(payload.Nodes, encodeNodeWire(g.nodes[idx]))
+	}
+	for _, fromIdx := range order {
+		relationships := g.outgoing[fromIdx]
+		if len(relationships) == 0 {
+			continue
 		}
-		payload.Edges = append(payload.Edges, edge)
-		return true
-	})
+		from := g.nodes[fromIdx]
+		for _, toIdx := range g.sortedAdjacent(relationships) {
+			if !g.alive[toIdx] {
+				continue
+			}
+			to := g.nodes[toIdx]
+			kind := relationships[toIdx]
+			edge := DependencyEdge{FromID: from.NodeID(), ToID: to.NodeID()}
+			// The kind is written only when the structure does not already
+			// imply it. A decoder derives an absent kind from the nodes, so
+			// writing a derived value would add bytes that say nothing -- and
+			// would change every existing payload, which is exactly what an
+			// additive field must not do. What survives here is a kind that
+			// contradicts derivation, which is the only kind a reader could
+			// not reconstruct.
+			if kind != DeriveEdgeKind(from, to) {
+				edge.Kind = kind
+			}
+			payload.Edges = append(payload.Edges, edge)
+		}
+	}
 	return json.Marshal(payload)
 }
 
@@ -364,8 +428,14 @@ func (g *Graph) UnmarshalJSON(data []byte) error {
 		*g = *New()
 		return nil
 	}
-	var payload graphJSON
-	if err := json.Unmarshal(data, &payload); err != nil {
+	// The byte bound comes first, before a decoder exists: the count bounds
+	// keep the elements past them from being decoded, but say nothing about
+	// the size of the ones before them.
+	if len(data) > graphDecodeBounds.bytes {
+		return fmt.Errorf("%w: graph: %d bytes, over %d", ErrPayloadTooLarge, len(data), graphDecodeBounds.bytes)
+	}
+	payload, err := decodeGraphPayload(data, graphDecodeBounds)
+	if err != nil {
 		return err
 	}
 	out := NewWithCapacity(len(payload.Nodes))
@@ -420,6 +490,121 @@ func (g *Graph) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// decodeGraphPayload reads the adjacency-list object one element at a time
+// and refuses it as soon as a section passes its count bound. Over-count is
+// an error rather than a truncation: a graph with its tail cut off is a
+// smaller graph that scans clean, which is the one way a decoder must not
+// fail. A repeated "nodes" or "edges" key is refused too -- encoding/json
+// would keep the last and silently discard the rest, and Bomly never writes
+// one. Unknown keys are skipped, and the two sections may come in any order.
+func decodeGraphPayload(data []byte, bounds graphBounds) (graphJSON, error) {
+	var payload graphJSON
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	if err := expectDelim(decoder, '{', "graph"); err != nil {
+		return payload, err
+	}
+	seen := make(map[string]struct{}, 2)
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return payload, fmt.Errorf("graph: %w", err)
+		}
+		key, _ := token.(string)
+		switch key {
+		case "nodes", "edges":
+			if _, dup := seen[key]; dup {
+				return payload, fmt.Errorf("graph: %q key repeated", key)
+			}
+			seen[key] = struct{}{}
+		default:
+			var skip json.RawMessage
+			if err := decoder.Decode(&skip); err != nil {
+				return payload, fmt.Errorf("graph: %q: %w", key, err)
+			}
+			continue
+		}
+		if key == "nodes" {
+			err = decodeBoundedArray(decoder, bounds.nodes, "graph nodes", func() error {
+				var node nodeWire
+				if err := decoder.Decode(&node); err != nil {
+					return err
+				}
+				payload.Nodes = append(payload.Nodes, node)
+				return nil
+			})
+		} else {
+			err = decodeBoundedArray(decoder, bounds.edges, "graph edges", func() error {
+				var edge DependencyEdge
+				if err := decoder.Decode(&edge); err != nil {
+					return err
+				}
+				payload.Edges = append(payload.Edges, edge)
+				return nil
+			})
+		}
+		if err != nil {
+			return payload, err
+		}
+	}
+	if err := expectDelim(decoder, '}', "graph"); err != nil {
+		return payload, err
+	}
+	if err := expectEnd(decoder, "graph"); err != nil {
+		return payload, err
+	}
+	return payload, nil
+}
+
+// decodeBoundedArray reads an array element by element through element,
+// refusing the array once it holds more than bound elements. A null array is
+// empty.
+func decodeBoundedArray(decoder *json.Decoder, bound int, what string, element func() error) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return fmt.Errorf("%s: %w", what, err)
+	}
+	if token == nil {
+		return nil
+	}
+	if delim, ok := token.(json.Delim); !ok || delim != '[' {
+		return fmt.Errorf("%s: expected an array, got %v", what, token)
+	}
+	count := 0
+	for decoder.More() {
+		if count >= bound {
+			return fmt.Errorf("%w: %s: more than %d elements", ErrPayloadTooLarge, what, bound)
+		}
+		if err := element(); err != nil {
+			return fmt.Errorf("%s[%d]: %w", what, count, err)
+		}
+		count++
+	}
+	if _, err := decoder.Token(); err != nil {
+		return fmt.Errorf("%s: %w", what, err)
+	}
+	return nil
+}
+
+func expectDelim(decoder *json.Decoder, want json.Delim, what string) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return fmt.Errorf("%s: %w", what, err)
+	}
+	if delim, ok := token.(json.Delim); !ok || delim != want {
+		return fmt.Errorf("%s: expected %q, got %v", what, want, token)
+	}
+	return nil
+}
+
+// expectEnd mirrors what json.Unmarshal enforces: nothing but whitespace may
+// follow the value.
+func expectEnd(decoder *json.Decoder, what string) error {
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("%s: trailing data after the payload", what)
+	}
+	return nil
+}
+
 // MarshalJSON encodes a package registry as a stable PURL-keyed object for
 // plugin transport.
 func (r *PackageRegistry) MarshalJSON() ([]byte, error) {
@@ -452,23 +637,59 @@ func (r *PackageRegistry) UnmarshalJSON(data []byte) error {
 		*r = *NewPackageRegistry()
 		return nil
 	}
-	payload := map[string]*Package{}
-	if err := json.Unmarshal(data, &payload); err != nil {
+	if len(data) > registryDecodeBounds.bytes {
+		return fmt.Errorf("%w: package registry: %d bytes, over %d", ErrPayloadTooLarge, len(data), registryDecodeBounds.bytes)
+	}
+	type entry struct {
+		purl string
+		pkg  *Package
+	}
+	// Read one member at a time, bounded by the count of distinct package
+	// URLs. A repeated key replaces the earlier member, which is what the
+	// map this replaced did; what changes is that the bound is checked
+	// before each new package is decoded rather than after all of them are.
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	if err := expectDelim(decoder, '{', "package registry"); err != nil {
 		return err
 	}
-	out := NewPackageRegistry()
-	purls := make([]string, 0, len(payload))
-	for purl := range payload {
-		purls = append(purls, purl)
+	entries := make([]entry, 0, 16)
+	index := make(map[string]int, 16)
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return fmt.Errorf("package registry: %w", err)
+		}
+		purl, _ := token.(string)
+		at, seen := index[purl]
+		if !seen && len(entries) >= registryDecodeBounds.packages {
+			return fmt.Errorf("%w: package registry: more than %d packages", ErrPayloadTooLarge, registryDecodeBounds.packages)
+		}
+		var pkg *Package
+		if err := decoder.Decode(&pkg); err != nil {
+			return fmt.Errorf("package registry[%q]: %w", purl, err)
+		}
+		if seen {
+			entries[at].pkg = pkg
+			continue
+		}
+		index[purl] = len(entries)
+		entries = append(entries, entry{purl: purl, pkg: pkg})
 	}
-	sort.Strings(purls)
-	for _, purl := range purls {
-		pkg := payload[purl]
+	if err := expectDelim(decoder, '}', "package registry"); err != nil {
+		return err
+	}
+	if err := expectEnd(decoder, "package registry"); err != nil {
+		return err
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].purl < entries[j].purl })
+	out := NewPackageRegistry()
+	for _, e := range entries {
+		pkg := e.pkg
 		if pkg == nil {
 			pkg = &Package{}
 		}
 		clone := pkg.Clone()
-		clone.PURL = purl
+		clone.PURL = e.purl
 		out.Add(clone)
 	}
 	*r = *out

@@ -347,7 +347,61 @@ func decodeCycloneDXVulnerability(source cdx.Vulnerability) Vulnerability {
 			}
 		}
 	}
+	vuln.Analysis = decodeCycloneDXAnalysis(source.Analysis)
 	return vuln
+}
+
+// decodeCycloneDXAnalysis reads the VEX block through the model's gate, so a
+// state or justification outside the specification's vocabulary is dropped
+// here rather than carried as a word CycloneDX does not define.
+func decodeCycloneDXAnalysis(source *cdx.VulnerabilityAnalysis) *model.VulnerabilityAnalysis {
+	if source == nil {
+		return nil
+	}
+	analysis := model.VulnerabilityAnalysis{
+		State:         model.ImpactAnalysisState(source.State),
+		Justification: model.ImpactAnalysisJustification(source.Justification),
+		Detail:        source.Detail,
+		FirstIssued:   source.FirstIssued,
+		LastUpdated:   source.LastUpdated,
+	}
+	if source.Response != nil {
+		for _, response := range *source.Response {
+			analysis.Response = append(analysis.Response, model.ImpactAnalysisResponse(response))
+		}
+	}
+	normalized, ok := analysis.Normalized()
+	if !ok {
+		return nil
+	}
+	return &normalized
+}
+
+// cycloneDXAnalysis writes the VEX block back in the library's shape; the
+// value was gated on the way in and again wherever it was merged.
+func cycloneDXAnalysis(analysis *model.VulnerabilityAnalysis) *cdx.VulnerabilityAnalysis {
+	if analysis == nil {
+		return nil
+	}
+	normalized, ok := analysis.Normalized()
+	if !ok {
+		return nil
+	}
+	out := &cdx.VulnerabilityAnalysis{
+		State:         cdx.ImpactAnalysisState(normalized.State),
+		Justification: cdx.ImpactAnalysisJustification(normalized.Justification),
+		Detail:        normalized.Detail,
+		FirstIssued:   normalized.FirstIssued,
+		LastUpdated:   normalized.LastUpdated,
+	}
+	if len(normalized.Response) > 0 {
+		responses := make([]cdx.ImpactAnalysisResponse, 0, len(normalized.Response))
+		for _, response := range normalized.Response {
+			responses = append(responses, cdx.ImpactAnalysisResponse(response))
+		}
+		out.Response = &responses
+	}
+	return out
 }
 
 // decodeCycloneDXComponent reads one component, from the inventory or from
@@ -1033,6 +1087,13 @@ func cycloneDXVulnerabilities(components []Component) []cdx.Vulnerability {
 				acc = &accumulator{vuln: v, order: order}
 				order++
 				byID[v.ID] = acc
+			} else if v.Analysis != nil {
+				// One BOM-level advisory carries one analysis block, so the
+				// per-component copies fold: the first component's words
+				// stand and a later one fills only what the first left
+				// empty, responses unioning. The rest of the record keeps
+				// the first copy, as it always has.
+				acc.vuln.Analysis = model.MergeVulnerabilityAnalysis(acc.vuln.Analysis, v.Analysis)
 			}
 			acc.refs = append(acc.refs, comp.ID)
 		}
@@ -1084,6 +1145,7 @@ func cycloneDXVulnerability(v Vulnerability, refs []string) cdx.Vulnerability {
 		}
 		vuln.Advisories = &advisories
 	}
+	vuln.Analysis = cycloneDXAnalysis(v.Analysis)
 	if len(refs) > 0 {
 		sorted := append([]string(nil), refs...)
 		sort.Strings(sorted)

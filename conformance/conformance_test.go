@@ -21,7 +21,7 @@ type fakeDetector struct {
 }
 
 func (fakeDetector) Descriptor() plugin.DetectorDescriptor {
-	return plugin.DetectorDescriptor{Name: "conformance-fake-detector"}
+	return plugin.DetectorDescriptor{Name: "conformance-fake-detector", Version: "0.0.1"}
 }
 
 func (fakeDetector) PackageManagerSupport() []plugin.PackageManagerSupport {
@@ -36,7 +36,7 @@ func fakeDetectorModule() plugin.Module {
 	return plugin.Module{
 		Kind: plugin.PluginKindDetector,
 		Detector: &plugin.DetectorModule{
-			Descriptor: plugin.DetectorDescriptor{Name: "conformance-fake-detector"},
+			Descriptor: plugin.DetectorDescriptor{Name: "conformance-fake-detector", Version: "0.0.1"},
 			Support:    []plugin.PackageManagerSupport{plugin.Support(model.PackageManagerNPM, "package-lock.json")},
 			New: func(context.Context, plugin.HostContext) (plugin.Detector, error) {
 				return fakeDetector{}, nil
@@ -59,6 +59,7 @@ type fakeMatcher struct {
 func fakeMatcherDescriptor() plugin.MatcherDescriptor {
 	return plugin.MatcherDescriptor{
 		Name:         "conformance-fake-matcher",
+		Version:      "0.0.1",
 		Capabilities: []string{plugin.CapabilityPackageUpdates},
 		ConfigSchema: plugin.MustConfigSchemaFor(fakeMatcherConfig{}),
 	}
@@ -214,6 +215,7 @@ type matcher struct {
 func descriptor() plugin.MatcherDescriptor {
 	return plugin.MatcherDescriptor{
 		Name:         "conformance-fake-matcher",
+		Version:      "0.0.1",
 		Capabilities: []string{plugin.CapabilityPackageUpdates},
 		ConfigSchema: plugin.MustConfigSchemaFor(config{}),
 	}
