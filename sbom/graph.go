@@ -2,6 +2,7 @@ package sbom
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	spdxcommon "github.com/spdx/tools-golang/spdx/v2/common"
@@ -145,8 +146,140 @@ func componentIdentityHint(component Component) string {
 
 // ToGraph converts a neutral SBOM document back into a dependency graph.
 func ToGraph(doc *Document) (*model.Graph, error) {
+	depsGraph, _, err := toGraph(doc)
+	return depsGraph, err
+}
+
+// ToGraphEntry converts a document into one manifest-scoped graph entry:
+// the graph ToGraph builds, the document's own assertions, and -- carried in
+// Packages, where consolidation folds them into the registry -- what the
+// document asserted about its packages that a graph node cannot hold: the
+// advisories it listed for a component, with their VEX analysis, and a
+// component's end-of-life record. Before this, both were read from the
+// document and dropped at this hop, so a document that said a package was
+// vulnerable, or not affected, produced a graph that said neither.
+//
+// Only components that carried one or the other get a package; the rest are
+// what the graph already says. Two components that mint one identity fold
+// into one package under the registry's merge classes. The slice is ordered
+// by package URL.
+func ToGraphEntry(doc *Document, manifest model.ManifestMetadata) (model.GraphEntry, error) {
+	depsGraph, idMap, err := toGraph(doc)
+	if err != nil {
+		return model.GraphEntry{}, err
+	}
+	entry := model.GraphEntry{Graph: depsGraph, Manifest: manifest, Document: DocumentAssertionsFor(doc)}
+	byPURL := make(map[string]*model.Package)
+	for _, component := range doc.Components {
+		if len(component.Vulnerabilities) == 0 && component.EOL == nil {
+			continue
+		}
+		nodeID, ok := idMap[component.ID]
+		if !ok {
+			continue
+		}
+		node, ok := depsGraph.DependencyNode(nodeID)
+		if !ok {
+			continue
+		}
+		pkg := model.PackageFromDependencyNode(node)
+		pkg.Vulnerabilities = packageVulnerabilities(component.Vulnerabilities)
+		pkg.EOL = packageEOL(component.EOL)
+		if existing, dup := byPURL[pkg.PURL]; dup {
+			existing.MergeFrom(pkg)
+			continue
+		}
+		byPURL[pkg.PURL] = pkg
+	}
+	if len(byPURL) > 0 {
+		entry.Packages = make([]*model.Package, 0, len(byPURL))
+		for _, pkg := range byPURL {
+			entry.Packages = append(entry.Packages, pkg)
+		}
+		sort.Slice(entry.Packages, func(i, j int) bool { return entry.Packages[i].PURL < entry.Packages[j].PURL })
+	}
+	return entry, nil
+}
+
+// packageVulnerabilities is the ingest-side inverse of
+// vulnerabilitiesFromPackage: what a document's advisory record maps onto the
+// registry's OSV-aligned shape. The recommendation is not carried -- the
+// exporter derives it from the fixed versions -- and the severity band,
+// first rating, CWEs, advisory URLs, description, fixed versions and
+// analysis are.
+func packageVulnerabilities(vulns []Vulnerability) []model.Vulnerability {
+	out := make([]model.Vulnerability, 0, len(vulns))
+	for _, v := range vulns {
+		if strings.TrimSpace(v.ID) == "" {
+			continue
+		}
+		vuln := model.Vulnerability{
+			ID:             v.ID,
+			Source:         v.Source,
+			ParsedSeverity: model.ParseSeverityLevel(v.Severity),
+			Details:        v.Description,
+			FixedVersions:  append([]string(nil), v.FixedVersions...),
+			Analysis:       v.Analysis.Clone(),
+		}
+		if v.Score != nil || v.Vector != "" {
+			score := model.CVSSScore{Vector: v.Vector, Version: model.SeverityType(cvssVersionForMethod(v.Method)), Source: v.Source}
+			if v.Score != nil {
+				score.Score = *v.Score
+			}
+			vuln.CVSS = []model.CVSSScore{score}
+		}
+		for _, cwe := range v.CWEs {
+			if cwe > 0 {
+				vuln.CWEs = append(vuln.CWEs, model.CWE{ID: fmt.Sprintf("CWE-%d", cwe)})
+			}
+		}
+		for _, url := range v.Advisories {
+			if url = strings.TrimSpace(url); url != "" {
+				vuln.References = append(vuln.References, model.Reference{URL: url, Type: model.ReferenceTypeAdvisory})
+			}
+		}
+		out = append(out, vuln)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// cvssVersionForMethod is the inverse of cvssMethodForVersion: the CVSS
+// version a CycloneDX scoring method names, or "" for a method that is not
+// a CVSS version.
+func cvssVersionForMethod(method string) string {
+	switch strings.TrimSpace(method) {
+	case "CVSSv2":
+		return "2.0"
+	case "CVSSv3":
+		return "3.0"
+	case "CVSSv31":
+		return "3.1"
+	case "CVSSv4":
+		return "4.0"
+	default:
+		return ""
+	}
+}
+
+// packageEOL projects a document's end-of-life record onto the registry's.
+// Source is left empty: it names the matcher that asserted the record, and
+// a document is not one.
+func packageEOL(eol *EOL) *model.PackageEOL {
+	if eol == nil {
+		return nil
+	}
+	return &model.PackageEOL{EOL: eol.EOL, EOLDate: eol.EOLDate, Cycle: eol.Cycle, LatestVersion: eol.LatestVersion}
+}
+
+// toGraph builds the graph and returns the mapping from each component's
+// document ID to the node identity its coordinates minted, which is what
+// ToGraphEntry needs to attach package facts to the right node.
+func toGraph(doc *Document) (*model.Graph, map[string]string, error) {
 	if doc == nil {
-		return nil, ErrNilDocument
+		return nil, nil, ErrNilDocument
 	}
 
 	depsGraph := model.New()
@@ -192,7 +325,7 @@ func ToGraph(doc *Document) (*model.Graph, error) {
 			// URL is an error, with no lenient path and no pkg:generic
 			// coercion. The message names the component so the author can
 			// find it, since the fix is in their document rather than here.
-			return nil, fmt.Errorf("sbom component %q (%s): %w", component.ID, componentIdentityHint(component), err)
+			return nil, nil, fmt.Errorf("sbom component %q (%s): %w", component.ID, componentIdentityHint(component), err)
 		}
 		pkg.Scopes = append([]model.Scope(nil), component.Scopes...)
 		// Through the gate, not copied: the field crosses the same trust
@@ -213,7 +346,7 @@ func ToGraph(doc *Document) (*model.Graph, error) {
 		// digests. InsertNode applies the declared merge classes instead,
 		// scalars filling gaps and sets unioning (ADR-0041).
 		if _, err := depsGraph.InsertNode(pkg); err != nil {
-			return nil, fmt.Errorf("add package %q: %w", component.ID, err)
+			return nil, nil, fmt.Errorf("add package %q: %w", component.ID, err)
 		}
 		idMap[component.ID] = packageID
 	}
@@ -241,12 +374,12 @@ func ToGraph(doc *Document) (*model.Graph, error) {
 				continue
 			}
 			if err := depsGraph.AddEdge(fromID, toID); err != nil {
-				return nil, fmt.Errorf("add dependency %q -> %q: %w", fromID, toID, err)
+				return nil, nil, fmt.Errorf("add dependency %q -> %q: %w", fromID, toID, err)
 			}
 		}
 	}
 
-	return depsGraph, nil
+	return depsGraph, idMap, nil
 }
 
 // isDocumentRootPseudoPackage reports whether a component stands for the

@@ -2,6 +2,7 @@ package sbom
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -221,5 +222,97 @@ func TestToGraphGatesAHandBuiltComponentCopyright(t *testing.T) {
 	}
 	if got := g.DependencyNodes()[0].Copyright; got != "Copyright Walmart" {
 		t.Fatalf("node copyright = %q, want the control character dropped", got)
+	}
+}
+
+const entryBOM = `{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,
+  "components":[
+    {"bom-ref":"a","type":"library","name":"a","version":"1.0.0","purl":"pkg:npm/a@1.0.0",
+     "properties":[{"name":"bomly:eol","value":"true"},{"name":"bomly:eol_date","value":"2025-01-01"},{"name":"bomly:eol_cycle","value":"1"}]},
+    {"bom-ref":"b","type":"library","name":"b","version":"1.0.0","purl":"pkg:npm/b@1.0.0"},
+    {"bom-ref":"a2","type":"library","name":"a","version":"1.0.0","purl":"pkg:npm/a@1.0.0"}],
+  "vulnerabilities":[{"id":"CVE-2024-0001","source":{"name":"osv"},"description":"bad","cwes":[79],
+    "advisories":[{"url":"https://osv.dev/CVE-2024-0001"}],
+    "ratings":[{"source":{"name":"osv"},"score":7.5,"severity":"high","method":"CVSSv31","vector":"CVSS:3.1/AV:N"}],
+    "analysis":{"state":"not_affected","justification":"code_not_reachable"},
+    "affects":[{"ref":"a"},{"ref":"a2"}]}]}`
+
+func TestToGraphEntryCarriesIngestedVulnerabilitiesAndEOL(t *testing.T) {
+	doc, _, err := UnmarshalAutoJSON([]byte(entryBOM))
+	if err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	entry, err := ToGraphEntry(doc, model.ManifestMetadata{Path: "in.cdx.json", Kind: model.ManifestKindSBOM})
+	if err != nil {
+		t.Fatalf("ToGraphEntry: %v", err)
+	}
+	if entry.Graph == nil || entry.Graph.Size() != 2 || entry.Document == nil || entry.Manifest.Path != "in.cdx.json" {
+		t.Fatalf("entry = %+v", entry)
+	}
+	// Two components minted one identity and fold into one package; b
+	// asserted nothing and gets none.
+	if len(entry.Packages) != 1 || entry.Packages[0].PURL != "pkg:npm/a@1.0.0" {
+		t.Fatalf("packages = %+v, want one for pkg:npm/a@1.0.0", entry.Packages)
+	}
+	pkg := entry.Packages[0]
+	if len(pkg.Vulnerabilities) != 1 {
+		t.Fatalf("vulnerabilities = %+v, want one", pkg.Vulnerabilities)
+	}
+	v := pkg.Vulnerabilities[0]
+	if v.ID != "CVE-2024-0001" || v.Source != "osv" || v.ParsedSeverity != "high" || v.Details != "bad" ||
+		len(v.CVSS) != 1 || v.CVSS[0].Score != 7.5 || v.CVSS[0].Version != "3.1" || len(v.CWEs) != 1 || v.CWEs[0].ID != "CWE-79" ||
+		len(v.References) != 1 || v.References[0].Type != model.ReferenceTypeAdvisory ||
+		v.Analysis == nil || v.Analysis.State != model.ImpactAnalysisStateNotAffected {
+		t.Fatalf("projected vulnerability = %+v", v)
+	}
+	if pkg.EOL == nil || !pkg.EOL.EOL || pkg.EOL.EOLDate != "2025-01-01" || pkg.EOL.Cycle != "1" || pkg.EOL.Source != "" {
+		t.Fatalf("projected eol = %+v", pkg.EOL)
+	}
+
+	// Through the graph hop and back out: the registry built from the entry
+	// re-emits what the document said.
+	registry := model.NewPackageRegistry()
+	registry.AddEntryPackages([]model.GraphEntry{entry})
+	out, err := MarshalGraphEntriesJSON(entry.Graph, []model.GraphEntry{entry}, TargetCycloneDX16JSON, BuildOptions{Registry: registry, RestatesSource: true, ToolName: "test"}, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	var bom cdx.BOM
+	if err := json.Unmarshal(out, &bom); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if bom.Vulnerabilities == nil || len(*bom.Vulnerabilities) != 1 {
+		t.Fatalf("re-exported vulnerabilities = %+v, want one", bom.Vulnerabilities)
+	}
+	vuln := (*bom.Vulnerabilities)[0]
+	if vuln.ID != "CVE-2024-0001" || vuln.Analysis == nil || vuln.Analysis.Justification != cdx.IAJCodeNotReachable ||
+		vuln.Ratings == nil || (*vuln.Ratings)[0].Method != cdx.ScoringMethodCVSSv31 || vuln.Affects == nil || len(*vuln.Affects) != 1 {
+		t.Fatalf("re-exported vulnerability = %+v", vuln)
+	}
+	if !strings.Contains(string(out), `"name":"bomly:eol_date","value":"2025-01-01"`) {
+		t.Fatalf("re-exported document lost the end-of-life record: %s", out)
+	}
+}
+
+func TestToGraphEntryGraphEqualsToGraph(t *testing.T) {
+	doc, _, err := UnmarshalAutoJSON([]byte(entryBOM))
+	if err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	direct, err := ToGraph(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, err := ToGraphEntry(doc, model.ManifestMetadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := json.Marshal(direct)
+	b, _ := json.Marshal(entry.Graph)
+	if string(a) != string(b) {
+		t.Fatalf("ToGraphEntry's graph differs from ToGraph's:\n%s\n%s", a, b)
+	}
+	if _, err := ToGraphEntry(nil, model.ManifestMetadata{}); err == nil {
+		t.Fatal("nil document accepted")
 	}
 }
