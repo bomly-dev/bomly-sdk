@@ -51,6 +51,9 @@ func FuzzGraphJSON(f *testing.F) {
 		`{"nodes":[{"kind":"manifest","id":"manifest:package.json"},{"kind":"module","id":"module:package.json#app","name":"app","declaring_manifest_path":"package.json"},{"kind":"dependency","id":"pkg:npm/left-pad@1.3.0","purl":"pkg:npm/left-pad@1.3.0","name":"left-pad","version":"1.3.0"}],"edges":[{"fromId":"module:package.json#app","toId":"pkg:npm/left-pad@1.3.0"}]}`,
 		`{"nodes":[{"id":"a","ecosystem":"npm","name":"left-pad","version":"1.3.0"},{"id":"b","ecosystem":"npm","name":"Left-Pad","version":"1.3.0"}],"edges":[{"fromId":"a","toId":"b"}]}`,
 		`{"nodes":[{"kind":"dependency","id":"legacy-opaque","version":"1.0.0"}]}`,
+		// Fan-out with the edges listed out of order: the encoder must sort
+		// them, or requireStableJSON below sees Go's map order.
+		`{"nodes":[{"id":"a","name":"a","version":"1.0.0"},{"id":"b","name":"b","version":"1.0.0"},{"id":"c","name":"c","version":"1.0.0"}],"edges":[{"fromId":"a","toId":"c"},{"fromId":"a","toId":"b"},{"fromId":"b","toId":"c"}]}`,
 	} {
 		f.Add([]byte(seed))
 	}

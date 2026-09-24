@@ -234,3 +234,87 @@ func TestCopyrightWireIsGatedBothWays(t *testing.T) {
 		t.Fatalf("an over-long copyright reached the wire: %d bytes encoded", len(encoded))
 	}
 }
+
+// TestGraphMarshalIsInsertionOrderIndependent pins that the encoding is a
+// function of content alone: the same nodes and edges added in another
+// order, or removed and added back, marshal to identical bytes.
+func TestGraphMarshalIsInsertionOrderIndependent(t *testing.T) {
+	coords := []Coordinates{
+		{Ecosystem: EcosystemNPM, Name: "a", Version: "1.0.0"},
+		{Ecosystem: EcosystemNPM, Name: "b", Version: "1.0.0"},
+		{Ecosystem: EcosystemNPM, Name: "c", Version: "1.0.0"},
+	}
+	type edge struct{ from, to int }
+	edges := []edge{{0, 2}, {0, 1}, {1, 2}}
+
+	build := func(nodeOrder []int, edgeOrder []int) (*Graph, []string) {
+		graph := New()
+		ids := make([]string, len(coords))
+		for _, i := range nodeOrder {
+			node := mustDep(t, coords[i])
+			ids[i] = node.NodeID()
+			if err := graph.AddNode(node); err != nil {
+				t.Fatalf("AddNode(%d): %v", i, err)
+			}
+		}
+		for _, e := range edgeOrder {
+			if err := graph.AddEdge(ids[edges[e].from], ids[edges[e].to]); err != nil {
+				t.Fatalf("AddEdge(%d): %v", e, err)
+			}
+		}
+		return graph, ids
+	}
+	encode := func(graph *Graph) string {
+		data, err := json.Marshal(graph)
+		if err != nil {
+			t.Fatalf("Marshal(): %v", err)
+		}
+		return string(data)
+	}
+
+	forward, ids := build([]int{0, 1, 2}, []int{0, 1, 2})
+	reversed, _ := build([]int{2, 1, 0}, []int{2, 1, 0})
+	if got, want := encode(reversed), encode(forward); got != want {
+		t.Fatalf("reversed insertion encodes differently:\n got %s\nwant %s", got, want)
+	}
+
+	// Removing a node frees its slot; adding it back reuses the slot, which
+	// is exactly the history the encoding must not reflect.
+	reinserted, _ := build([]int{0, 1, 2}, []int{0, 1, 2})
+	if !reinserted.RemoveNode(ids[1]) {
+		t.Fatal("RemoveNode(b) = false")
+	}
+	if err := reinserted.AddNode(mustDep(t, coords[1])); err != nil {
+		t.Fatalf("re-add b: %v", err)
+	}
+	for _, e := range []edge{{0, 1}, {1, 2}} {
+		if err := reinserted.AddEdge(ids[e.from], ids[e.to]); err != nil {
+			t.Fatalf("re-add edge: %v", err)
+		}
+	}
+	if got, want := encode(reinserted), encode(forward); got != want {
+		t.Fatalf("remove and re-add encodes differently:\n got %s\nwant %s", got, want)
+	}
+
+	// The order is the documented one: nodes by ID, edges by (fromId, toId).
+	var decoded struct {
+		Nodes []struct {
+			ID string `json:"id"`
+		} `json:"nodes"`
+		Edges []DependencyEdge `json:"edges"`
+	}
+	if err := json.Unmarshal([]byte(encode(forward)), &decoded); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	for i := 1; i < len(decoded.Nodes); i++ {
+		if decoded.Nodes[i-1].ID >= decoded.Nodes[i].ID {
+			t.Fatalf("nodes not in ID order: %q before %q", decoded.Nodes[i-1].ID, decoded.Nodes[i].ID)
+		}
+	}
+	for i := 1; i < len(decoded.Edges); i++ {
+		prev, next := decoded.Edges[i-1], decoded.Edges[i]
+		if prev.FromID > next.FromID || (prev.FromID == next.FromID && prev.ToID >= next.ToID) {
+			t.Fatalf("edges not in (fromId, toId) order: %v before %v", prev, next)
+		}
+	}
+}

@@ -324,6 +324,14 @@ type DependencyEdge struct {
 }
 
 // MarshalJSON encodes a graph as a stable transport-friendly adjacency list.
+//
+// Stable means byte-stable: nodes are written in ascending node-ID order and
+// edges in ascending (fromId, toId) order, so two graphs with the same
+// content encode to the same bytes whatever order their nodes were added in,
+// and whether a node was removed and added back. The slot order the graph
+// keeps internally reuses freed slots and the adjacency maps iterate in Go's
+// randomized order, so walking either would put the insertion history into
+// the payload -- which is what a digest over these bytes must not see.
 func (g *Graph) MarshalJSON() ([]byte, error) {
 	if g == nil {
 		return []byte("null"), nil
@@ -331,24 +339,36 @@ func (g *Graph) MarshalJSON() ([]byte, error) {
 	payload := graphJSON{
 		Nodes: make([]nodeWire, 0, g.Size()),
 	}
-	g.WalkNodes(func(node GraphNode) bool {
-		payload.Nodes = append(payload.Nodes, encodeNodeWire(node))
-		return true
-	})
-	g.WalkTypedEdges(func(from, to GraphNode, kind EdgeKind) bool {
-		edge := DependencyEdge{FromID: from.NodeID(), ToID: to.NodeID()}
-		// The kind is written only when the structure does not already imply
-		// it. A decoder derives an absent kind from the nodes, so writing a
-		// derived value would add bytes that say nothing -- and would change
-		// every existing payload, which is exactly what an additive field must
-		// not do. What survives here is a kind that contradicts derivation,
-		// which is the only kind a reader could not reconstruct.
-		if kind != DeriveEdgeKind(from, to) {
-			edge.Kind = kind
+	order := g.sortedIndices()
+	for _, idx := range order {
+		payload.Nodes = append(payload.Nodes, encodeNodeWire(g.nodes[idx]))
+	}
+	for _, fromIdx := range order {
+		relationships := g.outgoing[fromIdx]
+		if len(relationships) == 0 {
+			continue
 		}
-		payload.Edges = append(payload.Edges, edge)
-		return true
-	})
+		from := g.nodes[fromIdx]
+		for _, toIdx := range g.sortedAdjacent(relationships) {
+			if !g.alive[toIdx] {
+				continue
+			}
+			to := g.nodes[toIdx]
+			kind := relationships[toIdx]
+			edge := DependencyEdge{FromID: from.NodeID(), ToID: to.NodeID()}
+			// The kind is written only when the structure does not already
+			// imply it. A decoder derives an absent kind from the nodes, so
+			// writing a derived value would add bytes that say nothing -- and
+			// would change every existing payload, which is exactly what an
+			// additive field must not do. What survives here is a kind that
+			// contradicts derivation, which is the only kind a reader could
+			// not reconstruct.
+			if kind != DeriveEdgeKind(from, to) {
+				edge.Kind = kind
+			}
+			payload.Edges = append(payload.Edges, edge)
+		}
+	}
 	return json.Marshal(payload)
 }
 
