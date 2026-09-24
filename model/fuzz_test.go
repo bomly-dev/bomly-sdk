@@ -922,6 +922,7 @@ func FuzzDocumentAssertions(f *testing.F) {
 			DataLicense: raw,
 			Created:     raw,
 			Comment:     raw,
+			Format:      raw,
 			Creators:    []Contact{{Kind: ContactKindOrganization, Name: raw}},
 			Tools:       []DocumentTool{{Vendor: raw, Name: raw, Version: raw}},
 			// A signed version derived from the input, so both sides of the
@@ -1061,6 +1062,7 @@ func sameDocumentSources(a, b []DocumentSource) bool {
 func FuzzDocumentAssertionsJSON(f *testing.F) {
 	for _, seed := range []string{
 		`{}`, `null`, `{"sources":null}`, `{"sources":[]}`, `{"sources":[{}]}`,
+		`{"format":"spdx-2.3+json"}`, `{"format":"cyclonedx 1.6"}`, `{"format":"\u0000"}`,
 		`{"identity":"https://example.test/spdxdocs/app","sources":[{"identity":"urn:cdx:3e671687-395b-41f5-a30f-a58921a69b79/1","version":1,"checksum":{"algorithm":"SHA-256","value":"d1e8a70b5ccab1dc2f56bbf7e99f064a660c08e361a35751b9c483c88943d082"}}]}`,
 		`{"sources":[1,"two",null,[],{"identity":3}]}`, `{"sources":{"identity":"x"}}`, `{"sources":[{"identity":"a"`,
 		`{"sources":[{"identity":"https://a.test","identity":"https://b.test"}]}`, `{"sources":"x"}`, `[]`, ``, `{"sources":[`,

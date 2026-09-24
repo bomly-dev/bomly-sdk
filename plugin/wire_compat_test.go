@@ -156,6 +156,8 @@ func TestWireV1NewFieldsAreOmitEmpty(t *testing.T) {
 			// A finding's recorded decision, a component's version, and the
 			// commit a target resolved to.
 			"decision", "status", "reason", "version", "commitSha",
+			// The source document's format token.
+			"format",
 		} {
 			if _, ok := decoded[forbidden]; ok {
 				t.Errorf("%s: zero-valued %q must be omitted from the wire", name, forbidden)
