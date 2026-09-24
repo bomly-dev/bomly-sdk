@@ -646,18 +646,13 @@ func (r *PackageRemediation) Clone() *PackageRemediation {
 // Dependency.
 type Package struct {
 	Coordinates
+	// Assertions are the component-level claims sources made about the
+	// package, seeded from the dependency node that matched it and enriched
+	// by matchers. See Assertions for the gates and merge classes.
+	Assertions
 	// ID is the package registry identifier. It may be a database ID, PURL, or
 	// another stable key chosen by the package registry.
 	ID string `json:"id,omitempty"`
-	// Copyright is the package's copyright text, as the source document or
-	// registry stated it. SPDX PackageCopyrightText / CycloneDX component
-	// copyright.
-	//
-	// Gate: NormalizeCopyright -- trimmed and bounded, control characters
-	// other than line breaks and tabs dropped, an over-long value cleared
-	// rather than truncated.
-	// Merge class: scalar, fill-gaps.
-	Copyright string `json:"copyright,omitempty"`
 	// ResolvedURL is detection-time evidence carried onto the registry package
 	// for matchers (repository resolution reads it). It is raw and never
 	// published; the dependency's validated Origin stays on the graph node.
@@ -669,52 +664,6 @@ type Package struct {
 	// origin codecs' validation. Merge class: union by normalized value.
 	DetectedOrigins []DependencyOrigin `json:"detected_origins,omitempty"`
 
-	// Description is the package's own summary of itself, as the source
-	// document or registry stated it. SPDX PackageDescription / CycloneDX
-	// component description.
-	//
-	// Gate: NormalizeDescription -- trimmed and bounded, control characters
-	// dropped, an over-long value cleared rather than truncated.
-	// Merge class: scalar, fill-gaps. The first publishable witness wins and
-	// a later one contributes only what is missing.
-	Description string `json:"description,omitempty"`
-	// Homepage is the package's project page. SPDX PackageHomePage /
-	// CycloneDX an external reference of type website.
-	//
-	// Gate: NormalizeHomepage -- URLFormReference, so a bare host and a query
-	// are legitimate where they would not be for an artifact URL, while
-	// credentials, local paths, and non-http schemes are cleared.
-	// Merge class: scalar, fill-gaps.
-	Homepage string `json:"homepage,omitempty"`
-	// Supplier is who distributed the package. SPDX PackageSupplier /
-	// CycloneDX supplier.
-	//
-	// Gate: Contact.Normalized -- an unpublishable contact becomes nil, and
-	// no email address is retained (see Contact).
-	// Merge class: scalar, fill-gaps.
-	Supplier *Contact `json:"supplier,omitempty"`
-	// Originator is who originally authored the package, which is often not
-	// the supplier -- a redistributor supplies what someone else wrote. SPDX
-	// PackageOriginator / CycloneDX author or publisher.
-	//
-	// Gate and merge class: as Supplier.
-	Originator *Contact `json:"originator,omitempty"`
-	// ExternalReferences are the references a source document attached to
-	// this component: advisories, repositories, package-manager coordinates,
-	// CPE values. SPDX externalRefs / CycloneDX externalReferences.
-	//
-	// Gate: ExternalReference.Normalized. Merge class: set, unioned by the
-	// (category, type, locator) triple through MergeExternalReferences.
-	ExternalReferences []ExternalReference `json:"external_references,omitempty"`
-
-	// CPEs, Digests, and Licenses are set-valued: every witness's claims
-	// survive a merge, because two sources can each know something the other
-	// does not. Gates: Digest.Normalized and PackageLicense.Normalized drop
-	// what cannot be published; MergeLicenses additionally keeps two sources
-	// that reuse one license reference for different terms apart.
-	CPEs            []string             `json:"cpes,omitempty"`
-	Digests         []Digest             `json:"digests,omitempty"`
-	Licenses        []PackageLicense     `json:"licenses,omitempty"`
 	Vulnerabilities []Vulnerability      `json:"vulnerabilities,omitempty"`
 	Attestations    []PackageAttestation `json:"attestations,omitempty"`
 	Scorecard       *PackageScorecard    `json:"scorecard,omitempty"`
@@ -856,14 +805,7 @@ func (p *Package) NormalizeAssertions() {
 	if p == nil {
 		return
 	}
-	p.Copyright = NormalizeCopyright(p.Copyright)
-	p.Description = NormalizeDescription(p.Description)
-	p.Homepage = NormalizeHomepage(p.Homepage)
-	p.Supplier = normalizedContact(p.Supplier)
-	p.Originator = normalizedContact(p.Originator)
-	p.Licenses = MergeLicenses(nil, p.Licenses)
-	p.ExternalReferences = MergeExternalReferences(nil, p.ExternalReferences)
-	p.Digests = mergeDigestSet(nil, p.Digests)
+	p.Assertions = p.Normalized()
 	p.DetectedOrigins = MergeOrigins(nil, p.DetectedOrigins)
 }
 
@@ -873,14 +815,7 @@ func (p *Package) Clone() *Package {
 		return nil
 	}
 	clone := *p
-	clone.CPEs = cloneStrings(p.CPEs)
-	if len(p.Digests) > 0 {
-		clone.Digests = append([]Digest(nil), p.Digests...)
-	}
-	clone.ExternalReferences = cloneExternalReferences(p.ExternalReferences)
-	if len(p.Licenses) > 0 {
-		clone.Licenses = append([]PackageLicense(nil), p.Licenses...)
-	}
+	clone.Assertions = p.Assertions.Clone()
 	if len(p.Vulnerabilities) > 0 {
 		clone.Vulnerabilities = make([]Vulnerability, 0, len(p.Vulnerabilities))
 		for _, v := range p.Vulnerabilities {
@@ -896,8 +831,6 @@ func (p *Package) Clone() *Package {
 	if len(p.DetectedOrigins) > 0 {
 		clone.DetectedOrigins = append([]DependencyOrigin(nil), p.DetectedOrigins...)
 	}
-	clone.Supplier = p.Supplier.Clone()
-	clone.Originator = p.Originator.Clone()
 	clone.Scorecard = p.Scorecard.Clone()
 	clone.EOL = p.EOL.Clone()
 	clone.Remediation = p.Remediation.Clone()
@@ -944,56 +877,14 @@ func (p *Package) MergeFrom(src *Package) {
 	if p.ResolvedURL == "" {
 		p.ResolvedURL = src.ResolvedURL
 	}
-	// Each assertion is re-gated as it is taken. Package has no JSON codec of
-	// its own -- a matcher's package updates arrive over the plugin wire as
-	// plain structs -- so this is where a homepage carrying credentials or a
-	// supplier carrying a control character would otherwise enter the registry
-	// and be forwarded by PackageRegistry.MarshalJSON unchecked.
-	// The destination is gated before its gaps are measured, not only the
-	// source. Add normalizes what comes in, but Ensure, Get, and All hand back
-	// mutable pointers, so p may already hold a value that is non-empty --
-	// and so blocks this fill -- yet unpublishable, and therefore dropped
-	// again at marshal. Measuring the gap first would lose a valid update to a
-	// value that never reaches a reader.
-	p.Copyright = NormalizeCopyright(p.Copyright)
-	p.Description = NormalizeDescription(p.Description)
-	p.Homepage = NormalizeHomepage(p.Homepage)
-	p.Supplier = normalizedContact(p.Supplier)
-	p.Originator = normalizedContact(p.Originator)
-	if p.Copyright == "" {
-		p.Copyright = NormalizeCopyright(src.Copyright)
-	}
-	if p.Description == "" {
-		p.Description = NormalizeDescription(src.Description)
-	}
-	if p.Homepage == "" {
-		p.Homepage = NormalizeHomepage(src.Homepage)
-	}
-	if p.Supplier == nil {
-		p.Supplier = normalizedContact(src.Supplier)
-	}
-	if p.Originator == nil {
-		p.Originator = normalizedContact(src.Originator)
-	}
+	// The assertions take their own gates and merge classes, both sides
+	// gated before a gap is measured: Package has no JSON codec of its own
+	// -- a matcher's package updates arrive over the plugin wire as plain
+	// structs -- so this is where a homepage carrying credentials or a
+	// supplier carrying a control character would otherwise enter the
+	// registry and be forwarded by PackageRegistry.MarshalJSON unchecked.
+	p.Assertions.MergeFrom(src.Assertions)
 	p.mergeAttestations(src.Attestations)
-	// CPEs are a set, not a first-wins scalar. Two matchers can each know a
-	// CPE the other does not -- a vendor-specific one from a distro record and
-	// a generic one from an advisory -- and keeping only the first seeded
-	// slice loses whichever arrived second, which is a matching miss rather
-	// than a cosmetic difference.
-	p.CPEs = mergeStringSet(p.CPEs, src.CPEs)
-	// Through the gated set merge, not a bare append: MergeFrom is exported
-	// and the registry is not its only caller, so a hand-built package must
-	// not install a rejected digest or a second, differently-spelled copy of
-	// one already held.
-	p.Digests = mergeDigestSet(p.Digests, src.Digests)
-	// Licenses are a set too, and the declared/concluded distinction makes the
-	// old first-wins behavior actively wrong: a source that concluded a
-	// license and a source that read the declaration are two claims about one
-	// package, and dropping either publishes a partial answer as a complete
-	// one.
-	p.Licenses = MergeLicenses(p.Licenses, src.Licenses)
-	p.ExternalReferences = MergeExternalReferences(p.ExternalReferences, src.ExternalReferences)
 	if p.Scorecard == nil {
 		p.Scorecard = src.Scorecard.Clone()
 	}
@@ -1111,6 +1002,12 @@ func stashedDetectionLicenses(value any) []PackageLicense {
 	}
 }
 
+func seededAssertions(dep *DependencyNode) Assertions {
+	assertions := dep.Assertions
+	assertions.Licenses = DetectionLicenses(dep)
+	return assertions.Normalized()
+}
+
 // PackageFromDependencyNode seeds a registry package from a dependency
 // node's identity. The node's ID is its canonical package URL, so the
 // package is keyed on it directly. The returned package carries no
@@ -1136,25 +1033,16 @@ func PackageFromDependencyNode(dep *DependencyNode) *Package {
 		},
 		ID:          purl,
 		ResolvedURL: dep.ResolvedURL,
-		Copyright:   NormalizeCopyright(dep.Copyright),
-		CPEs:        cloneStrings(dep.CPEs),
 		// The component-level assertions the detecting or ingesting source
 		// made travel with the package, so an ingested document's supplier
 		// and description reach the registry rather than stopping at the
-		// graph node. Each is re-gated by its own helper: seeding must not be
-		// a way around the boundary the wire enforces.
-		Description: NormalizeDescription(dep.Description),
-		Homepage:    NormalizeHomepage(dep.Homepage),
-		Supplier:    normalizedContact(dep.Supplier),
-		Originator:  normalizedContact(dep.Originator),
-		// DetectionLicenses, not the typed field alone: a node from an older
-		// producer carries its licenses in the deprecated metadata stash, and
-		// seeding from the field alone would hand the registry a package with
-		// no licenses.
-		Licenses:           DetectionLicenses(dep),
-		ExternalReferences: MergeExternalReferences(nil, dep.ExternalReferences),
-		Digests:            mergeDigestSet(nil, dep.Digests),
-		DetectedOrigins:    MergeOrigins(nil, dep.Origins),
+		// graph node. They are re-gated as they are copied: seeding must not
+		// be a way around the boundary the wire enforces. DetectionLicenses,
+		// not the typed field alone: a node from an older producer carries
+		// its licenses in the deprecated metadata stash, and seeding from the
+		// field alone would hand the registry a package with no licenses.
+		Assertions:      seededAssertions(dep),
+		DetectedOrigins: MergeOrigins(nil, dep.Origins),
 	}
 }
 
