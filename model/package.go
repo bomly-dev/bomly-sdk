@@ -1037,6 +1037,9 @@ func (p *Package) mergeVulnerabilities(incoming []Vulnerability) {
 					dst.AffectedSymbols = append(dst.AffectedSymbols, sym.Clone())
 				}
 			}
+			if v.Analysis != nil {
+				dst.Analysis = MergeVulnerabilityAnalysis(dst.Analysis, v.Analysis)
+			}
 			continue
 		}
 		p.Vulnerabilities = append(p.Vulnerabilities, v.Clone())

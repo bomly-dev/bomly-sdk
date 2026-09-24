@@ -129,6 +129,7 @@ func TestWireV1NewFieldsAreOmitEmpty(t *testing.T) {
 		"Finding":            &model.Finding{ID: "x", Kind: model.FindingKindPackage},
 		"PolicyDecision":     &model.FindingPolicyDecision{},
 		"ExecutionTarget":    &ExecutionTarget{},
+		"Vulnerability":      &model.Vulnerability{ID: "x"},
 	} {
 		data, err := json.Marshal(value)
 		if err != nil {
@@ -156,8 +157,8 @@ func TestWireV1NewFieldsAreOmitEmpty(t *testing.T) {
 			// A finding's recorded decision, a component's version, and the
 			// commit a target resolved to.
 			"decision", "status", "reason", "version", "commitSha",
-			// The source document's format token.
-			"format",
+			// The source document's format token, and an advisory's VEX block.
+			"format", "analysis",
 		} {
 			if _, ok := decoded[forbidden]; ok {
 				t.Errorf("%s: zero-valued %q must be omitted from the wire", name, forbidden)
