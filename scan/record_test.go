@@ -64,7 +64,7 @@ func TestRecordFieldsDeclareOmitEmpty(t *testing.T) {
 			if !hasOmitOption(options) {
 				t.Errorf("%s.%s is on the wire without omitempty or omitzero", typ.Name(), field.Name)
 			}
-			if strings.Contains(name, "A") || strings.Contains(name, "B") || strings.Contains(name, "C") {
+			if name != strings.ToLower(name) {
 				t.Errorf("%s.%s: key %q is not snake_case", typ.Name(), field.Name, name)
 			}
 		}

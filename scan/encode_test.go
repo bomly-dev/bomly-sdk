@@ -199,3 +199,47 @@ func FuzzDecode(f *testing.F) {
 		}
 	})
 }
+
+// The digests are verified by a reader over what it decoded, so they must
+// be taken over that form: an open value -- a struct in a package's
+// metadata, an integer past 2^53 -- encodes one way from memory and
+// another after a round trip, and a digest over the former refused a
+// record this package had just written.
+func TestEncodeDigestsWhatAReaderDecodes(t *testing.T) {
+	type ordered struct {
+		B int `json:"b"`
+		A int `json:"a"`
+	}
+	r := sampleRecord()
+	r.Packages[0].Metadata = map[string]any{"npm": ordered{B: 1, A: 2}, "n": int64(1<<60 + 1)}
+	r.Packages[2].Vulnerabilities[0].DatabaseSpecific = map[string]any{"z": []any{ordered{B: 3, A: 4}}, "a": uint64(1<<63 + 5)}
+	data, err := Encode(r)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	if _, err := Decode(data); err != nil {
+		t.Fatalf("Decode refused a record Encode wrote: %v", err)
+	}
+}
+
+// Scopes are a union across declaration sites and arrive in visiting
+// order; two records that agree on the set encode to the same bytes.
+func TestEncodeSortsScopes(t *testing.T) {
+	a, b := sampleRecord(), sampleRecord()
+	a.Manifests[1].Dependencies[1].Scopes = []model.Scope{model.ScopeRuntime, model.ScopeDevelopment, model.ScopeRuntime}
+	b.Manifests[1].Dependencies[1].Scopes = []model.Scope{model.ScopeDevelopment, model.ScopeRuntime}
+	left, err := Encode(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := Encode(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(left, right) {
+		t.Fatalf("scope order changed the bytes:\n%s\n%s", left, right)
+	}
+	if !strings.Contains(string(left), `"scopes":["development","runtime"]`) {
+		t.Fatalf("scopes are not sorted and deduplicated: %s", left)
+	}
+}

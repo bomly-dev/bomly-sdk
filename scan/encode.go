@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -42,21 +43,46 @@ var recordBounds = struct {
 }{MaxRecordBytes, MaxManifests, model.MaxGraphNodes, model.MaxRegistryPackages, MaxFindings}
 
 // Encode writes a record as its canonical bytes. Every collection is sorted
-// -- manifests by path, dependencies by ID and their edges by target,
-// packages by package URL, findings by ID then package -- and SchemaVersion
-// and the section digests are filled, so two records with the same content
-// encode to the same bytes. The record passed in is not modified.
+// -- manifests by path, dependencies by ID and their edges by target and
+// scopes by name, packages by package URL, findings by ID then package --
+// and SchemaVersion and the section digests are filled, so two records with
+// the same content encode to the same bytes. The record passed in is not
+// modified.
 func Encode(r *Record) ([]byte, error) {
 	if r == nil {
 		return nil, errors.New("scan record is nil")
 	}
 	canonical := canonicalize(*r)
-	digests, err := sectionDigests(canonical)
+	// The digests are taken over what a reader decodes, not over the
+	// in-memory values: the two differ wherever the model holds an open
+	// value (a package's metadata, an advisory's database-specific block),
+	// since a struct stored there encodes in field order and comes back as
+	// a map that encodes in key order, and an integer past 2^53 comes back
+	// as a float. Decode verifies against the same pipeline.
+	decoded, err := decodedForm(canonical)
+	if err != nil {
+		return nil, err
+	}
+	digests, err := sectionDigests(canonicalize(decoded))
 	if err != nil {
 		return nil, err
 	}
 	canonical.Digests = &digests
 	return json.Marshal(canonical)
+}
+
+// decodedForm returns the record as Decode will see it: written and read
+// back once through encoding/json.
+func decodedForm(r Record) (Record, error) {
+	data, err := json.Marshal(r)
+	if err != nil {
+		return Record{}, err
+	}
+	var out Record
+	if err := json.Unmarshal(data, &out); err != nil {
+		return Record{}, fmt.Errorf("scan record: re-reading the encoding: %w", err)
+	}
+	return out, nil
 }
 
 // Digest returns "sha256:<hex>" over Encode(r): a content identity for the
@@ -154,9 +180,7 @@ func canonicalize(r Record) Record {
 			copy(deps, manifests[i].Dependencies)
 			for j := range deps {
 				deps[j].DependsOn = sortedOrNil(deps[j].DependsOn)
-				if len(deps[j].Scopes) == 0 {
-					deps[j].Scopes = nil
-				}
+				deps[j].Scopes = sortedScopesOrNil(deps[j].Scopes)
 				if len(deps[j].Locations) == 0 {
 					deps[j].Locations = nil
 				}
@@ -242,6 +266,18 @@ func sortedOrNil(values []string) []string {
 	out := append([]string(nil), values...)
 	sort.Strings(out)
 	return out
+}
+
+// sortedScopesOrNil is sortedOrNil for a scope set: a union across
+// declaration sites arrives in whatever order the sites were visited, and
+// two records that agree on the set must agree on the bytes.
+func sortedScopesOrNil(scopes []model.Scope) []model.Scope {
+	if len(scopes) == 0 {
+		return nil
+	}
+	out := append([]model.Scope(nil), scopes...)
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 func digestOf(data []byte) string {

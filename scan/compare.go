@@ -62,6 +62,10 @@ func graphOf(r *Record) (*model.Graph, error) {
 	g := model.New()
 	type edge struct{ from, to string }
 	var edges []edge
+	// A node's identity is minted from its package URL, so the ID a record
+	// wrote and the ID the graph holds can differ in spelling; edges are
+	// resolved through this map rather than by the record's IDs.
+	canonical := make(map[string]string)
 	for _, manifest := range r.Manifests {
 		for _, dep := range manifest.Dependencies {
 			if !strings.HasPrefix(dep.ID, "pkg:") {
@@ -76,16 +80,18 @@ func graphOf(r *Record) (*model.Graph, error) {
 			if _, err := g.InsertNode(node); err != nil {
 				return nil, err
 			}
+			canonical[dep.ID] = node.NodeID()
 			for _, target := range dep.DependsOn {
-				edges = append(edges, edge{dep.ID, target})
+				edges = append(edges, edge{node.NodeID(), target})
 			}
 		}
 	}
 	for _, e := range edges {
-		if _, ok := g.Node(e.to); !ok || e.from == e.to {
+		to, ok := canonical[e.to]
+		if !ok || e.from == to {
 			continue
 		}
-		if err := g.AddEdge(e.from, e.to); err != nil {
+		if err := g.AddEdge(e.from, to); err != nil {
 			return nil, err
 		}
 	}

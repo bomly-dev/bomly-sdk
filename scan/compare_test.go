@@ -50,3 +50,27 @@ func TestCompareReportsDependencyVulnerabilityAndFindingDeltas(t *testing.T) {
 		t.Fatal("an unmintable identity was accepted")
 	}
 }
+
+// A record may spell a package URL in a form the model canonicalizes when
+// it mints the node's identity; an edge named in the record's spelling
+// must still land on the node.
+func TestCompareResolvesEdgesThroughCanonicalIDs(t *testing.T) {
+	base := &Record{Manifests: []Manifest{{Path: "package-lock.json", Dependencies: []Dependency{
+		{ID: "pkg:NPM/a@1.0.0", DependsOn: []string{"pkg:NPM/b@1.0.0"}},
+		{ID: "pkg:NPM/b@1.0.0"},
+	}}}}
+	g, err := graphOf(base)
+	if err != nil {
+		t.Fatalf("graphOf: %v", err)
+	}
+	if g.Size() != 2 {
+		t.Fatalf("graph has %d nodes, want 2", g.Size())
+	}
+	if _, ok := g.Node("pkg:npm/a@1.0.0"); !ok {
+		t.Fatal("the canonical identity is not in the graph")
+	}
+	children, err := g.DirectDependencies("pkg:npm/a@1.0.0")
+	if err != nil || len(children) != 1 || children[0].NodeID() != "pkg:npm/b@1.0.0" {
+		t.Fatalf("direct dependencies of a = %v, %v; want the one edge the record named", children, err)
+	}
+}
