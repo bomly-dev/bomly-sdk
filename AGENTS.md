@@ -18,7 +18,8 @@ them sit the helper subpackages (`purlkit`, `spdxkit`, `system`, `filecache`,
 codec (`sbom`, with `graphview` beside it), which the CLI and the Syft and
 Grype plugins adopt from the release that carries it in place of the copies
 they carried (bomly-cli ADR-0045), and the scan record (`scan`): the
-document `bomly scan --json` emits, versioned as `bomly.scan.v1`.
+document `bomly scan --json` emits from the release that adopts it
+(bomly-cli ADR-0046), versioned as `bomly.scan.v1`.
 
 ## This module is the source of truth
 
