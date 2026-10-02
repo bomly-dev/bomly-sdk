@@ -215,4 +215,17 @@ func TestFindingDecisionRoundTripsAndClones(t *testing.T) {
 	if data, _ := json.Marshal(Finding{ID: "f", Kind: FindingKindPackage}); strings.Contains(string(data), "decision") {
 		t.Fatalf("an absent decision must be omitted: %s", data)
 	}
+	// The codec is the gate: a status the vocabulary does not name is
+	// cleared on the way in and on the way out, never carried to a reader
+	// that would have to decide what it ranks as.
+	var gated Finding
+	if err := json.Unmarshal([]byte(`{"id":"f","kind":"vulnerability","decision":{"status":"allow","source":" s ","reason":"r"}}`), &gated); err != nil {
+		t.Fatalf("Unmarshal(): %v", err)
+	}
+	if gated.Decision == nil || gated.Decision.Status != "" || gated.Decision.Source != "s" {
+		t.Fatalf("decoded decision = %+v, want the unknown status cleared", gated.Decision)
+	}
+	if data, _ := json.Marshal(FindingPolicyDecision{Status: "allow", Reason: "r"}); string(data) != `{"reason":"r"}` {
+		t.Fatalf("an unknown status was encoded: %s", data)
+	}
 }
