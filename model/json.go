@@ -496,7 +496,8 @@ func (g *Graph) UnmarshalJSON(data []byte) error {
 // smaller graph that scans clean, which is the one way a decoder must not
 // fail. A repeated "nodes" or "edges" key is refused too -- encoding/json
 // would keep the last and silently discard the rest, and Bomly never writes
-// one. Unknown keys are skipped, and the two sections may come in any order.
+// one. Unknown keys are skipped, the two sections may come in any order,
+// and their keys match without regard to case, as encoding/json's do.
 func decodeGraphPayload(data []byte, bounds graphBounds) (graphJSON, error) {
 	var payload graphJSON
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -510,6 +511,17 @@ func decodeGraphPayload(data []byte, bounds graphBounds) (graphJSON, error) {
 			return payload, fmt.Errorf("graph: %w", err)
 		}
 		key, _ := token.(string)
+		// encoding/json matches an object key to a struct field without
+		// regard to case, and this decoder replaced one that did; a payload
+		// spelling the section "Nodes" is a graph, not an unknown key to
+		// skip into an empty graph that scans clean. The fold also closes
+		// the repeated-key check: "nodes" and "Nodes" are one section twice.
+		switch {
+		case strings.EqualFold(key, "nodes"):
+			key = "nodes"
+		case strings.EqualFold(key, "edges"):
+			key = "edges"
+		}
 		switch key {
 		case "nodes", "edges":
 			if _, dup := seen[key]; dup {

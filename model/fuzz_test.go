@@ -950,6 +950,7 @@ func FuzzDocumentAssertions(f *testing.F) {
 			t.Fatalf("re-normalizing changed the verdict: %v then %v", ok, ok2)
 		}
 		if again.Identity != normalized.Identity || again.Name != normalized.Name ||
+			again.Format != normalized.Format ||
 			again.DataLicense != normalized.DataLicense || again.Created != normalized.Created ||
 			again.Comment != normalized.Comment || len(again.Creators) != len(normalized.Creators) ||
 			len(again.Tools) != len(normalized.Tools) || again.Version != normalized.Version ||
@@ -1019,7 +1020,7 @@ func FuzzDocumentAssertions(f *testing.F) {
 		// The comment is exempt: both formats carry a multi-line comment in a
 		// text block, so line breaks there are a legitimate value rather than
 		// a corrupted tag.
-		for _, field := range []string{normalized.Identity, normalized.Name, normalized.DataLicense, normalized.Created} {
+		for _, field := range []string{normalized.Identity, normalized.Name, normalized.DataLicense, normalized.Created, normalized.Format} {
 			if ContainsControlChar(field) {
 				t.Fatalf("a published single-line field carries a control character: %q", field)
 			}

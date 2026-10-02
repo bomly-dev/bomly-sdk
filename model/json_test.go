@@ -407,9 +407,24 @@ func TestGraphUnmarshalRefusesOverBoundBytes(t *testing.T) {
 }
 
 func TestGraphUnmarshalRefusesTrailingData(t *testing.T) {
+	// Called directly: json.Unmarshal refuses a second document before the
+	// graph decoder sees it, and the decoder's own check is the one pinned.
 	var graph Graph
-	if err := json.Unmarshal([]byte(`{"nodes":[]} {"nodes":[]}`), &graph); err == nil {
+	if err := graph.UnmarshalJSON([]byte(`{"nodes":[]} {"nodes":[]}`)); err == nil {
 		t.Fatal("trailing data was accepted")
+	}
+}
+
+func TestGraphUnmarshalMatchesSectionKeysWithoutRegardToCase(t *testing.T) {
+	var graph Graph
+	if err := json.Unmarshal([]byte(`{"Nodes":[{"id":"pkg:npm/a@1.0.0","name":"a","version":"1.0.0"}],"EDGES":[]}`), &graph); err != nil {
+		t.Fatalf("a case variant of the section keys was refused: %v", err)
+	}
+	if graph.Size() != 1 {
+		t.Fatalf("a case variant of the nodes key decoded to %d nodes, want 1", graph.Size())
+	}
+	if err := json.Unmarshal([]byte(`{"nodes":[],"Nodes":[]}`), &graph); err == nil || !strings.Contains(err.Error(), "repeated") {
+		t.Fatalf("a repeated section under another case was accepted: %v", err)
 	}
 }
 

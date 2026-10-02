@@ -47,12 +47,12 @@ func TestAssertionsNormalizedIsIdempotentAndCloneIsDeep(t *testing.T) {
 	if !reflect.DeepEqual(once, twice) {
 		t.Fatalf("not idempotent:\n%+v\n%+v", once, twice)
 	}
-	if once.Homepage != "" || once.Description != NormalizeDescription(in.Description) || len(once.CPEs) != 2 || once.CPEs[0] != "b" {
+	if once.Homepage != "" || once.Description != NormalizeDescription(in.Description) || len(once.CPEs) != 2 || once.CPEs[0] != "a" || once.CPEs[1] != "b" {
 		t.Fatalf("gates: %+v", once)
 	}
 	clone := once.Clone()
 	clone.CPEs[0] = "z"
-	if once.CPEs[0] != "b" {
+	if once.CPEs[0] != "a" {
 		t.Fatal("Clone shares slices with its source")
 	}
 }

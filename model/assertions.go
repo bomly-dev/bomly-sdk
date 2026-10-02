@@ -1,5 +1,10 @@
 package model
 
+import (
+	"sort"
+	"strings"
+)
+
 // Assertions are the component-level claims a source makes about one
 // package: what a document, a lockfile or a registry said about it, as
 // opposed to what it is (Coordinates) or where it was found (locations).
@@ -19,7 +24,10 @@ package model
 // and a query are fine while credentials and local paths are cleared);
 // Contact.Normalized for both contacts, which yields nil for an
 // unpublishable party and never retains an email address;
-// ExternalReference.Normalized; Digest.Normalized; PackageLicense.Normalized.
+// ExternalReference.Normalized; Digest.Normalized; PackageLicense.Normalized;
+// and for CPEs a dumb one -- trimmed, non-empty, no control character --
+// because no pinned dependency owns the CPE grammar and a transcription of
+// it here would be a vocabulary Bomly does not own.
 //
 // Merge classes: Description, Homepage, Supplier, Originator and Copyright
 // are scalars, fill-gaps -- both witnesses are gated before the gap is
@@ -71,11 +79,29 @@ func (a Assertions) Normalized() Assertions {
 		Supplier:           normalizedContact(a.Supplier),
 		Originator:         normalizedContact(a.Originator),
 		ExternalReferences: MergeExternalReferences(nil, a.ExternalReferences),
-		CPEs:               mergeStringSet(nil, a.CPEs),
+		CPEs:               normalizedCPEs(a.CPEs),
 		Digests:            mergeDigestSet(nil, a.Digests),
 		Licenses:           MergeLicenses(nil, a.Licenses),
 		Copyright:          NormalizeCopyright(a.Copyright),
 	}
+}
+
+// normalizedCPEs holds a CPE set to its gate and returns it deduplicated
+// and sorted, so two witnesses folded in either order publish the same
+// list; nil when nothing survives.
+func normalizedCPEs(cpes []string) []string {
+	out := make([]string, 0, len(cpes))
+	for _, cpe := range cpes {
+		if cpe = strings.TrimSpace(cpe); cpe != "" && !ContainsControlChar(cpe) {
+			out = append(out, cpe)
+		}
+	}
+	out = mergeStringSet(nil, out)
+	if len(out) == 0 {
+		return nil
+	}
+	sort.Strings(out)
+	return out
 }
 
 // MergeFrom folds src into a under the declared merge classes: scalars keep
@@ -104,7 +130,7 @@ func (a *Assertions) MergeFrom(src Assertions) {
 		left.Copyright = right.Copyright
 	}
 	left.ExternalReferences = MergeExternalReferences(left.ExternalReferences, right.ExternalReferences)
-	left.CPEs = mergeStringSet(left.CPEs, right.CPEs)
+	left.CPEs = normalizedCPEs(append(append([]string(nil), left.CPEs...), right.CPEs...))
 	left.Digests = mergeDigestSet(left.Digests, right.Digests)
 	left.Licenses = MergeLicenses(left.Licenses, right.Licenses)
 	*a = left
