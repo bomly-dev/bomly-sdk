@@ -232,7 +232,7 @@ const entryBOM = `{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,
     {"bom-ref":"b","type":"library","name":"b","version":"1.0.0","purl":"pkg:npm/b@1.0.0"},
     {"bom-ref":"a2","type":"library","name":"a","version":"1.0.0","purl":"pkg:npm/a@1.0.0"}],
   "vulnerabilities":[{"id":"CVE-2024-0001","source":{"name":"osv"},"description":"bad","cwes":[79],
-    "advisories":[{"url":"https://osv.dev/CVE-2024-0001"}],
+    "advisories":[{"url":"https://osv.dev/CVE-2024-0001"},{"url":"https://user:token@example.test/advisory"},{"url":"file:///etc/passwd"}],
     "ratings":[{"source":{"name":"osv"},"score":7.5,"severity":"high","method":"CVSSv31","vector":"CVSS:3.1/AV:N"}],
     "analysis":{"state":"not_affected","justification":"code_not_reachable"},
     "affects":[{"ref":"a"},{"ref":"a2"}]}]}`
@@ -261,9 +261,9 @@ func TestToGraphEntryCarriesIngestedVulnerabilitiesAndEOL(t *testing.T) {
 	v := pkg.Vulnerabilities[0]
 	if v.ID != "CVE-2024-0001" || v.Source != "osv" || v.ParsedSeverity != "high" || v.Details != "bad" ||
 		len(v.CVSS) != 1 || v.CVSS[0].Score != 7.5 || v.CVSS[0].Version != "3.1" || len(v.CWEs) != 1 || v.CWEs[0].ID != "CWE-79" ||
-		len(v.References) != 1 || v.References[0].Type != model.ReferenceTypeAdvisory ||
+		len(v.References) != 1 || v.References[0].Type != model.ReferenceTypeAdvisory || v.References[0].URL != "https://osv.dev/CVE-2024-0001" ||
 		v.Analysis == nil || v.Analysis.State != model.ImpactAnalysisStateNotAffected {
-		t.Fatalf("projected vulnerability = %+v", v)
+		t.Fatalf("projected vulnerability = %+v, want the one advisory URL that passes the published-URL gate", v)
 	}
 	if pkg.EOL == nil || !pkg.EOL.EOL || pkg.EOL.EOLDate != "2025-01-01" || pkg.EOL.Cycle != "1" || pkg.EOL.Source != "" {
 		t.Fatalf("projected eol = %+v", pkg.EOL)
@@ -291,6 +291,9 @@ func TestToGraphEntryCarriesIngestedVulnerabilitiesAndEOL(t *testing.T) {
 	}
 	if !strings.Contains(string(out), `"name":"bomly:eol_date","value":"2025-01-01"`) {
 		t.Fatalf("re-exported document lost the end-of-life record: %s", out)
+	}
+	if strings.Contains(string(out), "token") || strings.Contains(string(out), "file://") {
+		t.Fatalf("an advisory URL that fails the published-URL gate reached the export: %s", out)
 	}
 }
 

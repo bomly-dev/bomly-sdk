@@ -2,6 +2,7 @@ package sbom
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -1067,48 +1068,63 @@ func cycloneDXIngestedEOL(properties *[]cdx.Property) *EOL {
 }
 
 // cycloneDXVulnerabilities flattens per-component vulnerabilities into the
-// BOM-level vulnerabilities array, deduplicating by advisory ID and collecting
-// every affected component BOMRef under Affects.
+// BOM-level vulnerabilities array. Copies of one advisory fold into one
+// entry, collecting every affected component's BOMRef under Affects -- but
+// only while they carry the same analysis. A BOM-level entry has one VEX
+// block that applies to every ref it affects, so folding a component whose
+// analysis says not_affected with one whose analysis says nothing, or says
+// exploitable, would publish an assessment for a component nobody assessed.
+// Distinct analyses therefore become distinct entries with the same ID,
+// which CycloneDX permits: the array's uniqueness constraint is on whole
+// entries, not on IDs. Order is first appearance.
 func cycloneDXVulnerabilities(components []Component) []cdx.Vulnerability {
 	type accumulator struct {
-		vuln  Vulnerability
-		refs  []string
-		order int
+		vuln Vulnerability
+		refs []string
 	}
-	byID := make(map[string]*accumulator)
-	order := 0
+	byKey := make(map[string]*accumulator)
+	var ordered []*accumulator
 	for _, comp := range components {
 		for _, v := range comp.Vulnerabilities {
 			if strings.TrimSpace(v.ID) == "" {
 				continue
 			}
-			acc, ok := byID[v.ID]
+			key := v.ID + "\x00" + analysisKey(v.Analysis)
+			acc, ok := byKey[key]
 			if !ok {
-				acc = &accumulator{vuln: v, order: order}
-				order++
-				byID[v.ID] = acc
-			} else if v.Analysis != nil {
-				// One BOM-level advisory carries one analysis block, so the
-				// per-component copies fold: the first component's words
-				// stand and a later one fills only what the first left
-				// empty, responses unioning. The rest of the record keeps
-				// the first copy, as it always has.
-				acc.vuln.Analysis = model.MergeVulnerabilityAnalysis(acc.vuln.Analysis, v.Analysis)
+				acc = &accumulator{vuln: v}
+				byKey[key] = acc
+				ordered = append(ordered, acc)
 			}
 			acc.refs = append(acc.refs, comp.ID)
 		}
 	}
-	if len(byID) == 0 {
+	if len(ordered) == 0 {
 		return nil
 	}
-	out := make([]cdx.Vulnerability, 0, len(byID))
-	for _, acc := range byID {
+	out := make([]cdx.Vulnerability, 0, len(ordered))
+	for _, acc := range ordered {
 		out = append(out, cycloneDXVulnerability(acc.vuln, acc.refs))
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return byID[out[i].ID].order < byID[out[j].ID].order
-	})
 	return out
+}
+
+// analysisKey fingerprints an analysis as its gated encoding, so two copies
+// that say the same thing fold and two that differ do not; an absent or
+// empty analysis keys as "".
+func analysisKey(analysis *model.VulnerabilityAnalysis) string {
+	if analysis == nil {
+		return ""
+	}
+	normalized, ok := analysis.Normalized()
+	if !ok {
+		return ""
+	}
+	key, err := json.Marshal(normalized)
+	if err != nil {
+		return ""
+	}
+	return string(key)
 }
 
 func cycloneDXVulnerability(v Vulnerability, refs []string) cdx.Vulnerability {
@@ -1139,11 +1155,19 @@ func cycloneDXVulnerability(v Vulnerability, refs []string) cdx.Vulnerability {
 		vuln.CWEs = new(append([]int(nil), v.CWEs...))
 	}
 	if len(v.Advisories) > 0 {
+		// The reference form of the published-URL rule: an advisory is a
+		// citation, so its path and query stay, while credentials, local
+		// paths and non-http schemes are cleared here as they are for every
+		// other URL a document carries.
 		advisories := make([]cdx.Advisory, 0, len(v.Advisories))
 		for _, url := range v.Advisories {
-			advisories = append(advisories, cdx.Advisory{URL: url})
+			if normalized, ok := model.NormalizeURL(url, model.URLFormReference); ok {
+				advisories = append(advisories, cdx.Advisory{URL: normalized})
+			}
 		}
-		vuln.Advisories = &advisories
+		if len(advisories) > 0 {
+			vuln.Advisories = &advisories
+		}
 	}
 	vuln.Analysis = cycloneDXAnalysis(v.Analysis)
 	if len(refs) > 0 {

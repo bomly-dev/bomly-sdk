@@ -234,8 +234,10 @@ func packageVulnerabilities(vulns []Vulnerability) []model.Vulnerability {
 			}
 		}
 		for _, url := range v.Advisories {
-			if url = strings.TrimSpace(url); url != "" {
-				vuln.References = append(vuln.References, model.Reference{URL: url, Type: model.ReferenceTypeAdvisory})
+			// Gated before it is stored: a document is untrusted input, and
+			// a registry entry is published by every later export.
+			if normalized, ok := model.NormalizeURL(url, model.URLFormReference); ok {
+				vuln.References = append(vuln.References, model.Reference{URL: normalized, Type: model.ReferenceTypeAdvisory})
 			}
 		}
 		out = append(out, vuln)
