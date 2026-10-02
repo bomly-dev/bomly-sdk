@@ -216,8 +216,12 @@ func TestManagedTransportCarriesAPayloadAboveTheGRPCDefault(t *testing.T) {
 	}
 }
 
-func TestTransportBoundIsTwoPayloads(t *testing.T) {
-	if maxMessageBytes != 2*model.MaxPayloadBytes {
-		t.Fatalf("maxMessageBytes = %d, want 2 * model.MaxPayloadBytes", maxMessageBytes)
+// A match request carries a graph and a registry, each allowed to reach
+// the decoder bound, plus the envelope around them; the transport must
+// hold all of it, and the envelope's share is pinned as a whole payload
+// width rather than an estimate.
+func TestTransportBoundHoldsTwoPayloadsAndTheirEnvelope(t *testing.T) {
+	if maxMessageBytes < 2*model.MaxPayloadBytes+model.MaxPayloadBytes/2 {
+		t.Fatalf("maxMessageBytes = %d leaves under half a payload for the envelope around two payloads of %d", maxMessageBytes, model.MaxPayloadBytes)
 	}
 }

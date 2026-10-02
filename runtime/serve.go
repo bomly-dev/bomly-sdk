@@ -22,12 +22,17 @@ const pluginName = "bomly"
 
 // maxMessageBytes bounds one message on the managed transport, in both
 // directions. A protocol v1 request carries at most one graph and one
-// registry, each bounded by model.MaxPayloadBytes, so the envelope is two
-// of those. The decoder bound is the source of truth -- it also governs
-// payloads that never cross this transport -- and the transport is derived
-// from it: at least one payload wide, so the decoder's own refusal stays
-// reachable rather than being pre-empted by gRPC's 4 MiB default.
-const maxMessageBytes = 2 * model.MaxPayloadBytes
+// registry, each bounded by model.MaxPayloadBytes, and around them the
+// rest of the request -- the target, the options, the JSON keys and the
+// protobuf framing of the bytes value -- which is small but not nothing,
+// so two payloads that each sit at the bound still fit: the message is
+// three payloads wide, dumb and generous, rather than two plus an estimate
+// of the envelope that would have to track every field added to a request.
+// The decoder bound is the source of truth -- it also governs payloads
+// that never cross this transport -- and the transport is derived from
+// it, so the decoder's own refusal stays reachable rather than being
+// pre-empted by gRPC's 4 MiB default.
+const maxMessageBytes = 3 * model.MaxPayloadBytes
 
 // callOptions widen the reply the host side of a call will accept. The
 // server side is widened where the server is built, in serve; a host that
