@@ -8,6 +8,7 @@ import (
 	"io"
 	"maps"
 	"path"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -196,7 +197,10 @@ func (w *nodeWire) decodeDependencyNode() (*DependencyNode, error) {
 	}
 	node.Relationship = w.Relationship
 	node.Source = w.Source
-	node.Scopes = w.Scopes
+	// A scope set is a union across declaration sites and arrives in whatever
+	// order the sites were visited; it is held in one order on both wire
+	// directions so equal sets encode to equal bytes.
+	node.Scopes = canonicalScopeSet(w.Scopes)
 	node.SourceScope = NormalizeSourceScope(w.SourceScope)
 	node.Locations = w.Locations
 	// Through the CPE gate on both wire directions, like every other
@@ -293,7 +297,7 @@ func encodeNodeWire(node GraphNode) nodeWire {
 			Language:       n.Language,
 			Relationship:   n.Relationship,
 			Source:         n.Source,
-			Scopes:         n.Scopes,
+			Scopes:         canonicalScopeSet(n.Scopes),
 			SourceScope:    NormalizeSourceScope(n.SourceScope),
 			Locations:      n.Locations,
 			CPEs:           normalizedCPEs(n.CPEs),
@@ -491,6 +495,18 @@ func (g *Graph) UnmarshalJSON(data []byte) error {
 	}
 	*g = *out
 	return nil
+}
+
+// canonicalScopeSet returns a scope set sorted and deduplicated, nil when
+// empty. It does not drop any member: which scopes a set names is content,
+// and only the order and the repeats are not.
+func canonicalScopeSet(scopes []Scope) []Scope {
+	if len(scopes) == 0 {
+		return nil
+	}
+	out := append([]Scope(nil), scopes...)
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // decodeGraphPayload reads the adjacency-list object one element at a time

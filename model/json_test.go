@@ -490,3 +490,32 @@ func TestDependencyNodeWireGatesCPEs(t *testing.T) {
 		t.Fatalf("encoded CPEs are not gated: %s", data)
 	}
 }
+
+// A node's scope set is a union; the order its declaration sites were
+// visited in must not reach the graph's bytes.
+func TestGraphEncodesScopeSetsInOneOrder(t *testing.T) {
+	build := func(scopes ...Scope) []byte {
+		g := New()
+		node, err := NewDependencyNodeFromPURL("pkg:npm/a@1.0.0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		node.Scopes = scopes
+		if _, err := g.InsertNode(node); err != nil {
+			t.Fatal(err)
+		}
+		data, err := json.Marshal(g)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+	left := build(ScopeRuntime, ScopeDevelopment, ScopeRuntime)
+	right := build(ScopeDevelopment, ScopeRuntime)
+	if string(left) != string(right) {
+		t.Fatalf("scope order changed the graph bytes:\n%s\n%s", left, right)
+	}
+	if !strings.Contains(string(left), `"scopes":["development","runtime"]`) {
+		t.Fatalf("scopes are not sorted and deduplicated: %s", left)
+	}
+}
