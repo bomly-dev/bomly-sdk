@@ -215,9 +215,11 @@ func (d Dependency) MarshalJSON() ([]byte, error) {
 	return json.Marshal(dependencyWire(d.Normalized()))
 }
 
-// UnmarshalJSON reads through the gate.
+// UnmarshalJSON reads through the gate. The wire value starts from the
+// receiver, as encoding/json's default decoding would, so a partial object
+// applied to an existing dependency keeps the fields it does not name.
 func (d *Dependency) UnmarshalJSON(data []byte) error {
-	var wire dependencyWire
+	wire := dependencyWire(*d)
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
 	}
