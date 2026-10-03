@@ -2,6 +2,7 @@ package scan
 
 import (
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -316,4 +317,55 @@ func TestPackageDecodesIntoAZeroValue(t *testing.T) {
 	if err := json.Unmarshal(data, &again); err != nil || again.PURL != "pkg:npm/b@1.0.0" {
 		t.Fatalf("round trip = %+v, %v", again.Package, err)
 	}
+}
+
+// A package read on its own is refused over the record's byte bound before
+// it is parsed.
+func TestPackageDecodeIsBounded(t *testing.T) {
+	saved := recordBounds
+	t.Cleanup(func() { recordBounds = saved })
+	recordBounds.bytes = 64
+	var p Package
+	err := json.Unmarshal([]byte(`{"purl":"pkg:npm/a@1.0.0","description":"`+strings.Repeat("x", 100)+`"}`), &p)
+	if !errors.Is(err, ErrRecordTooLarge) {
+		t.Fatalf("an over-bound package decoded: %v", err)
+	}
+}
+
+// FuzzPackageJSON drives the standalone package codec with untrusted
+// bytes: it never panics, and whatever it accepts re-encodes to a fixed
+// point that still carries both iterated collections.
+func FuzzPackageJSON(f *testing.F) {
+	for _, seed := range []string{
+		`null`, `{}`, `{"purl":"pkg:npm/a@1.0.0","licenses":[],"vulnerabilities":[]}`,
+		`{"purl":"pkg:npm/a@1.0.0","vulnerabilities":[{"id":"CVE-1","source":"osv"},{"id":"CVE-1","source":"osv"}]}`,
+		`{"homepage":"https://user:token@example.test","cpes":[" b ","a","a"]}`,
+		`[]`, `"x"`, `{"metadata":{"n":12345678901234567890}}`,
+	} {
+		f.Add([]byte(seed))
+	}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		var first Package
+		if err := json.Unmarshal(data, &first); err != nil || first.Package == nil {
+			return
+		}
+		encoded, err := json.Marshal(first)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if !strings.Contains(string(encoded), `"licenses":`) || !strings.Contains(string(encoded), `"vulnerabilities":`) {
+			t.Fatalf("an iterated collection is missing: %s", encoded)
+		}
+		var second Package
+		if err := json.Unmarshal(encoded, &second); err != nil {
+			t.Fatalf("re-decode of our own encoding failed: %v\n%s", err, encoded)
+		}
+		again, err := json.Marshal(second)
+		if err != nil {
+			t.Fatalf("re-marshal: %v", err)
+		}
+		if string(again) != string(encoded) {
+			t.Fatalf("not a fixed point:\n%s\n%s", encoded, again)
+		}
+	})
 }

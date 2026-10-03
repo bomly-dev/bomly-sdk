@@ -22,6 +22,7 @@ package scan
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -405,7 +406,15 @@ func (p Package) MarshalJSON() ([]byte, error) {
 // it, decoding into a zero Package would call the embedded pointer's
 // unmarshaler with that pointer still nil and panic; a document type that
 // is exported must read untrusted JSON safely. null leaves the package nil.
+//
+// The input is bounded before it is parsed, as every untrusted parser here
+// is: a package read on its own, outside Decode, does not inherit the
+// record's byte bound, so it applies the same one -- one package can be no
+// larger than the record that would hold it.
 func (p *Package) UnmarshalJSON(data []byte) error {
+	if len(data) > recordBounds.bytes {
+		return fmt.Errorf("%w: package of %d bytes, over %d", ErrRecordTooLarge, len(data), recordBounds.bytes)
+	}
 	if string(bytes.TrimSpace(data)) == "null" {
 		p.Package = nil
 		return nil
