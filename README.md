@@ -149,7 +149,9 @@ Three independent compatibility axes govern this module:
    `scan.Decode` reads. Additive within v1: new optional keys only, readers
    ignore keys they do not know, `schema_version` names the schema, and
    `Decode` refuses another rather than guessing. A breaking change ships
-   as `bomly.scan.v2`.
+   as `bomly.scan.v2`. The collections a consumer iterates
+   (`scan.IteratedCollections`) are always written, as `[]` when empty, so a
+   script never meets a missing key; other optional fields are omitted.
 
 Plugin binaries built against an older SDK release keep working against newer
 hosts (and vice versa) as long as both speak protocol v1.

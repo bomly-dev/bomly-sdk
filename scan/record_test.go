@@ -2,6 +2,7 @@ package scan
 
 import (
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -15,9 +16,7 @@ import (
 // tagged field declares omitempty or omitzero unless it is one of those
 // keys. Every struct reachable from Record inside this package is walked.
 func TestRecordFieldsDeclareOmitEmpty(t *testing.T) {
-	alwaysSent := map[string]string{
-		"Record.schema_version": "the one key every record carries",
-	}
+	alwaysSent := recordAlwaysSent
 	pkgPath := reflect.TypeOf(Record{}).PkgPath()
 	seen := map[reflect.Type]bool{}
 	var types []reflect.Type
@@ -61,6 +60,11 @@ func TestRecordFieldsDeclareOmitEmpty(t *testing.T) {
 			}
 			name, options, _ := strings.Cut(tag, ",")
 			if _, required := alwaysSent[typ.Name()+"."+name]; required {
+				// An always-sent key that also carries an omit option would be
+				// dropped when empty, which is what the declaration denies.
+				if hasOmitOption(options) {
+					t.Errorf("%s.%s is declared always sent but carries an omit option", typ.Name(), field.Name)
+				}
 				continue
 			}
 			if !hasOmitOption(options) {
@@ -71,6 +75,23 @@ func TestRecordFieldsDeclareOmitEmpty(t *testing.T) {
 			}
 		}
 	}
+}
+
+// recordAlwaysSent are the keys a zero value of a record type still writes,
+// by "Type.key": the schema version, and the IteratedCollections the record
+// types own. TestIteratedCollectionsMatchTheGuard derives
+// IteratedCollections from this map and from packageWire, so the two
+// cannot drift.
+var recordAlwaysSent = map[string]string{
+	"Record.schema_version": "the one key every record carries",
+	"Record.manifests":      "iterated collection",
+	"Record.packages":       "iterated collection",
+	"Record.findings":       "iterated collection",
+	"Record.warnings":       "iterated collection",
+	"Record.waivers":        "iterated collection",
+	"Manifest.dependencies": "iterated collection",
+	"Dependency.depends_on": "iterated collection",
+	"Dependency.licenses":   "iterated collection",
 }
 
 func hasOmitOption(options string) bool {
@@ -129,7 +150,222 @@ func TestDependencyCodecGatesTheRelationship(t *testing.T) {
 		t.Fatalf("a partial object did not merge into the existing dependency: %+v", existing)
 	}
 	data, err := json.Marshal(Dependency{ID: "pkg:npm/a@1.0.0", Relationship: "sideways"})
-	if err != nil || string(data) != `{"id":"pkg:npm/a@1.0.0"}` {
+	if err != nil || string(data) != `{"id":"pkg:npm/a@1.0.0","depends_on":[],"licenses":[]}` {
 		t.Fatalf("encoded %s, %v; want the unknown relationship cleared", data, err)
 	}
+}
+
+// Every iterated collection is present, as [], in a record that found
+// nothing: a consumer's `.findings[]` or `.depends_on[]` never meets a
+// missing key.
+func TestRecordWritesIteratedCollectionsWhenEmpty(t *testing.T) {
+	data, err := Encode(&Record{Manifests: []Manifest{{Path: "go.mod", Dependencies: []Dependency{{ID: "pkg:golang/example.test/a@v1.0.0"}}}},
+		Packages: []*model.Package{{Coordinates: model.Coordinates{PURL: "pkg:golang/example.test/a@v1.0.0"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"findings":[]`, `"warnings":[]`, `"waivers":[]`, `"depends_on":[]`, `"licenses":[]`, `"vulnerabilities":[]`} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("%s missing from %s", want, data)
+		}
+	}
+	empty, err := Encode(&Record{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"manifests":[]`, `"packages":[]`, `"findings":[]`} {
+		if !strings.Contains(string(empty), want) {
+			t.Fatalf("%s missing from an empty record: %s", want, empty)
+		}
+	}
+	if _, err := Decode(data); err != nil {
+		t.Fatalf("a record with empty collections did not verify: %v", err)
+	}
+	// Marshaling a record directly, not through Encode, takes the same shape.
+	direct, err := json.Marshal(Record{SchemaVersion: SchemaVersion})
+	if err != nil || !strings.Contains(string(direct), `"findings":[]`) {
+		t.Fatalf("direct marshal = %s, %v", direct, err)
+	}
+}
+
+// A record written before the collections were always present omitted an
+// empty one, and digested its absence as null; it still decodes and
+// verifies.
+func TestDecodeReadsARecordThatOmittedEmptyCollections(t *testing.T) {
+	null := digestOf([]byte("null"))
+	old := `{"schema_version":"bomly.scan.v1","command":"scan","digests":{"manifests":"` + null + `","packages":"` + null + `","findings":"` + null + `"}}`
+	r, err := Decode([]byte(old))
+	if err != nil {
+		t.Fatalf("an older record was refused: %v", err)
+	}
+	if len(r.Findings) != 0 || len(r.Manifests) != 0 {
+		t.Fatalf("decoded %+v", r)
+	}
+}
+
+// A document's package carries the same keys as the SDK package plus its
+// two iterated collections, and encoding never edits the holder's package.
+func TestPackageWritesItsIteratedCollections(t *testing.T) {
+	held := &model.Package{Coordinates: model.Coordinates{PURL: "pkg:npm/a@1.0.0", Name: "a"},
+		Vulnerabilities: []model.Vulnerability{{ID: "CVE-2", Source: "osv"}, {ID: "CVE-1", Source: "osv"}}}
+	data, err := json.Marshal(Package{held})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"licenses":[]`) || !strings.Contains(string(data), `"purl":"pkg:npm/a@1.0.0"`) {
+		t.Fatalf("package = %s", data)
+	}
+	if held.Vulnerabilities[0].ID != "CVE-2" {
+		t.Fatal("encoding reordered the holder's vulnerabilities")
+	}
+	var plain, wrapped map[string]json.RawMessage
+	sdk, _ := json.Marshal(held)
+	if err := json.Unmarshal(sdk, &plain); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &wrapped); err != nil {
+		t.Fatal(err)
+	}
+	for key, value := range plain {
+		if string(wrapped[key]) != string(value) {
+			t.Fatalf("key %q differs: %s vs %s", key, wrapped[key], value)
+		}
+	}
+	if b, _ := json.Marshal(Package{}); string(b) != "null" {
+		t.Fatalf("a nil package encoded as %s", b)
+	}
+}
+
+// recordWire must list Record's fields, in order, with the same keys; only
+// the packages element type differs.
+func TestRecordWireMirrorsRecord(t *testing.T) {
+	record, wire := reflect.TypeOf(Record{}), reflect.TypeOf(recordWire{})
+	if record.NumField() != wire.NumField() {
+		t.Fatalf("Record has %d fields, recordWire %d", record.NumField(), wire.NumField())
+	}
+	for i := range record.NumField() {
+		a, b := record.Field(i), wire.Field(i)
+		if a.Name != b.Name || a.Tag != b.Tag {
+			t.Fatalf("field %d: Record.%s %q, recordWire.%s %q", i, a.Name, a.Tag, b.Name, b.Tag)
+		}
+		if a.Name != "Packages" && a.Type != b.Type {
+			t.Fatalf("field %s: type %v vs %v", a.Name, a.Type, b.Type)
+		}
+	}
+}
+
+// IteratedCollections is exactly what the guard accepts as always sent,
+// plus the package collections packageWire writes without an omit option:
+// derived from the declarations, not from a second hand-written list.
+func TestIteratedCollectionsMatchTheGuard(t *testing.T) {
+	prefixes := map[string]string{"Record": "", "Manifest": "manifests[].", "Dependency": "manifests[].dependencies[]."}
+	derived := map[string]bool{}
+	for key := range recordAlwaysSent {
+		typeName, field, _ := strings.Cut(key, ".")
+		if key == "Record.schema_version" {
+			continue
+		}
+		prefix, ok := prefixes[typeName]
+		if !ok {
+			t.Fatalf("always-sent key %q belongs to a type with no path in the record", key)
+		}
+		derived[prefix+field] = true
+	}
+	wire := reflect.TypeOf(packageWire{})
+	for i := range wire.NumField() {
+		field := wire.Field(i)
+		if field.Anonymous {
+			continue
+		}
+		name, options, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if hasOmitOption(options) {
+			t.Errorf("packageWire.%s is an iterated collection but carries an omit option", field.Name)
+		}
+		derived["packages[]."+name] = true
+	}
+	listed := map[string]bool{}
+	for _, path := range IteratedCollections {
+		listed[path] = true
+	}
+	if !reflect.DeepEqual(derived, listed) {
+		t.Fatalf("IteratedCollections = %v, but the declarations derive %v", IteratedCollections, derived)
+	}
+}
+
+// Decoding into a zero Package, standalone or in a slice, must not panic on
+// the embedded nil pointer, and must read through model.Package's codec.
+func TestPackageDecodesIntoAZeroValue(t *testing.T) {
+	var one Package
+	if err := json.Unmarshal([]byte(`{"purl":"pkg:npm/a@1.0.0","name":"a","licenses":[],"vulnerabilities":[]}`), &one); err != nil {
+		t.Fatal(err)
+	}
+	if one.Package == nil || one.PURL != "pkg:npm/a@1.0.0" {
+		t.Fatalf("decoded %+v", one.Package)
+	}
+	var many []Package
+	if err := json.Unmarshal([]byte(`[{"purl":"pkg:npm/b@1.0.0"},null]`), &many); err != nil {
+		t.Fatal(err)
+	}
+	if len(many) != 2 || many[0].Package == nil || many[1].Package != nil {
+		t.Fatalf("decoded %+v", many)
+	}
+	data, err := json.Marshal(many[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var again Package
+	if err := json.Unmarshal(data, &again); err != nil || again.PURL != "pkg:npm/b@1.0.0" {
+		t.Fatalf("round trip = %+v, %v", again.Package, err)
+	}
+}
+
+// A package read on its own is refused over the record's byte bound before
+// it is parsed.
+func TestPackageDecodeIsBounded(t *testing.T) {
+	saved := recordBounds
+	t.Cleanup(func() { recordBounds = saved })
+	recordBounds.bytes = 64
+	var p Package
+	err := json.Unmarshal([]byte(`{"purl":"pkg:npm/a@1.0.0","description":"`+strings.Repeat("x", 100)+`"}`), &p)
+	if !errors.Is(err, ErrRecordTooLarge) {
+		t.Fatalf("an over-bound package decoded: %v", err)
+	}
+}
+
+// FuzzPackageJSON drives the standalone package codec with untrusted
+// bytes: it never panics, and whatever it accepts re-encodes to a fixed
+// point that still carries both iterated collections.
+func FuzzPackageJSON(f *testing.F) {
+	for _, seed := range []string{
+		`null`, `{}`, `{"purl":"pkg:npm/a@1.0.0","licenses":[],"vulnerabilities":[]}`,
+		`{"purl":"pkg:npm/a@1.0.0","vulnerabilities":[{"id":"CVE-1","source":"osv"},{"id":"CVE-1","source":"osv"}]}`,
+		`{"homepage":"https://user:token@example.test","cpes":[" b ","a","a"]}`,
+		`[]`, `"x"`, `{"metadata":{"n":12345678901234567890}}`,
+	} {
+		f.Add([]byte(seed))
+	}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		var first Package
+		if err := json.Unmarshal(data, &first); err != nil || first.Package == nil {
+			return
+		}
+		encoded, err := json.Marshal(first)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if !strings.Contains(string(encoded), `"licenses":`) || !strings.Contains(string(encoded), `"vulnerabilities":`) {
+			t.Fatalf("an iterated collection is missing: %s", encoded)
+		}
+		var second Package
+		if err := json.Unmarshal(encoded, &second); err != nil {
+			t.Fatalf("re-decode of our own encoding failed: %v\n%s", err, encoded)
+		}
+		again, err := json.Marshal(second)
+		if err != nil {
+			t.Fatalf("re-marshal: %v", err)
+		}
+		if string(again) != string(encoded) {
+			t.Fatalf("not a fixed point:\n%s\n%s", encoded, again)
+		}
+	})
 }

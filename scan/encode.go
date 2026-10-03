@@ -239,15 +239,16 @@ func waiverSortKey(w Waiver) string {
 
 // sectionDigests digests each section of a canonical record as its
 // encoding writes it: a field's bytes inside the record are the bytes of
-// the field's value marshaled alone. An absent section digests as the
-// encoding of null, so a record with no findings has a findings digest a
-// reader can still compare.
+// the field's value marshaled alone, an empty section written as [] (see
+// IteratedCollections). A record written before the sections were always
+// present omitted an empty one, and Decode digests that absence as null,
+// which is what its writer digested, so both verify.
 func sectionDigests(r Record) (SectionDigests, error) {
 	var out SectionDigests
 	for _, section := range []struct {
 		value any
 		into  *string
-	}{{r.Manifests, &out.Manifests}, {r.Packages, &out.Packages}, {r.Findings, &out.Findings}} {
+	}{{emptyIfNil(r.Manifests), &out.Manifests}, {packagesOf(r.Packages), &out.Packages}, {emptyIfNil(r.Findings), &out.Findings}} {
 		data, err := json.Marshal(section.value)
 		if err != nil {
 			return out, err

@@ -168,6 +168,20 @@ Two axes, with different rules (see `README.md` for the full policy):
   plugin walk stops at `plugin` and `model`. Nothing in `scan` moves a
   record anywhere; how one travels is not this module's to decide.
 
+  **Collections a consumer iterates are always written, as `[]` when
+  empty; they are never omitted.** This is a standing maintainer decision
+  for every document Bomly emits for users to script against -- the scan
+  record here, and the CLI's own documents -- because a stable shape is
+  what keeps user automations from breaking on a run that found nothing.
+  `scan.IteratedCollections` lists them for the record, and `scan.Package`
+  writes a registry package's licenses and vulnerabilities that way for
+  any document. It was weighed against size: about +5% on the compact
+  record, +1.5% compressed. It does **not** apply to the plugin wire
+  (`bomly.plugin.v1`), where every field stays optional by contract, which
+  is why `model.Package` itself still omits them. A new collection in a
+  user-facing document joins the list; an empty array and an absent key
+  mean the same thing (none recorded), so the array adds no claim.
+
 Release ordering: **this module tags first, plugin repositories adopt the new
 tag, then bomly-cli updates its pin.** Never ask consumers to pin a commit or
 branch.
