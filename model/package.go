@@ -834,16 +834,20 @@ func (p *Package) NormalizeAssertions() {
 	}
 	p.Assertions = p.Normalized()
 	p.DetectedOrigins = MergeOrigins(nil, p.DetectedOrigins)
-	// The vulnerabilities take the gates they declare and a fixed order:
-	// they are a set unioned by (source, ID), so the order matchers ran in
-	// is not content, and two registries that agree on the set must encode
-	// to the same bytes.
-	for i := range p.Vulnerabilities {
-		p.Vulnerabilities[i].Recommendation = NormalizeDescription(p.Vulnerabilities[i].Recommendation)
+	// The vulnerabilities take the gates they declare, fold by the identity
+	// the registry unions on, and take a fixed order: they are a set keyed
+	// by (source, ID), so a repeated advisory in one update is one advisory,
+	// the order matchers ran in is not content, and two registries that
+	// agree on the set must encode to the same bytes. The fold is the
+	// registry's own merge, so [v] and [v, v] are one package.
+	if len(p.Vulnerabilities) > 0 {
+		var folded Package
+		folded.mergeVulnerabilities(p.Vulnerabilities)
+		p.Vulnerabilities = folded.Vulnerabilities
+		sort.SliceStable(p.Vulnerabilities, func(i, j int) bool {
+			return vulnerabilityIdentityKey(p.Vulnerabilities[i]) < vulnerabilityIdentityKey(p.Vulnerabilities[j])
+		})
 	}
-	sort.SliceStable(p.Vulnerabilities, func(i, j int) bool {
-		return vulnerabilityIdentityKey(p.Vulnerabilities[i]) < vulnerabilityIdentityKey(p.Vulnerabilities[j])
-	})
 }
 
 // vulnerabilityIdentityKey is the identity mergeVulnerabilities unions by.

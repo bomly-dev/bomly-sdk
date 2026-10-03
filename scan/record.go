@@ -181,13 +181,20 @@ type Dependency struct {
 	// Source is where the dependency was resolved from -- a registry, Git,
 	// a URL, a file, a workspace -- as the detector recorded it; a change
 	// between scans is a review-worthy transition the comparison reports.
-	Source     model.DependencySource  `json:"source,omitempty"`
-	Scopes     []model.Scope           `json:"scopes,omitempty"`
-	DependsOn  []string                `json:"depends_on,omitempty"`
-	Matched    bool                    `json:"matched,omitempty"`
-	PackageRef string                  `json:"package_ref,omitempty"`
-	Locations  []model.PackageLocation `json:"locations,omitempty"`
-	Licenses   []model.PackageLicense  `json:"licenses,omitempty"`
+	Source model.DependencySource `json:"source,omitempty"`
+	// Relationship is whether the dependency was declared directly by its
+	// manifest or reached through another, as the detector recorded it. A
+	// record lists no manifest nodes, so a comparison rebuilt from one has
+	// no structural root to derive this from; the stated value stands in,
+	// and the graph comparison honors a stated relationship over a derived
+	// one.
+	Relationship model.DependencyRelationship `json:"relationship,omitempty"`
+	Scopes       []model.Scope                `json:"scopes,omitempty"`
+	DependsOn    []string                     `json:"depends_on,omitempty"`
+	Matched      bool                         `json:"matched,omitempty"`
+	PackageRef   string                       `json:"package_ref,omitempty"`
+	Locations    []model.PackageLocation      `json:"locations,omitempty"`
+	Licenses     []model.PackageLicense       `json:"licenses,omitempty"`
 }
 
 // AuditSummary counts findings by severity.
