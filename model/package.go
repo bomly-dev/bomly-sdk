@@ -455,7 +455,29 @@ func MergeLicenses(existing, additions []PackageLicense) []PackageLicense {
 	if len(merged) == 0 {
 		return nil
 	}
+	// Sorted, as the digest and reference sets are, so a package whose
+	// witnesses arrived in another order publishes the same claims in the
+	// same order and encodes to the same bytes. The order is by kind first
+	// -- a claim of no stated kind, then declared, then concluded, the
+	// order a reader meets them in an SPDX package -- and by claim within a
+	// kind, so a document still reads what was declared before what was
+	// concluded about it.
+	sort.SliceStable(merged, func(i, j int) bool { return merged[i].sortKey() < merged[j].sortKey() })
 	return merged
+}
+
+// sortKey orders claims by kind, then by claim.
+func (l PackageLicense) sortKey() string {
+	rank := "3"
+	switch l.Type {
+	case "":
+		rank = "0"
+	case LicenseTypeDeclared:
+		rank = "1"
+	case LicenseTypeConcluded:
+		rank = "2"
+	}
+	return rank + "\x00" + l.licenseKey()
 }
 
 // resolveLicenseRefCollision keeps a merged license set unambiguous when two
@@ -930,6 +952,9 @@ func (p *Package) mergeVulnerabilities(incoming []Vulnerability) {
 			}
 			if v.Analysis != nil {
 				dst.Analysis = MergeVulnerabilityAnalysis(dst.Analysis, v.Analysis)
+			}
+			if dst.Recommendation == "" {
+				dst.Recommendation = NormalizeDescription(v.Recommendation)
 			}
 			continue
 		}

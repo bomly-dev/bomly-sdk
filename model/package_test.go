@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -1050,5 +1051,25 @@ func TestPackageCopyrightIsGated(t *testing.T) {
 	dep.Copyright = "Copyright\x07 Meta"
 	if seeded := PackageFromDependencyNode(dep); seeded == nil || seeded.Copyright != "Copyright Meta" {
 		t.Fatalf("seeded package = %+v, want the gated copyright", seeded)
+	}
+}
+
+// Licenses are a set: two witnesses arriving in either order publish the
+// same claims in the same order -- by kind (none, declared, concluded),
+// then by claim -- so equal packages encode to equal bytes.
+func TestMergeLicensesOrdersClaimsByKindThenClaim(t *testing.T) {
+	a := MergeLicenses([]PackageLicense{{Value: "MIT", Type: LicenseTypeConcluded}, {Value: "ISC"}, {Value: "MIT", Type: LicenseTypeDeclared}, {Value: "Apache-2.0", Type: LicenseTypeDeclared}}, nil)
+	b := MergeLicenses(nil, []PackageLicense{{Value: "Apache-2.0", Type: LicenseTypeDeclared}, {Value: "MIT", Type: LicenseTypeDeclared}, {Value: "ISC"}, {Value: "MIT", Type: LicenseTypeConcluded}})
+	if !reflect.DeepEqual(a, b) {
+		t.Fatalf("order of arrival changed the set:\n%+v\n%+v", a, b)
+	}
+	want := []string{"ISC", "Apache-2.0", "MIT", "MIT"}
+	for i, license := range a {
+		if license.Value != want[i] {
+			t.Fatalf("merged licenses = %+v, want values %v", a, want)
+		}
+	}
+	if a[0].Type != "" || a[1].Type != LicenseTypeDeclared || a[3].Type != LicenseTypeConcluded {
+		t.Fatalf("kinds are not in order none, declared, concluded: %+v", a)
 	}
 }

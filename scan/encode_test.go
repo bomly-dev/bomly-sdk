@@ -315,3 +315,22 @@ func TestEncodeOrdersFindingsAndLocationsTotally(t *testing.T) {
 		t.Fatalf("locations are not folded and sorted: %s", left)
 	}
 }
+
+// A package's license claims are a set; the order its witnesses arrived in
+// must not reach the bytes.
+func TestEncodeOrdersPackageLicenseClaims(t *testing.T) {
+	a, b := sampleRecord(), sampleRecord()
+	a.Packages[0].Licenses = []model.PackageLicense{{Value: "MIT", Type: model.LicenseTypeDeclared}, {Value: "Apache-2.0", Type: model.LicenseTypeDeclared}}
+	b.Packages[0].Licenses = []model.PackageLicense{{Value: "Apache-2.0", Type: model.LicenseTypeDeclared}, {Value: "MIT", Type: model.LicenseTypeDeclared}}
+	left, err := Encode(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := Encode(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(left, right) {
+		t.Fatalf("license order changed the bytes:\n%s\n%s", left, right)
+	}
+}
