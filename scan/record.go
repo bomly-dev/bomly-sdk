@@ -20,6 +20,7 @@
 package scan
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"time"
@@ -398,6 +399,23 @@ func (p Package) MarshalJSON() ([]byte, error) {
 		Licenses:        emptyIfNil(gated.Licenses),
 		Vulnerabilities: emptyIfNil(gated.Vulnerabilities),
 	})
+}
+
+// UnmarshalJSON reads a package through model.Package's own codec. Without
+// it, decoding into a zero Package would call the embedded pointer's
+// unmarshaler with that pointer still nil and panic; a document type that
+// is exported must read untrusted JSON safely. null leaves the package nil.
+func (p *Package) UnmarshalJSON(data []byte) error {
+	if string(bytes.TrimSpace(data)) == "null" {
+		p.Package = nil
+		return nil
+	}
+	decoded := new(model.Package)
+	if err := json.Unmarshal(data, decoded); err != nil {
+		return err
+	}
+	p.Package = decoded
+	return nil
 }
 
 // Packages wraps registry packages for a document, so each one writes its

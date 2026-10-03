@@ -15,20 +15,7 @@ import (
 // tagged field declares omitempty or omitzero unless it is one of those
 // keys. Every struct reachable from Record inside this package is walked.
 func TestRecordFieldsDeclareOmitEmpty(t *testing.T) {
-	alwaysSent := map[string]string{
-		"Record.schema_version": "the one key every record carries",
-		// IteratedCollections: always written so a consumer's iteration
-		// never meets a missing key. Listed by owning type here; the
-		// coverage test below checks this list against IteratedCollections.
-		"Record.manifests":      "iterated collection",
-		"Record.packages":       "iterated collection",
-		"Record.findings":       "iterated collection",
-		"Record.warnings":       "iterated collection",
-		"Record.waivers":        "iterated collection",
-		"Manifest.dependencies": "iterated collection",
-		"Dependency.depends_on": "iterated collection",
-		"Dependency.licenses":   "iterated collection",
-	}
+	alwaysSent := recordAlwaysSent
 	pkgPath := reflect.TypeOf(Record{}).PkgPath()
 	seen := map[reflect.Type]bool{}
 	var types []reflect.Type
@@ -72,6 +59,11 @@ func TestRecordFieldsDeclareOmitEmpty(t *testing.T) {
 			}
 			name, options, _ := strings.Cut(tag, ",")
 			if _, required := alwaysSent[typ.Name()+"."+name]; required {
+				// An always-sent key that also carries an omit option would be
+				// dropped when empty, which is what the declaration denies.
+				if hasOmitOption(options) {
+					t.Errorf("%s.%s is declared always sent but carries an omit option", typ.Name(), field.Name)
+				}
 				continue
 			}
 			if !hasOmitOption(options) {
@@ -82,6 +74,23 @@ func TestRecordFieldsDeclareOmitEmpty(t *testing.T) {
 			}
 		}
 	}
+}
+
+// recordAlwaysSent are the keys a zero value of a record type still writes,
+// by "Type.key": the schema version, and the IteratedCollections the record
+// types own. TestIteratedCollectionsMatchTheGuard derives
+// IteratedCollections from this map and from packageWire, so the two
+// cannot drift.
+var recordAlwaysSent = map[string]string{
+	"Record.schema_version": "the one key every record carries",
+	"Record.manifests":      "iterated collection",
+	"Record.packages":       "iterated collection",
+	"Record.findings":       "iterated collection",
+	"Record.warnings":       "iterated collection",
+	"Record.waivers":        "iterated collection",
+	"Manifest.dependencies": "iterated collection",
+	"Dependency.depends_on": "iterated collection",
+	"Dependency.licenses":   "iterated collection",
 }
 
 func hasOmitOption(options string) bool {
@@ -244,18 +253,67 @@ func TestRecordWireMirrorsRecord(t *testing.T) {
 	}
 }
 
-// The always-sent keys the guard accepts are exactly IteratedCollections.
+// IteratedCollections is exactly what the guard accepts as always sent,
+// plus the package collections packageWire writes without an omit option:
+// derived from the declarations, not from a second hand-written list.
 func TestIteratedCollectionsMatchTheGuard(t *testing.T) {
-	want := map[string]bool{}
+	prefixes := map[string]string{"Record": "", "Manifest": "manifests[].", "Dependency": "manifests[].dependencies[]."}
+	derived := map[string]bool{}
+	for key := range recordAlwaysSent {
+		typeName, field, _ := strings.Cut(key, ".")
+		if key == "Record.schema_version" {
+			continue
+		}
+		prefix, ok := prefixes[typeName]
+		if !ok {
+			t.Fatalf("always-sent key %q belongs to a type with no path in the record", key)
+		}
+		derived[prefix+field] = true
+	}
+	wire := reflect.TypeOf(packageWire{})
+	for i := range wire.NumField() {
+		field := wire.Field(i)
+		if field.Anonymous {
+			continue
+		}
+		name, options, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if hasOmitOption(options) {
+			t.Errorf("packageWire.%s is an iterated collection but carries an omit option", field.Name)
+		}
+		derived["packages[]."+name] = true
+	}
+	listed := map[string]bool{}
 	for _, path := range IteratedCollections {
-		want[path] = true
+		listed[path] = true
 	}
-	got := map[string]bool{
-		"manifests": true, "packages": true, "findings": true, "warnings": true, "waivers": true,
-		"manifests[].dependencies": true, "manifests[].dependencies[].depends_on": true, "manifests[].dependencies[].licenses": true,
-		"packages[].licenses": true, "packages[].vulnerabilities": true,
+	if !reflect.DeepEqual(derived, listed) {
+		t.Fatalf("IteratedCollections = %v, but the declarations derive %v", IteratedCollections, derived)
 	}
-	if !reflect.DeepEqual(want, got) {
-		t.Fatalf("IteratedCollections = %v; update the guard and this test together", IteratedCollections)
+}
+
+// Decoding into a zero Package, standalone or in a slice, must not panic on
+// the embedded nil pointer, and must read through model.Package's codec.
+func TestPackageDecodesIntoAZeroValue(t *testing.T) {
+	var one Package
+	if err := json.Unmarshal([]byte(`{"purl":"pkg:npm/a@1.0.0","name":"a","licenses":[],"vulnerabilities":[]}`), &one); err != nil {
+		t.Fatal(err)
+	}
+	if one.Package == nil || one.PURL != "pkg:npm/a@1.0.0" {
+		t.Fatalf("decoded %+v", one.Package)
+	}
+	var many []Package
+	if err := json.Unmarshal([]byte(`[{"purl":"pkg:npm/b@1.0.0"},null]`), &many); err != nil {
+		t.Fatal(err)
+	}
+	if len(many) != 2 || many[0].Package == nil || many[1].Package != nil {
+		t.Fatalf("decoded %+v", many)
+	}
+	data, err := json.Marshal(many[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var again Package
+	if err := json.Unmarshal(data, &again); err != nil || again.PURL != "pkg:npm/b@1.0.0" {
+		t.Fatalf("round trip = %+v, %v", again.Package, err)
 	}
 }
