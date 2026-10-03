@@ -1,8 +1,10 @@
 package plugin
 
 import (
-	"github.com/bomly-dev/bomly-sdk/model"
+	"encoding/json"
 	"strings"
+
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // ExecutionTargetKind identifies the top-level source selected by the user for one scan execution.
@@ -18,6 +20,11 @@ const (
 	ExecutionTargetContainerImage   ExecutionTargetKind = "container-image"
 )
 
+// ExecutionTarget names what one scan execution reads: a filesystem path,
+// a repository at a ref, or a container image. Gate: CommitSHA passes
+// NormalizeCommitSHA in the JSON codec on both directions, so a ref name or
+// a padded hash a producer wrote in its place is cleared at the wire rather
+// than carried as a commit; the other fields are trimmed.
 type ExecutionTarget struct {
 	Kind          ExecutionTargetKind `json:"kind,omitempty"`
 	Location      string              `json:"location,omitempty"`
@@ -28,6 +35,37 @@ type ExecutionTarget struct {
 	// found. Gate: NormalizeCommitSHA, applied by the producer. Optional;
 	// empty when the target is not a revision of a repository.
 	CommitSHA string `json:"commitSha,omitempty"`
+}
+
+// Normalized returns the target held to its gate.
+func (t ExecutionTarget) Normalized() ExecutionTarget {
+	return ExecutionTarget{
+		Kind:          ExecutionTargetKind(strings.TrimSpace(string(t.Kind))),
+		Location:      strings.TrimSpace(t.Location),
+		RepositoryURL: strings.TrimSpace(t.RepositoryURL),
+		Ref:           strings.TrimSpace(t.Ref),
+		CommitSHA:     NormalizeCommitSHA(t.CommitSHA),
+	}
+}
+
+// executionTargetWire is the codec's shape: the same fields without the
+// methods, so the gate runs once on each direction without recursing.
+type executionTargetWire ExecutionTarget
+
+// MarshalJSON writes the gated form.
+func (t ExecutionTarget) MarshalJSON() ([]byte, error) {
+	return json.Marshal(executionTargetWire(t.Normalized()))
+}
+
+// UnmarshalJSON reads through the gate, so a managed component's payload
+// cannot put a non-commit on CommitSHA.
+func (t *ExecutionTarget) UnmarshalJSON(data []byte) error {
+	var wire executionTargetWire
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	*t = ExecutionTarget(wire).Normalized()
+	return nil
 }
 
 // NormalizeCommitSHA returns value as a lowercase hexadecimal commit
