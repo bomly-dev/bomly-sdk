@@ -127,9 +127,14 @@ func decodeDocument(c codec, target Target, data []byte) (*Document, error) {
 	if doc == nil {
 		return nil, ErrNilDocument
 	}
-	// The format is known only here too: the codec that ran is the one the
-	// target named, and the document itself does not carry a token for it.
-	doc.Assertions.Format = model.NormalizeDocumentFormat(string(target))
+	// The format is the one the document declared when its codec read one
+	// (CycloneDX names its specification version in the header, and the
+	// decoder interprets the document by it); the target stands in only for
+	// a document that names none, which is also the SPDX case, where the
+	// codec is the version.
+	if doc.Assertions.Format == "" {
+		doc.Assertions.Format = model.NormalizeDocumentFormat(string(target))
+	}
 	sum := sha256.Sum256(data)
 	// The gate runs here rather than at the export site, so a checksum that
 	// could not be published never reaches the model at all.

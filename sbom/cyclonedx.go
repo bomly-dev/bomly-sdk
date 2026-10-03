@@ -221,9 +221,14 @@ func (c cycloneDXCodec) decodeJSON(data []byte) (*Document, error) {
 		}
 	}
 
+	assertions := cycloneDXDocumentAssertions(bom)
+	// The format the document declared, not the one the caller asked to
+	// read it as: a 1.5 document read through the 1.6 target is a 1.5
+	// document, and the decoder above interpreted it as one.
+	assertions.Format = model.NormalizeDocumentFormat(string(cycloneDXTarget(specVersion)))
 	return &Document{
 		Name:               defaultDocumentName,
-		Assertions:         cycloneDXDocumentAssertions(bom),
+		Assertions:         assertions,
 		Tool:               cycloneDXPrimaryToolName(bom.Metadata),
 		Tools:              cycloneDXToolNames(bom.Metadata),
 		Created:            created,
@@ -677,6 +682,21 @@ func chooseRoot(doc *Document) *Component {
 		}
 	}
 	return nil
+}
+
+// cycloneDXTarget is the inverse of toCycloneDXVersion: the target token
+// for a declared specification version.
+func cycloneDXTarget(version cdx.SpecVersion) Target {
+	switch version {
+	case cdx.SpecVersion1_4:
+		return TargetCycloneDX14JSON
+	case cdx.SpecVersion1_5:
+		return TargetCycloneDX15JSON
+	case cdx.SpecVersion1_6:
+		return TargetCycloneDX16JSON
+	default:
+		return TargetCycloneDX17JSON
+	}
 }
 
 func toCycloneDXVersion(target Target) cdx.SpecVersion {
