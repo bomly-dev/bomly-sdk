@@ -170,9 +170,9 @@ func canonicalize(r Record) Record {
 				deps[j].DependsOn = sortedOrNil(deps[j].DependsOn)
 				deps[j].Scopes = sortedScopesOrNil(deps[j].Scopes)
 				deps[j].Locations = model.CanonicalLocations(deps[j].Locations)
-				if len(deps[j].Licenses) == 0 {
-					deps[j].Licenses = nil
-				}
+				// The license set merge is the gate and the order for license
+				// claims everywhere else; a dependency's claims take it too.
+				deps[j].Licenses = model.MergeLicenses(nil, deps[j].Licenses)
 			}
 			sort.SliceStable(deps, func(a, b int) bool { return deps[a].ID < deps[b].ID })
 			manifests[i].Dependencies = deps
