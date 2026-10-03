@@ -1070,11 +1070,12 @@ func cycloneDXIngestedEOL(properties *[]cdx.Property) *EOL {
 // cycloneDXVulnerabilities flattens per-component vulnerabilities into the
 // BOM-level vulnerabilities array. Copies of one advisory fold into one
 // entry, collecting every affected component's BOMRef under Affects -- but
-// only while they carry the same analysis. A BOM-level entry has one VEX
-// block that applies to every ref it affects, so folding a component whose
-// analysis says not_affected with one whose analysis says nothing, or says
-// exploitable, would publish an assessment for a component nobody assessed.
-// Distinct analyses therefore become distinct entries with the same ID,
+// only while they say the same thing. A BOM-level entry has one analysis,
+// one recommendation, one rating and one description for every ref it
+// affects, so folding a component whose copy says not_affected, or
+// recommends its own fix, with one whose copy says otherwise would publish
+// for the second component words written about the first. Copies that
+// differ in any field therefore become distinct entries with the same ID,
 // which CycloneDX permits: the array's uniqueness constraint is on whole
 // entries, not on IDs. Order is first appearance.
 func cycloneDXVulnerabilities(components []Component) []cdx.Vulnerability {
@@ -1089,7 +1090,7 @@ func cycloneDXVulnerabilities(components []Component) []cdx.Vulnerability {
 			if strings.TrimSpace(v.ID) == "" {
 				continue
 			}
-			key := v.ID + "\x00" + analysisKey(v.Analysis)
+			key := vulnerabilityKey(v)
 			acc, ok := byKey[key]
 			if !ok {
 				acc = &accumulator{vuln: v}
@@ -1109,20 +1110,14 @@ func cycloneDXVulnerabilities(components []Component) []cdx.Vulnerability {
 	return out
 }
 
-// analysisKey fingerprints an analysis as its gated encoding, so two copies
-// that say the same thing fold and two that differ do not; an absent or
-// empty analysis keys as "".
-func analysisKey(analysis *model.VulnerabilityAnalysis) string {
-	if analysis == nil {
-		return ""
-	}
-	normalized, ok := analysis.Normalized()
-	if !ok {
-		return ""
-	}
-	key, err := json.Marshal(normalized)
+// vulnerabilityKey fingerprints a component's copy of an advisory as its
+// encoding, analysis gated by its codec, so two copies that say the same
+// thing fold and two that differ in any field do not. A copy that cannot
+// be encoded keys on its ID alone.
+func vulnerabilityKey(v Vulnerability) string {
+	key, err := json.Marshal(v)
 	if err != nil {
-		return ""
+		return v.ID
 	}
 	return string(key)
 }
