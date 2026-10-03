@@ -1,6 +1,7 @@
 package scan
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/bomly-dev/bomly-sdk/model"
@@ -90,5 +91,46 @@ func TestSummarizeCountsSeverityAliasesInTheirBands(t *testing.T) {
 	want := &AuditSummary{Critical: 1, High: 2, Medium: 1, Low: 1, Unknown: 2, Total: 7}
 	if *got != *want {
 		t.Fatalf("summary = %+v, want %+v", got, want)
+	}
+}
+
+// A status outside the vocabulary must not read as gentler than fail,
+// whether it arrived through the codec, which clears it, or was set in
+// process.
+func TestVerdictOfFailsClosedOnAnUnknownStatus(t *testing.T) {
+	if got := VerdictOf([]model.Finding{{ID: "x", PolicyStatus: "allow"}}); got != VerdictFail {
+		t.Fatalf("verdict with an unknown status = %q, want fail", got)
+	}
+	var decoded model.Finding
+	if err := json.Unmarshal([]byte(`{"id":"x","kind":"vulnerability","policy_status":"allow"}`), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.PolicyStatus != "" || VerdictOf([]model.Finding{decoded}) != VerdictFail {
+		t.Fatalf("decoded status = %q; the codec must clear an unknown status and the verdict must fail", decoded.PolicyStatus)
+	}
+	if got := VerdictOf([]model.Finding{{ID: "x", PolicyStatus: model.FindingPolicyStatusWarn}, {ID: "y", PolicyStatus: model.FindingPolicyStatusSuppressed}}); got != VerdictWarn {
+		t.Fatalf("verdict with warn and suppressed = %q, want warn", got)
+	}
+}
+
+// An ingested document's own assertions ride on its manifest, so a record
+// restates the document's provenance and not only its contents.
+func TestFromGraphEntriesCarriesTheDocumentAssertions(t *testing.T) {
+	entry := model.GraphEntry{Manifest: model.ManifestMetadata{Path: "sbom.cdx.json", Kind: model.ManifestKindSBOM}, Graph: model.New(),
+		Document: &model.DocumentAssertions{Identity: "urn:uuid:3e671687-395b-41f5-a30f-a58921a69b79", Format: "cyclonedx-1.6+json"}}
+	r := FromGraphEntries([]model.GraphEntry{entry}, nil, nil)
+	if len(r.Manifests) != 1 || r.Manifests[0].Document == nil || r.Manifests[0].Document.Format != "cyclonedx-1.6+json" {
+		t.Fatalf("manifests = %+v, want the document assertions on the manifest", r.Manifests)
+	}
+	data, err := Encode(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := Decode(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Manifests[0].Document == nil || decoded.Manifests[0].Document.Identity != entry.Document.Identity {
+		t.Fatalf("document assertions did not survive the record: %+v", decoded.Manifests[0].Document)
 	}
 }

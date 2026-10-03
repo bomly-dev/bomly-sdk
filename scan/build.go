@@ -19,7 +19,7 @@ import (
 func FromGraphEntries(entries []model.GraphEntry, registry *model.PackageRegistry, findings []model.Finding) *Record {
 	r := &Record{SchemaVersion: SchemaVersion, Command: "scan"}
 	for _, entry := range entries {
-		manifest := Manifest{Path: entry.Manifest.Path, Kind: entry.Manifest.Kind, Resolution: entry.Manifest.Resolution}
+		manifest := Manifest{Path: entry.Manifest.Path, Kind: entry.Manifest.Kind, Resolution: entry.Manifest.Resolution, Document: entry.Document}
 		if entry.Graph != nil {
 			manifest.Dependencies = dependenciesOf(entry.Graph)
 		}
@@ -94,15 +94,17 @@ func summarize(findings []model.Finding) *AuditSummary {
 }
 
 // VerdictOf derives the run's verdict from its findings: fail when any
-// finding's policy status is fail or unset (an unset status keeps the
-// historical fail behaviour), warn when findings exist but none fail, pass
-// otherwise.
+// finding's policy status ranks as fail -- which an unset status does, and
+// so does one outside the vocabulary, since the codec clears those and a
+// value that reached here another way must not read as gentler -- warn
+// when findings exist but none fail, pass otherwise.
 func VerdictOf(findings []model.Finding) Verdict {
 	if len(findings) == 0 {
 		return VerdictPass
 	}
+	failRank, _ := model.FindingPolicyStatusRank(model.FindingPolicyStatusFail)
 	for _, f := range findings {
-		if f.PolicyStatus == "" || f.PolicyStatus == model.FindingPolicyStatusFail {
+		if rank, ok := model.FindingPolicyStatusRank(f.PolicyStatus); !ok || rank >= failRank {
 			return VerdictFail
 		}
 	}
