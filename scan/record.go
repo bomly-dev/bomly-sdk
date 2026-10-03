@@ -28,6 +28,22 @@ import (
 	"github.com/bomly-dev/bomly-sdk/plugin"
 )
 
+// IteratedCollections are the record's collections that are always
+// written, as [] when empty, because they are the ones a consumer iterates:
+// a script that walks `.findings[]` or `.manifests[].dependencies[].depends_on[]`
+// must not break on a run that found nothing. An empty array and an absent
+// key mean the same thing in this record -- none recorded -- so writing the
+// array adds no claim; it only makes the shape stable. Other optional
+// fields, collections included, are omitted when empty. Adding a key to
+// this list is additive within bomly.scan.v1: a reader that tolerated its
+// absence also reads an empty array.
+var IteratedCollections = []string{
+	"manifests", "packages", "findings", "warnings", "waivers",
+	"manifests[].dependencies",
+	"manifests[].dependencies[].depends_on", "manifests[].dependencies[].licenses",
+	"packages[].licenses", "packages[].vulnerabilities",
+}
+
 // SchemaVersion names the record schema this package writes and reads.
 const SchemaVersion = "bomly.scan.v1"
 
@@ -43,23 +59,26 @@ type Record struct {
 	// Run is the execution that produced the record.
 	Run Run `json:"run,omitzero"`
 	// Manifests are the detection-stage results, one per manifest the scan
-	// resolved, each with its lean dependency list.
-	Manifests []Manifest `json:"manifests,omitempty"`
+	// resolved, each with its lean dependency list. Always written, empty
+	// as []: see IteratedCollections.
+	Manifests []Manifest `json:"manifests"`
 	// Packages is the matching-stage registry: one package per package URL,
-	// carrying the enrichment. Sorted by package URL.
-	Packages []*model.Package `json:"packages,omitempty"`
+	// carrying the enrichment. Sorted by package URL. Always written, and
+	// each package's licenses and vulnerabilities with it; see Package.
+	Packages []*model.Package `json:"packages"`
 	// Findings are the audit-stage results, referencing packages by URL.
-	Findings []model.Finding `json:"findings,omitempty"`
+	// Always written.
+	Findings []model.Finding `json:"findings"`
 	// AuditSummary counts the findings by severity.
 	AuditSummary *AuditSummary `json:"audit_summary,omitempty"`
 	// Warnings are the typed detector warnings the run surfaced.
-	Warnings []plugin.DetectorWarning `json:"warnings,omitempty"`
+	Warnings []plugin.DetectorWarning `json:"warnings"`
 	// Verdict is the policy outcome of the whole run.
 	Verdict Verdict `json:"verdict,omitempty"`
 	// Policy names the policy the findings were evaluated against.
 	Policy *PolicyRef `json:"policy,omitempty"`
 	// Waivers are the accepted findings that shaped the verdict.
-	Waivers []Waiver `json:"waivers,omitempty"`
+	Waivers []Waiver `json:"waivers"`
 	// Metadata carries run statistics.
 	Metadata Metadata `json:"metadata,omitzero"`
 	// Digests are content digests over each section's encoded bytes, filled
@@ -167,7 +186,16 @@ type Manifest struct {
 	// creators, data license, format -- so a record restates the document's
 	// provenance rather than only its contents. Gated by its own codec.
 	Document     *model.DocumentAssertions `json:"document,omitempty"`
-	Dependencies []Dependency              `json:"dependencies,omitempty"`
+	Dependencies []Dependency              `json:"dependencies"`
+}
+
+// manifestWire is the codec's shape: the same fields without the methods.
+type manifestWire Manifest
+
+// MarshalJSON writes the dependency list even when it is empty.
+func (m Manifest) MarshalJSON() ([]byte, error) {
+	m.Dependencies = emptyIfNil(m.Dependencies)
+	return json.Marshal(manifestWire(m))
 }
 
 // Dependency is the lean projection of a graph node: identity, scope, edges,
@@ -190,11 +218,11 @@ type Dependency struct {
 	// one.
 	Relationship model.DependencyRelationship `json:"relationship,omitempty"`
 	Scopes       []model.Scope                `json:"scopes,omitempty"`
-	DependsOn    []string                     `json:"depends_on,omitempty"`
+	DependsOn    []string                     `json:"depends_on"`
 	Matched      bool                         `json:"matched,omitempty"`
 	PackageRef   string                       `json:"package_ref,omitempty"`
 	Locations    []model.PackageLocation      `json:"locations,omitempty"`
-	Licenses     []model.PackageLicense       `json:"licenses,omitempty"`
+	Licenses     []model.PackageLicense       `json:"licenses"`
 }
 
 // Normalized returns the dependency held to its gate: Relationship passes
@@ -210,9 +238,13 @@ func (d Dependency) Normalized() Dependency {
 // so the gate runs once on each direction without recursing.
 type dependencyWire Dependency
 
-// MarshalJSON writes the gated form.
+// MarshalJSON writes the gated form, with its edges and licenses written
+// even when empty.
 func (d Dependency) MarshalJSON() ([]byte, error) {
-	return json.Marshal(dependencyWire(d.Normalized()))
+	normalized := d.Normalized()
+	normalized.DependsOn = emptyIfNil(normalized.DependsOn)
+	normalized.Licenses = emptyIfNil(normalized.Licenses)
+	return json.Marshal(dependencyWire(normalized))
 }
 
 // UnmarshalJSON reads through the gate. The wire value starts from the
@@ -284,4 +316,109 @@ type SectionDigests struct {
 	Manifests string `json:"manifests,omitempty"`
 	Packages  string `json:"packages,omitempty"`
 	Findings  string `json:"findings,omitempty"`
+}
+
+// recordWire is the record as it is written: the same fields in the same
+// order, with each package encoded as a Package so its iterated
+// collections are written too. TestRecordWireMirrorsRecord keeps the two
+// field lists from drifting.
+type recordWire struct {
+	SchemaVersion string                   `json:"schema_version"`
+	Command       string                   `json:"command,omitempty"`
+	Subject       Subject                  `json:"subject,omitzero"`
+	Run           Run                      `json:"run,omitzero"`
+	Manifests     []Manifest               `json:"manifests"`
+	Packages      []Package                `json:"packages"`
+	Findings      []model.Finding          `json:"findings"`
+	AuditSummary  *AuditSummary            `json:"audit_summary,omitempty"`
+	Warnings      []plugin.DetectorWarning `json:"warnings"`
+	Verdict       Verdict                  `json:"verdict,omitempty"`
+	Policy        *PolicyRef               `json:"policy,omitempty"`
+	Waivers       []Waiver                 `json:"waivers"`
+	Metadata      Metadata                 `json:"metadata,omitzero"`
+	Digests       *SectionDigests          `json:"digests,omitempty"`
+}
+
+// MarshalJSON writes the record with its iterated collections present even
+// when empty. Encode is the canonical writer; this is what makes a record
+// marshaled directly take the same shape.
+func (r Record) MarshalJSON() ([]byte, error) {
+	return json.Marshal(recordWire{
+		SchemaVersion: r.SchemaVersion,
+		Command:       r.Command,
+		Subject:       r.Subject,
+		Run:           r.Run,
+		Manifests:     emptyIfNil(r.Manifests),
+		Packages:      packagesOf(r.Packages),
+		Findings:      emptyIfNil(r.Findings),
+		AuditSummary:  r.AuditSummary,
+		Warnings:      emptyIfNil(r.Warnings),
+		Verdict:       r.Verdict,
+		Policy:        r.Policy,
+		Waivers:       emptyIfNil(r.Waivers),
+		Metadata:      r.Metadata,
+		Digests:       r.Digests,
+	})
+}
+
+// Package is a registry package as a document writes it: the SDK package,
+// gated by its own rules, with its licenses and vulnerabilities written as
+// [] when it has none. model.Package omits them, because on the plugin
+// wire every field is optional by contract; a document a consumer iterates
+// is held to IteratedCollections instead, so this type carries that shape
+// for the record and for any other document built from the same packages.
+type Package struct {
+	*model.Package
+}
+
+// packageBody is model.Package without its methods, so its fields encode
+// by the standard rules underneath the two collections Package overrides.
+type packageBody model.Package
+
+// packageWire puts the two iterated collections at the top level, where
+// they take precedence over the same keys inside the embedded package.
+type packageWire struct {
+	packageBody
+	Licenses        []model.PackageLicense `json:"licenses"`
+	Vulnerabilities []model.Vulnerability  `json:"vulnerabilities"`
+}
+
+// MarshalJSON writes the package through the same gate model.Package's own
+// codec applies, then with its licenses and vulnerabilities always present.
+// The holder's package is not edited.
+func (p Package) MarshalJSON() ([]byte, error) {
+	if p.Package == nil {
+		return []byte("null"), nil
+	}
+	gated := *p.Package
+	gated.Vulnerabilities = append([]model.Vulnerability(nil), gated.Vulnerabilities...)
+	gated.NormalizeAssertions()
+	return json.Marshal(packageWire{
+		packageBody:     packageBody(gated),
+		Licenses:        emptyIfNil(gated.Licenses),
+		Vulnerabilities: emptyIfNil(gated.Vulnerabilities),
+	})
+}
+
+// Packages wraps registry packages for a document, so each one writes its
+// iterated collections. Nil packages are kept as they are.
+func Packages(packages []*model.Package) []Package {
+	return packagesOf(packages)
+}
+
+func packagesOf(packages []*model.Package) []Package {
+	out := make([]Package, 0, len(packages))
+	for _, pkg := range packages {
+		out = append(out, Package{pkg})
+	}
+	return out
+}
+
+// emptyIfNil returns values, or an empty slice in place of nil, so a
+// collection without omitempty is written as [] rather than null.
+func emptyIfNil[T any](values []T) []T {
+	if values == nil {
+		return []T{}
+	}
+	return values
 }

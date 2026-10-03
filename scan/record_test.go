@@ -17,6 +17,17 @@ import (
 func TestRecordFieldsDeclareOmitEmpty(t *testing.T) {
 	alwaysSent := map[string]string{
 		"Record.schema_version": "the one key every record carries",
+		// IteratedCollections: always written so a consumer's iteration
+		// never meets a missing key. Listed by owning type here; the
+		// coverage test below checks this list against IteratedCollections.
+		"Record.manifests":      "iterated collection",
+		"Record.packages":       "iterated collection",
+		"Record.findings":       "iterated collection",
+		"Record.warnings":       "iterated collection",
+		"Record.waivers":        "iterated collection",
+		"Manifest.dependencies": "iterated collection",
+		"Dependency.depends_on": "iterated collection",
+		"Dependency.licenses":   "iterated collection",
 	}
 	pkgPath := reflect.TypeOf(Record{}).PkgPath()
 	seen := map[reflect.Type]bool{}
@@ -129,7 +140,122 @@ func TestDependencyCodecGatesTheRelationship(t *testing.T) {
 		t.Fatalf("a partial object did not merge into the existing dependency: %+v", existing)
 	}
 	data, err := json.Marshal(Dependency{ID: "pkg:npm/a@1.0.0", Relationship: "sideways"})
-	if err != nil || string(data) != `{"id":"pkg:npm/a@1.0.0"}` {
+	if err != nil || string(data) != `{"id":"pkg:npm/a@1.0.0","depends_on":[],"licenses":[]}` {
 		t.Fatalf("encoded %s, %v; want the unknown relationship cleared", data, err)
+	}
+}
+
+// Every iterated collection is present, as [], in a record that found
+// nothing: a consumer's `.findings[]` or `.depends_on[]` never meets a
+// missing key.
+func TestRecordWritesIteratedCollectionsWhenEmpty(t *testing.T) {
+	data, err := Encode(&Record{Manifests: []Manifest{{Path: "go.mod", Dependencies: []Dependency{{ID: "pkg:golang/example.test/a@v1.0.0"}}}},
+		Packages: []*model.Package{{Coordinates: model.Coordinates{PURL: "pkg:golang/example.test/a@v1.0.0"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"findings":[]`, `"warnings":[]`, `"waivers":[]`, `"depends_on":[]`, `"licenses":[]`, `"vulnerabilities":[]`} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("%s missing from %s", want, data)
+		}
+	}
+	empty, err := Encode(&Record{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"manifests":[]`, `"packages":[]`, `"findings":[]`} {
+		if !strings.Contains(string(empty), want) {
+			t.Fatalf("%s missing from an empty record: %s", want, empty)
+		}
+	}
+	if _, err := Decode(data); err != nil {
+		t.Fatalf("a record with empty collections did not verify: %v", err)
+	}
+	// Marshaling a record directly, not through Encode, takes the same shape.
+	direct, err := json.Marshal(Record{SchemaVersion: SchemaVersion})
+	if err != nil || !strings.Contains(string(direct), `"findings":[]`) {
+		t.Fatalf("direct marshal = %s, %v", direct, err)
+	}
+}
+
+// A record written before the collections were always present omitted an
+// empty one, and digested its absence as null; it still decodes and
+// verifies.
+func TestDecodeReadsARecordThatOmittedEmptyCollections(t *testing.T) {
+	null := digestOf([]byte("null"))
+	old := `{"schema_version":"bomly.scan.v1","command":"scan","digests":{"manifests":"` + null + `","packages":"` + null + `","findings":"` + null + `"}}`
+	r, err := Decode([]byte(old))
+	if err != nil {
+		t.Fatalf("an older record was refused: %v", err)
+	}
+	if len(r.Findings) != 0 || len(r.Manifests) != 0 {
+		t.Fatalf("decoded %+v", r)
+	}
+}
+
+// A document's package carries the same keys as the SDK package plus its
+// two iterated collections, and encoding never edits the holder's package.
+func TestPackageWritesItsIteratedCollections(t *testing.T) {
+	held := &model.Package{Coordinates: model.Coordinates{PURL: "pkg:npm/a@1.0.0", Name: "a"},
+		Vulnerabilities: []model.Vulnerability{{ID: "CVE-2", Source: "osv"}, {ID: "CVE-1", Source: "osv"}}}
+	data, err := json.Marshal(Package{held})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"licenses":[]`) || !strings.Contains(string(data), `"purl":"pkg:npm/a@1.0.0"`) {
+		t.Fatalf("package = %s", data)
+	}
+	if held.Vulnerabilities[0].ID != "CVE-2" {
+		t.Fatal("encoding reordered the holder's vulnerabilities")
+	}
+	var plain, wrapped map[string]json.RawMessage
+	sdk, _ := json.Marshal(held)
+	if err := json.Unmarshal(sdk, &plain); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &wrapped); err != nil {
+		t.Fatal(err)
+	}
+	for key, value := range plain {
+		if string(wrapped[key]) != string(value) {
+			t.Fatalf("key %q differs: %s vs %s", key, wrapped[key], value)
+		}
+	}
+	if b, _ := json.Marshal(Package{}); string(b) != "null" {
+		t.Fatalf("a nil package encoded as %s", b)
+	}
+}
+
+// recordWire must list Record's fields, in order, with the same keys; only
+// the packages element type differs.
+func TestRecordWireMirrorsRecord(t *testing.T) {
+	record, wire := reflect.TypeOf(Record{}), reflect.TypeOf(recordWire{})
+	if record.NumField() != wire.NumField() {
+		t.Fatalf("Record has %d fields, recordWire %d", record.NumField(), wire.NumField())
+	}
+	for i := range record.NumField() {
+		a, b := record.Field(i), wire.Field(i)
+		if a.Name != b.Name || a.Tag != b.Tag {
+			t.Fatalf("field %d: Record.%s %q, recordWire.%s %q", i, a.Name, a.Tag, b.Name, b.Tag)
+		}
+		if a.Name != "Packages" && a.Type != b.Type {
+			t.Fatalf("field %s: type %v vs %v", a.Name, a.Type, b.Type)
+		}
+	}
+}
+
+// The always-sent keys the guard accepts are exactly IteratedCollections.
+func TestIteratedCollectionsMatchTheGuard(t *testing.T) {
+	want := map[string]bool{}
+	for _, path := range IteratedCollections {
+		want[path] = true
+	}
+	got := map[string]bool{
+		"manifests": true, "packages": true, "findings": true, "warnings": true, "waivers": true,
+		"manifests[].dependencies": true, "manifests[].dependencies[].depends_on": true, "manifests[].dependencies[].licenses": true,
+		"packages[].licenses": true, "packages[].vulnerabilities": true,
+	}
+	if !reflect.DeepEqual(want, got) {
+		t.Fatalf("IteratedCollections = %v; update the guard and this test together", IteratedCollections)
 	}
 }
