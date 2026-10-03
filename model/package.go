@@ -809,6 +809,11 @@ func (p *Package) UnmarshalJSON(data []byte) error {
 // normalization applies to this copy and never rewrites the record its holder
 // still owns.
 func (p Package) MarshalJSON() ([]byte, error) {
+	// The receiver is a copy of the struct, not of what its slices point
+	// at: normalizing the vulnerabilities rewrites and sorts them in place,
+	// which on a shared backing array would reorder the holder's package
+	// while it was being encoded. The slice is copied first.
+	p.Vulnerabilities = append([]Vulnerability(nil), p.Vulnerabilities...)
 	p.NormalizeAssertions()
 	return json.Marshal(packageWire(p))
 }

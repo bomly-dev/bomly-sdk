@@ -1090,3 +1090,15 @@ func TestPackageNormalizesAndOrdersVulnerabilities(t *testing.T) {
 		t.Fatalf("merged recommendations = %+v, want the unpublishable value replaced and the appended one gated", p.Vulnerabilities)
 	}
 }
+
+// Encoding a package must not reorder or rewrite the vulnerabilities of the
+// package its holder still owns.
+func TestPackageMarshalDoesNotMutateTheHoldersVulnerabilities(t *testing.T) {
+	p := &Package{Coordinates: Coordinates{PURL: "pkg:npm/a@1.0.0"}, Vulnerabilities: []Vulnerability{{ID: "CVE-2", Source: "osv", Recommendation: " x "}, {ID: "CVE-1", Source: "osv"}}}
+	if _, err := json.Marshal(p); err != nil {
+		t.Fatal(err)
+	}
+	if p.Vulnerabilities[0].ID != "CVE-2" || p.Vulnerabilities[0].Recommendation != " x " {
+		t.Fatalf("marshal mutated the holder's package: %+v", p.Vulnerabilities)
+	}
+}
