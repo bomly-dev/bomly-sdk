@@ -60,6 +60,7 @@ func dependenciesOf(g *model.Graph) []Dependency {
 		}
 		if d, ok := model.AsDependencyNode(node); ok && d != nil {
 			dep.Source = d.Source
+			dep.Relationship = d.Relationship
 			dep.Scopes = d.AttributedScopes()
 			dep.Matched = d.Matched
 			dep.PackageRef = d.PackageRef
