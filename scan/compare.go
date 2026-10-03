@@ -55,9 +55,16 @@ func Compare(base, head *Record) (Diff, error) {
 	return diff, nil
 }
 
-// graphOf rebuilds a record's dependency nodes and the edges among them.
-// Module nodes are omitted: model.Compare reads dependency nodes only, and
-// a module's identity is its manifest path, which the comparison ignores.
+// graphOf rebuilds a record's module and dependency nodes and the edges
+// among them. Module nodes matter even though the comparison reports only
+// dependencies: a dependency is direct when it hangs off a module, and
+// without the module edges every root of the rebuilt graph would read as
+// direct and a transitive-to-direct change would go unreported. Manifest
+// nodes are not in a record -- the record steps through them when it writes
+// a module's edges -- so a module stands at the root here, as the
+// comparison expects. A module the record cannot mint (no name and no
+// package URL) is left out; its dependencies still compare, without the
+// ownership evidence.
 func graphOf(r *Record) (*model.Graph, error) {
 	g := model.New()
 	type edge struct{ from, to string }
@@ -68,15 +75,25 @@ func graphOf(r *Record) (*model.Graph, error) {
 	canonical := make(map[string]string)
 	for _, manifest := range r.Manifests {
 		for _, dep := range manifest.Dependencies {
-			if !strings.HasPrefix(dep.ID, "pkg:") {
-				continue
+			var node model.GraphNode
+			if strings.HasPrefix(dep.ID, "pkg:") {
+				dependency, err := model.NewDependencyNodeFromPURL(dep.ID)
+				if err != nil {
+					return nil, fmt.Errorf("manifest %q dependency %q: %w", manifest.Path, dep.ID, err)
+				}
+				dependency.Scopes = append([]model.Scope(nil), dep.Scopes...)
+				dependency.Locations = append([]model.PackageLocation(nil), dep.Locations...)
+				node = dependency
+			} else {
+				module, err := model.NewModuleNode(manifest.Path, model.Coordinates{
+					PURL: dep.PURL, Name: dep.Name, Version: dep.Version,
+					Ecosystem: manifest.Ecosystem, PackageManager: manifest.PackageManager,
+				})
+				if err != nil {
+					continue
+				}
+				node = module
 			}
-			node, err := model.NewDependencyNodeFromPURL(dep.ID)
-			if err != nil {
-				return nil, fmt.Errorf("manifest %q dependency %q: %w", manifest.Path, dep.ID, err)
-			}
-			node.Scopes = append([]model.Scope(nil), dep.Scopes...)
-			node.Locations = append([]model.PackageLocation(nil), dep.Locations...)
 			if _, err := g.InsertNode(node); err != nil {
 				return nil, err
 			}

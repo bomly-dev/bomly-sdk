@@ -74,3 +74,34 @@ func TestCompareResolvesEdgesThroughCanonicalIDs(t *testing.T) {
 		t.Fatalf("direct dependencies of a = %v, %v; want the one edge the record named", children, err)
 	}
 }
+
+// A dependency is direct when it hangs off a module, so the module and its
+// edges are rebuilt from the record: without them every root reads as
+// direct and a transitive dependency that became direct goes unreported.
+func TestCompareReportsATransitiveDependencyBecomingDirect(t *testing.T) {
+	module := Dependency{ID: "module:package.json#pkg:npm/app@1.0.0", Name: "app", Version: "1.0.0", PURL: "pkg:npm/app@1.0.0", DependsOn: []string{"pkg:npm/a@1.0.0"}}
+	base := &Record{Manifests: []Manifest{{Path: "package.json", Dependencies: []Dependency{
+		module,
+		{ID: "pkg:npm/a@1.0.0", DependsOn: []string{"pkg:npm/b@1.0.0"}},
+		{ID: "pkg:npm/b@1.0.0"},
+	}}}}
+	head := &Record{Manifests: []Manifest{{Path: "package.json", Dependencies: []Dependency{
+		{ID: module.ID, Name: module.Name, Version: module.Version, PURL: module.PURL, DependsOn: []string{"pkg:npm/a@1.0.0", "pkg:npm/b@1.0.0"}},
+		{ID: "pkg:npm/a@1.0.0", DependsOn: []string{"pkg:npm/b@1.0.0"}},
+		{ID: "pkg:npm/b@1.0.0"},
+	}}}}
+	diff, err := Compare(base, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, transition := range diff.Dependencies.Transitions {
+		if transition.After != nil && transition.After.NodeID() == "pkg:npm/b@1.0.0" &&
+			transition.BeforeRelationship == model.DependencyRelationshipTransitive && transition.AfterRelationship == model.DependencyRelationshipDirect {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("transitive-to-direct change not reported: %+v", diff.Dependencies.Transitions)
+	}
+}
