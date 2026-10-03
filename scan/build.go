@@ -69,18 +69,21 @@ func dependenciesOf(g *model.Graph) []Dependency {
 	return out
 }
 
-// summarize counts findings by severity band.
+// summarize counts findings by severity band. The band is the model's
+// SeverityRank, so the aliases it equates -- error with high, warning with
+// medium, note with low -- land in the band they rank as rather than in
+// unknown.
 func summarize(findings []model.Finding) *AuditSummary {
 	s := &AuditSummary{Total: len(findings)}
 	for _, f := range findings {
-		switch model.ParseSeverityLevel(string(f.Severity)) {
-		case model.ParseSeverityLevel("critical"):
+		switch model.SeverityRank(f.Severity) {
+		case model.SeverityRank(model.SeverityCritical):
 			s.Critical++
-		case model.ParseSeverityLevel("high"):
+		case model.SeverityRank(model.SeverityHigh):
 			s.High++
-		case model.ParseSeverityLevel("medium"):
+		case model.SeverityRank(model.SeverityMedium):
 			s.Medium++
-		case model.ParseSeverityLevel("low"):
+		case model.SeverityRank(model.SeverityLow):
 			s.Low++
 		default:
 			s.Unknown++

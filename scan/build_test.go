@@ -79,3 +79,16 @@ func TestFromGraphEntriesStepsThroughManifestNodes(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// The bands are the model's ranks, so the aliases it equates land where
+// they rank rather than in unknown.
+func TestSummarizeCountsSeverityAliasesInTheirBands(t *testing.T) {
+	got := summarize([]model.Finding{
+		{Severity: model.SeverityCritical}, {Severity: model.SeverityError}, {Severity: model.SeverityWarning},
+		{Severity: model.SeverityNote}, {Severity: " HIGH "}, {Severity: "bogus"}, {},
+	})
+	want := &AuditSummary{Critical: 1, High: 2, Medium: 1, Low: 1, Unknown: 2, Total: 7}
+	if *got != *want {
+		t.Fatalf("summary = %+v, want %+v", got, want)
+	}
+}
