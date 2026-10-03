@@ -1081,6 +1081,13 @@ func TestPackageNormalizesAndOrdersVulnerabilities(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"purl":"pkg:npm/a@1.0.0","vulnerabilities":[{"id":"CVE-2","source":"osv","recommendation":"  up\u0007grade  "},{"id":"CVE-1","source":"osv"}]}`), &decoded); err != nil {
 		t.Fatal(err)
 	}
+	var repeated Package
+	if err := json.Unmarshal([]byte(`{"purl":"pkg:npm/a@1.0.0","vulnerabilities":[{"id":"CVE-1","source":"osv"},{"id":"CVE-1","source":"osv","recommendation":"patch"}]}`), &repeated); err != nil {
+		t.Fatal(err)
+	}
+	if len(repeated.Vulnerabilities) != 1 || repeated.Vulnerabilities[0].Recommendation != "patch" {
+		t.Fatalf("a repeated advisory was not folded through the merge: %+v", repeated.Vulnerabilities)
+	}
 	if len(decoded.Vulnerabilities) != 2 || decoded.Vulnerabilities[0].ID != "CVE-1" || decoded.Vulnerabilities[1].Recommendation != "upgrade" {
 		t.Fatalf("decoded vulnerabilities = %+v, want ordered by (source, ID) with the recommendation gated", decoded.Vulnerabilities)
 	}
