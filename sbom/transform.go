@@ -614,8 +614,13 @@ func vulnerabilitiesFromPackage(packageName string, vulns []model.Vulnerability)
 			Severity:       string(v.ParsedSeverity),
 			FixedVersions:  append([]string(nil), v.FixedVersions...),
 			Description:    v.Details,
-			Recommendation: vulnerabilityRecommendation(packageName, v.FixedVersions),
+			Recommendation: v.Recommendation,
 			Analysis:       v.Analysis.Clone(),
+		}
+		// A source's own words stand; advice is rendered from the fixed
+		// versions only when no source stated any.
+		if vuln.Recommendation == "" {
+			vuln.Recommendation = vulnerabilityRecommendation(packageName, v.FixedVersions)
 		}
 		if vuln.Source == "" {
 			vuln.Source = v.DataSource

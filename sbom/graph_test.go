@@ -231,7 +231,7 @@ const entryBOM = `{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,
      "properties":[{"name":"bomly:eol","value":"true"},{"name":"bomly:eol_date","value":"2025-01-01"},{"name":"bomly:eol_cycle","value":"1"}]},
     {"bom-ref":"b","type":"library","name":"b","version":"1.0.0","purl":"pkg:npm/b@1.0.0"},
     {"bom-ref":"a2","type":"library","name":"a","version":"1.0.0","purl":"pkg:npm/a@1.0.0"}],
-  "vulnerabilities":[{"id":"CVE-2024-0001","source":{"name":"osv"},"description":"bad","cwes":[79],
+  "vulnerabilities":[{"id":"CVE-2024-0001","source":{"name":"osv"},"description":"bad","recommendation":"apply the vendor patch","cwes":[79],
     "advisories":[{"url":"https://osv.dev/CVE-2024-0001"},{"url":"https://user:token@example.test/advisory"},{"url":"file:///etc/passwd"}],
     "ratings":[{"source":{"name":"osv"},"score":7.5,"severity":"high","method":"CVSSv31","vector":"CVSS:3.1/AV:N"}],
     "analysis":{"state":"not_affected","justification":"code_not_reachable"},
@@ -259,7 +259,7 @@ func TestToGraphEntryCarriesIngestedVulnerabilitiesAndEOL(t *testing.T) {
 		t.Fatalf("vulnerabilities = %+v, want one", pkg.Vulnerabilities)
 	}
 	v := pkg.Vulnerabilities[0]
-	if v.ID != "CVE-2024-0001" || v.Source != "osv" || v.ParsedSeverity != "high" || v.Details != "bad" ||
+	if v.ID != "CVE-2024-0001" || v.Source != "osv" || v.ParsedSeverity != "high" || v.Details != "bad" || v.Recommendation != "apply the vendor patch" ||
 		len(v.CVSS) != 1 || v.CVSS[0].Score != 7.5 || v.CVSS[0].Version != "3.1" || len(v.CWEs) != 1 || v.CWEs[0].ID != "CWE-79" ||
 		len(v.References) != 1 || v.References[0].Type != model.ReferenceTypeAdvisory || v.References[0].URL != "https://osv.dev/CVE-2024-0001" ||
 		v.Analysis == nil || v.Analysis.State != model.ImpactAnalysisStateNotAffected {
@@ -285,7 +285,7 @@ func TestToGraphEntryCarriesIngestedVulnerabilitiesAndEOL(t *testing.T) {
 		t.Fatalf("re-exported vulnerabilities = %+v, want one", bom.Vulnerabilities)
 	}
 	vuln := (*bom.Vulnerabilities)[0]
-	if vuln.ID != "CVE-2024-0001" || vuln.Analysis == nil || vuln.Analysis.Justification != cdx.IAJCodeNotReachable ||
+	if vuln.ID != "CVE-2024-0001" || vuln.Recommendation != "apply the vendor patch" || vuln.Analysis == nil || vuln.Analysis.Justification != cdx.IAJCodeNotReachable ||
 		vuln.Ratings == nil || (*vuln.Ratings)[0].Method != cdx.ScoringMethodCVSSv31 || vuln.Affects == nil || len(*vuln.Affects) != 1 {
 		t.Fatalf("re-exported vulnerability = %+v", vuln)
 	}

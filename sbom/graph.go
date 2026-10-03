@@ -203,10 +203,9 @@ func ToGraphEntry(doc *Document, manifest model.ManifestMetadata) (model.GraphEn
 
 // packageVulnerabilities is the ingest-side inverse of
 // vulnerabilitiesFromPackage: what a document's advisory record maps onto the
-// registry's OSV-aligned shape. The recommendation is not carried -- the
-// exporter derives it from the fixed versions -- and the severity band,
-// first rating, CWEs, advisory URLs, description, fixed versions and
-// analysis are.
+// registry's OSV-aligned shape: the severity band, first rating, CWEs,
+// advisory URLs, description, fixed versions, the source's own
+// recommendation and the analysis.
 func packageVulnerabilities(vulns []Vulnerability) []model.Vulnerability {
 	out := make([]model.Vulnerability, 0, len(vulns))
 	for _, v := range vulns {
@@ -219,6 +218,7 @@ func packageVulnerabilities(vulns []Vulnerability) []model.Vulnerability {
 			ParsedSeverity: model.ParseSeverityLevel(v.Severity),
 			Details:        v.Description,
 			FixedVersions:  append([]string(nil), v.FixedVersions...),
+			Recommendation: model.NormalizeDescription(v.Recommendation),
 			Analysis:       v.Analysis.Clone(),
 		}
 		if v.Score != nil || v.Vector != "" {
