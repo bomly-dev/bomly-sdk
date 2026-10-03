@@ -59,6 +59,7 @@ func dependenciesOf(g *model.Graph) []Dependency {
 			DependsOn: graphview.ChildrenAmong(g, node.NodeID(), present),
 		}
 		if d, ok := model.AsDependencyNode(node); ok && d != nil {
+			dep.Source = d.Source
 			dep.Scopes = d.AttributedScopes()
 			dep.Matched = d.Matched
 			dep.PackageRef = d.PackageRef

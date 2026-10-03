@@ -25,10 +25,24 @@ type VulnerabilityRef struct {
 	VulnerabilityID string `json:"vulnerability_id,omitempty"`
 }
 
-// FindingRef names one finding on one package.
+// FindingRef names one finding: the identity Encode orders findings by,
+// less the provenance (auditor, source), which does not make a second
+// finding of a second finding. A vulnerability finding and a policy
+// finding under one ID on one package are two findings.
 type FindingRef struct {
-	ID         string `json:"id,omitempty"`
-	PackageRef string `json:"package_ref,omitempty"`
+	ID              string            `json:"id,omitempty"`
+	PackageRef      string            `json:"package_ref,omitempty"`
+	Kind            model.FindingKind `json:"kind,omitempty"`
+	VulnerabilityID string            `json:"vulnerability_id,omitempty"`
+	RuleID          string            `json:"rule_id,omitempty"`
+}
+
+func findingRefOf(f model.Finding) FindingRef {
+	return FindingRef{ID: f.ID, PackageRef: f.PackageRef, Kind: f.Kind, VulnerabilityID: f.VulnerabilityID, RuleID: f.RuleID}
+}
+
+func (r FindingRef) key() string {
+	return strings.Join([]string{r.ID, r.PackageRef, string(r.Kind), r.VulnerabilityID, r.RuleID}, "\x00")
 }
 
 // Compare reports what changed from base to head. Dependencies are compared
@@ -36,7 +50,7 @@ type FindingRef struct {
 // folded by identity -- and handing the pair to model.Compare, so the answer
 // is the graph comparison's, not a second one. Advisories and findings are
 // compared by identity: an advisory is (package, ID), a finding is (ID,
-// package).
+// package, kind, vulnerability, rule).
 func Compare(base, head *Record) (Diff, error) {
 	if base == nil || head == nil {
 		return Diff{}, fmt.Errorf("scan compare: both records are required")
@@ -81,6 +95,7 @@ func graphOf(r *Record) (*model.Graph, error) {
 				if err != nil {
 					return nil, fmt.Errorf("manifest %q dependency %q: %w", manifest.Path, dep.ID, err)
 				}
+				dependency.Source = dep.Source
 				dependency.Scopes = append([]model.Scope(nil), dep.Scopes...)
 				dependency.Locations = append([]model.PackageLocation(nil), dep.Locations...)
 				node = dependency
@@ -156,7 +171,7 @@ func findingDelta(base, head []model.Finding) (added, removed []FindingRef) {
 	index := func(findings []model.Finding) map[FindingRef]struct{} {
 		out := make(map[FindingRef]struct{}, len(findings))
 		for _, f := range findings {
-			out[FindingRef{ID: f.ID, PackageRef: f.PackageRef}] = struct{}{}
+			out[findingRefOf(f)] = struct{}{}
 		}
 		return out
 	}
@@ -172,12 +187,7 @@ func findingDelta(base, head []model.Finding) (added, removed []FindingRef) {
 		}
 	}
 	less := func(refs []FindingRef) func(int, int) bool {
-		return func(i, j int) bool {
-			if refs[i].ID != refs[j].ID {
-				return refs[i].ID < refs[j].ID
-			}
-			return refs[i].PackageRef < refs[j].PackageRef
-		}
+		return func(i, j int) bool { return refs[i].key() < refs[j].key() }
 	}
 	sort.Slice(added, less(added))
 	sort.Slice(removed, less(removed))

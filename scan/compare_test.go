@@ -39,8 +39,8 @@ func TestCompareReportsDependencyVulnerabilityAndFindingDeltas(t *testing.T) {
 		len(diff.RemovedVulnerabilities) != 1 || diff.RemovedVulnerabilities[0] != (VulnerabilityRef{"pkg:npm/b@1.0.0", "CVE-OLD"}) {
 		t.Fatalf("vulnerability delta = %+v / %+v", diff.AddedVulnerabilities, diff.RemovedVulnerabilities)
 	}
-	if len(diff.AddedFindings) != 1 || diff.AddedFindings[0] != (FindingRef{"CVE-NEW", "pkg:npm/b@2.0.0"}) ||
-		len(diff.RemovedFindings) != 1 || diff.RemovedFindings[0] != (FindingRef{"CVE-OLD", "pkg:npm/b@1.0.0"}) {
+	if len(diff.AddedFindings) != 1 || diff.AddedFindings[0] != (FindingRef{ID: "CVE-NEW", PackageRef: "pkg:npm/b@2.0.0"}) ||
+		len(diff.RemovedFindings) != 1 || diff.RemovedFindings[0] != (FindingRef{ID: "CVE-OLD", PackageRef: "pkg:npm/b@1.0.0"}) {
 		t.Fatalf("finding delta = %+v / %+v", diff.AddedFindings, diff.RemovedFindings)
 	}
 	if _, err := Compare(base, nil); err == nil {
@@ -103,5 +103,43 @@ func TestCompareReportsATransitiveDependencyBecomingDirect(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("transitive-to-direct change not reported: %+v", diff.Dependencies.Transitions)
+	}
+}
+
+// A dependency's source travels with the record, so a package that moved
+// from a registry to Git between scans is reported as the review-worthy
+// transition it is.
+func TestCompareReportsASourceTransition(t *testing.T) {
+	base := &Record{Manifests: []Manifest{{Path: "package.json", Dependencies: []Dependency{{ID: "pkg:npm/a@1.0.0", Source: model.DependencySourceRegistry}}}}}
+	head := &Record{Manifests: []Manifest{{Path: "package.json", Dependencies: []Dependency{{ID: "pkg:npm/a@1.0.0", Source: model.DependencySourceGit}}}}}
+	diff, err := Compare(base, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, transition := range diff.Dependencies.Transitions {
+		for _, field := range transition.ChangedFields {
+			if field == model.DependencyDetailSource {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("source transition not reported: %+v", diff.Dependencies.Transitions)
+	}
+}
+
+// A finding's identity for the comparison is the one Encode orders by: a
+// vulnerability finding replaced by a policy finding under the same ID on
+// the same package is one removed and one added, not nothing.
+func TestCompareDistinguishesFindingsByKindVulnerabilityAndRule(t *testing.T) {
+	base := &Record{Findings: []model.Finding{{ID: "X", PackageRef: "pkg:npm/a@1.0.0", Kind: model.FindingKindVulnerability, VulnerabilityID: "X"}}}
+	head := &Record{Findings: []model.Finding{{ID: "X", PackageRef: "pkg:npm/a@1.0.0", Kind: model.FindingKindPackage, RuleID: "denied"}}}
+	diff, err := Compare(base, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(diff.AddedFindings) != 1 || diff.AddedFindings[0].RuleID != "denied" || len(diff.RemovedFindings) != 1 || diff.RemovedFindings[0].VulnerabilityID != "X" {
+		t.Fatalf("finding delta = %+v / %+v", diff.AddedFindings, diff.RemovedFindings)
 	}
 }
