@@ -157,3 +157,31 @@ func TestCompareDistinguishesAdvisoriesBySource(t *testing.T) {
 		t.Fatalf("vulnerability delta = %+v / %+v", diff.AddedVulnerabilities, diff.RemovedVulnerabilities)
 	}
 }
+
+// A manifest with no module node has no structural root in the rebuilt
+// graph; the relationship each dependency stated carries the classification
+// instead, so a transitive dependency that became direct is still reported.
+func TestCompareHonorsStatedRelationshipsWithoutAModule(t *testing.T) {
+	base := &Record{Manifests: []Manifest{{Path: "package-lock.json", Dependencies: []Dependency{
+		{ID: "pkg:npm/a@1.0.0", Relationship: model.DependencyRelationshipDirect, DependsOn: []string{"pkg:npm/b@1.0.0"}},
+		{ID: "pkg:npm/b@1.0.0", Relationship: model.DependencyRelationshipTransitive},
+	}}}}
+	head := &Record{Manifests: []Manifest{{Path: "package-lock.json", Dependencies: []Dependency{
+		{ID: "pkg:npm/a@1.0.0", Relationship: model.DependencyRelationshipDirect, DependsOn: []string{"pkg:npm/b@1.0.0"}},
+		{ID: "pkg:npm/b@1.0.0", Relationship: model.DependencyRelationshipDirect},
+	}}}}
+	diff, err := Compare(base, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, transition := range diff.Dependencies.Transitions {
+		if transition.After != nil && transition.After.NodeID() == "pkg:npm/b@1.0.0" &&
+			transition.BeforeRelationship == model.DependencyRelationshipTransitive && transition.AfterRelationship == model.DependencyRelationshipDirect {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("transitive-to-direct change not reported without a module: %+v", diff.Dependencies.Transitions)
+	}
+}

@@ -81,8 +81,10 @@ func Compare(base, head *Record) (Diff, error) {
 // nodes are not in a record -- the record steps through them when it writes
 // a module's edges -- so a module stands at the root here, as the
 // comparison expects. A module the record cannot mint (no name and no
-// package URL) is left out; its dependencies still compare, without the
-// ownership evidence.
+// package URL) is left out, and a manifest with no module at all has no
+// structural root here; in both cases each dependency's stated
+// relationship stands in, which the comparison honors over one derived
+// from the edges.
 func graphOf(r *Record) (*model.Graph, error) {
 	g := model.New()
 	type edge struct{ from, to string }
@@ -100,6 +102,7 @@ func graphOf(r *Record) (*model.Graph, error) {
 					return nil, fmt.Errorf("manifest %q dependency %q: %w", manifest.Path, dep.ID, err)
 				}
 				dependency.Source = dep.Source
+				dependency.Relationship = dep.Relationship
 				dependency.Scopes = append([]model.Scope(nil), dep.Scopes...)
 				dependency.Locations = append([]model.PackageLocation(nil), dep.Locations...)
 				node = dependency
