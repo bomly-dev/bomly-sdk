@@ -292,7 +292,9 @@ func TestEncodeOrdersFindingsAndLocationsTotally(t *testing.T) {
 	a, b := sampleRecord(), sampleRecord()
 	vuln := model.Finding{ID: "X", PackageRef: "pkg:npm/a@1.0.0", Kind: model.FindingKindVulnerability, VulnerabilityID: "X"}
 	policy := model.Finding{ID: "X", PackageRef: "pkg:npm/a@1.0.0", Kind: model.FindingKindPackage, RuleID: "denied"}
+	vuln.DependencyRefs = []string{"dep-b", "dep-a", "dep-a"}
 	a.Findings = append(a.Findings, vuln, policy)
+	vuln.DependencyRefs = []string{"dep-a", "dep-b"}
 	b.Findings = append(b.Findings, policy, vuln)
 	a.Waivers = append(a.Waivers, Waiver{PackageRef: "p2"}, Waiver{PackageRef: "p1"})
 	b.Waivers = append(b.Waivers, Waiver{PackageRef: "p1"}, Waiver{PackageRef: "p2"})

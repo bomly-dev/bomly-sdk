@@ -200,6 +200,11 @@ func canonicalize(r Record) Record {
 	}
 	if len(r.Findings) > 0 {
 		findings := append([]model.Finding(nil), r.Findings...)
+		for i := range findings {
+			// The references name a set of occurrences, not a path; the order
+			// the traversal met them in is not content.
+			findings[i].DependencyRefs = sortedOrNil(findings[i].DependencyRefs)
+		}
 		// The key is every identity field a finding carries: two findings
 		// sharing an ID and a package can still be a vulnerability finding
 		// and a policy finding, and the bytes must not depend on which
@@ -287,15 +292,16 @@ func sectionDigestsOf(data []byte) (SectionDigests, error) {
 	return out, nil
 }
 
-// sortedOrNil returns a sorted copy, or nil for an empty list, so an empty
-// list and an absent one digest the same way they encode: absent.
+// sortedOrNil returns a sorted, deduplicated copy, or nil for an empty
+// list, so an empty list and an absent one digest the same way they encode:
+// absent.
 func sortedOrNil(values []string) []string {
 	if len(values) == 0 {
 		return nil
 	}
 	out := append([]string(nil), values...)
 	sort.Strings(out)
-	return out
+	return slices.Compact(out)
 }
 
 // sortedScopesOrNil is sortedOrNil for a scope set: a union across
