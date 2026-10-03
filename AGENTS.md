@@ -1,7 +1,9 @@
 # AGENTS.md
 
-Guidance for coding agents working in this repository. `CLAUDE.md` is an
-identical copy; keep the two files in sync.
+Guidance for coding agents working in this repository. This is the only
+guidance file: Claude Code, Codex and the other agents read it directly, and
+`repo_guards_test.go` fails if a `CLAUDE.md` or `CLAUDE.local.md` appears
+beside it, because either one hides this file from Claude Code.
 
 This module, `github.com/bomly-dev/bomly-sdk`, is the public contract for the
 Bomly CLI (`bomly-dev/bomly-cli`), its built-in components, and external
@@ -230,7 +232,7 @@ spdx/tools-golang); `httpkit` is a leaf that `plugin` reaches for
 `HostContext`; `scan` imports `model`, `plugin` and `graphview`, and nothing
 imports `scan`. Nothing imports upward. The
 module root holds `doc.go` (the map) and `repo_guards_test.go` (the import
-boundary and the AGENTS.md/CLAUDE.md mirror, both keyed on the root
+boundary and the single-guidance-file rule, both keyed on the root
 directory) and nothing else; do not add code there.
 
 Within a package a file is named for the concept it owns, and a test file
@@ -311,6 +313,7 @@ go fix -embedlit=false -omitzero=false ./...
 
 Neither is caught by a test, a linter or the API gate, which is exactly why the
 list lives here.
+
 ## Build & test
 
 ```sh
@@ -320,8 +323,36 @@ make fmt-check     # CI gates on gofmt formatting (make fmt rewrites)
 make lint          # golangci-lint, pinned in the Makefile and ci.yml
 make tidy-check    # go mod tidy -diff — CI gates on go.mod/go.sum tidiness
 make fuzz FUZZTIME=5s   # every Fuzz* target briefly; nightly in CI at 2m each
-make install-hooks # pre-commit runs fmt-check and lint
+make cli-test CLI=../bomly-cli  # bomly-cli's build, vet and unit tests against this checkout
+make install-hooks # pre-commit runs fmt-check and lint; pre-push runs make test
 ```
+
+Locally, `make test` is the gate before a push; CI owns the rest (lint,
+vet, tidiness, the API diff, and `CLI compatibility`).
+
+### Developing the SDK and the CLI together
+
+Most SDK changes exist for the CLI, so test them against it **before** the
+tag, not after. Several tags in a row once shipped to fix what the CLI found
+only after adopting each one.
+
+1. In bomly-cli, point the build at this checkout: `make sdk-local
+   SDK=<path to this checkout>` (a worktree path works). It writes an
+   ignored `go.work`; `make sdk-status` shows which SDK the CLI resolves.
+2. Change both repositories and run `make test` in the CLI. From this side,
+   `make cli-test CLI=<cli checkout>` runs the CLI's build, vet and unit
+   tests against this checkout without touching it.
+3. Open the SDK pull request. Its `CLI compatibility` job runs bomly-cli's
+   `main` against it; it is informational, and expected to fail on an
+   approved break until the CLI adopts it.
+4. Push every review fix **before** the pull request is merged and tagged —
+   a commit that lands after the squash is not in the tag.
+5. After the tag: in the CLI, `make sdk-pinned`, then `go get
+   github.com/bomly-dev/bomly-sdk@<tag> && go mod tidy`, and open the CLI
+   pull request on the released tag.
+
+The workspace never ships: `go.work` is ignored in both repositories and CI
+forbids `replace` directives.
 
 CI also forbids `replace` directives in `go.mod` (a library must resolve the
 same way for every consumer) and diffs the exported API against the latest
@@ -349,3 +380,36 @@ descriptors, validation, or the serve surface must keep it green, and the
 CLI's `TestExamplePluginFixtureCompiles` compiles against the released SDK —
 breaking the pinned contract there means the change needs a release-notes
 callout and a coordinated bump.
+
+## AI review triage
+
+Automated reviewers (Codex, CodeRabbit) are triaged by severity, with a cap
+of **three rounds per reviewer per pull request**. A round is one batch of
+findings from one reviewer, whether or not it changed anything. The same
+section appears in bomly-sdk and bomly-cli; change both together.
+
+Severity is the reviewer's own label: Codex P0–P3; CodeRabbit Critical → P0,
+Major → P1, Minor → P2, Trivial and Nitpick → P3. An unlabeled finding is
+P0 when it is a security hole, data loss, a crash, wrong user-visible
+output, or a broken build; P1 when it is a real defect in changed code with
+a concrete failing input; P2 or P3 otherwise. Every finding is verified
+against the actual behavior before it is accepted, whatever its label.
+
+| Severity | Within the cap | After the cap |
+|---|---|---|
+| P0 | Fix | Fix, without limit — a failing check, test, or fuzz target counts as P0 |
+| P1 | Fix | Fix when small (about ten lines, no new surface); otherwise file an issue |
+| P2, P3 | Fix only inside code the PR already changes, adding no new API, test file, or doc section | Decline |
+
+**File an issue** when a finding is verified or plausible, has a concrete
+failing scenario, and is either beyond the pull request's scope or arrives
+after the cap. Name the finding, the file and line, what was claimed, and
+what still needs checking, so a fresh session can validate it.
+
+**Decline** when the finding is refuted by the actual behavior, repeats one
+already answered, is style or preference, is speculative with no failing
+input, concerns untouched code without a defect, or is P2/P3 beyond scope.
+
+Reply on every thread — fixed, filed as #N, or declined and why, noting
+when the cap was reached — and resolve the threads you answered. Never
+soften an assertion or delete a test to make a finding go away.

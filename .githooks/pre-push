@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+# The unit suite gates a push; CI runs the rest (lint, vet, tidy, the API
+# diff, the CLI compatibility check). Bypass with `git push --no-verify`.
+set -eu
+
+make test

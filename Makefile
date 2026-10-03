@@ -5,8 +5,9 @@ GOPATH_BIN=$(shell go env GOPATH)/bin
 EXE_SUFFIX=$(if $(filter Windows_NT,$(OS)),.exe,)
 GOLANGCI_LINT=$(GOPATH_BIN)/golangci-lint$(EXE_SUFFIX)
 FUZZTIME?=60s
+CLI?=../bomly-cli
 
-.PHONY: test vet fmt fmt-check lint tidy-check fuzz install-hooks
+.PHONY: test vet fmt fmt-check lint tidy-check fuzz install-hooks cli-test
 
 test:
 	go test ./...
@@ -41,3 +42,9 @@ fuzz:
 
 install-hooks:
 	git config core.hooksPath .githooks
+
+# Runs bomly-cli's unit tests and vet against this checkout of the SDK,
+# through a throwaway Go workspace outside both repositories, so neither
+# checkout changes. CLI names the CLI checkout (a worktree path works).
+cli-test:
+	CLI="$(CLI)" scripts/cli-test.sh
