@@ -710,6 +710,11 @@ func (r *PackageRegistry) UnmarshalJSON(data []byte) error {
 
 // MarshalJSON encodes a package manager by its canonical name.
 func (p PackageManager) MarshalJSON() ([]byte, error) {
+	// An alias a producer used in process is written under its canonical
+	// name, so the wire and a decoded record agree on the spelling.
+	if manager, err := ParsePackageManager(string(p)); err == nil {
+		return json.Marshal(manager.Name())
+	}
 	return json.Marshal(p.Name())
 }
 

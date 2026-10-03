@@ -40,6 +40,28 @@ func TestPackageManagerParsingNameAndJSON(t *testing.T) {
 	}
 }
 
+// "deb" is the package URL type and Syft's word for Debian packages; the
+// manager is dpkg. The alias parses, decodes and -- when a producer used it
+// in process -- is written under the canonical name, so a record a scan
+// wrote reads back as the same value.
+func TestDebIsAnAliasOfDPKG(t *testing.T) {
+	manager, err := ParsePackageManager("deb")
+	if err != nil || manager != PackageManagerDPKG {
+		t.Fatalf("ParsePackageManager(deb) = %q, %v; want dpkg", manager, err)
+	}
+	data, err := json.Marshal(PackageManager("deb"))
+	if err != nil || string(data) != `"dpkg"` {
+		t.Fatalf("an in-process alias encoded as %s, %v; want the canonical name", data, err)
+	}
+	var decoded PackageManager
+	if err := json.Unmarshal([]byte(`"deb"`), &decoded); err != nil || decoded != PackageManagerDPKG {
+		t.Fatalf("decoded %q, %v; want dpkg", decoded, err)
+	}
+	if data, _ := json.Marshal(PackageManager("not-a-manager")); string(data) != `"not-a-manager"` {
+		t.Fatalf("a value outside the vocabulary must still encode as itself for the decoder to refuse: %s", data)
+	}
+}
+
 func TestOtherPackageManagerAndEcosystem(t *testing.T) {
 	ecosystem, err := ParseEcosystem(" other ")
 	if err != nil {
