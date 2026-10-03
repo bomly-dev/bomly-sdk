@@ -162,7 +162,12 @@ type Manifest struct {
 	PackageManager model.PackageManager      `json:"package_manager,omitempty"`
 	Detector       string                    `json:"detector,omitempty"`
 	Resolution     *model.ResolutionMetadata `json:"resolution,omitempty"`
-	Dependencies   []Dependency              `json:"dependencies,omitempty"`
+	// Document carries what the source SBOM said about itself when the
+	// manifest is an ingested document -- identity, version, checksum,
+	// creators, data license, format -- so a record restates the document's
+	// provenance rather than only its contents. Gated by its own codec.
+	Document     *model.DocumentAssertions `json:"document,omitempty"`
+	Dependencies []Dependency              `json:"dependencies,omitempty"`
 }
 
 // Dependency is the lean projection of a graph node: identity, scope, edges,
