@@ -16,9 +16,10 @@ import (
 // those keys.
 func TestWireCodecStructsDeclareOmitEmpty(t *testing.T) {
 	alwaysSent := map[string]string{
-		"nodeWire.id": "the encoded node identity (ADR-0041)",
+		"nodeWire.id":          "the encoded node identity (ADR-0041)",
+		"vulnerabilityWire.id": "a vulnerability without an ID cannot be referenced",
 	}
-	for _, root := range []any{graphJSON{}, nodeWire{}, vulnerabilityAnalysisWire{}, findingPolicyDecisionWire{}} {
+	for _, root := range []any{graphJSON{}, nodeWire{}, vulnerabilityAnalysisWire{}, findingPolicyDecisionWire{}, vulnerabilityWire{}} {
 		typ := reflect.TypeOf(root)
 		encoded, err := json.Marshal(reflect.New(typ).Interface())
 		if err != nil {
