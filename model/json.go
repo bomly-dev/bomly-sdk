@@ -199,7 +199,10 @@ func (w *nodeWire) decodeDependencyNode() (*DependencyNode, error) {
 	node.Scopes = w.Scopes
 	node.SourceScope = NormalizeSourceScope(w.SourceScope)
 	node.Locations = w.Locations
-	node.CPEs = w.CPEs
+	// Through the CPE gate on both wire directions, like every other
+	// assertion: a managed detector's padded, repeated or unordered set is
+	// one set here, and never carries a control character.
+	node.CPEs = normalizedCPEs(w.CPEs)
 	// Routed through the set merge so a digest the codec rejected does not
 	// survive as a zero element that re-encodes to an empty checksum record.
 	node.Digests = mergeDigestSet(nil, w.Digests)
@@ -293,7 +296,7 @@ func encodeNodeWire(node GraphNode) nodeWire {
 			Scopes:         n.Scopes,
 			SourceScope:    NormalizeSourceScope(n.SourceScope),
 			Locations:      n.Locations,
-			CPEs:           n.CPEs,
+			CPEs:           normalizedCPEs(n.CPEs),
 			Digests:        mergeDigestSet(nil, n.Digests),
 			Copyright:      NormalizeCopyright(n.Copyright),
 			FoundBy:        n.FoundBy,

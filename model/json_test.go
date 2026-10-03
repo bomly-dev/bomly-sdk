@@ -465,3 +465,28 @@ func TestDecodeBoundsAdmitTheLargestKnownWorkspace(t *testing.T) {
 		t.Fatalf("MaxRegistryPackages = %d, want MaxGraphNodes", MaxRegistryPackages)
 	}
 }
+
+// CPEs pass their gate on both wire directions, like every other assertion
+// a dependency node carries.
+func TestDependencyNodeWireGatesCPEs(t *testing.T) {
+	var graph Graph
+	if err := json.Unmarshal([]byte(`{"nodes":[{"id":"pkg:npm/a@1.0.0","purl":"pkg:npm/a@1.0.0","name":"a","version":"1.0.0","cpes":[" cpe:2.3:a:v:p:1:*:*:*:*:*:*:* ","cpe:2.3:a:b:p:1:*:*:*:*:*:*:*","cpe:2.3:a:v:p:1:*:*:*:*:*:*:*","bad\u0007cpe",""]}]}`), &graph); err != nil {
+		t.Fatal(err)
+	}
+	nodes := graph.DependencyNodes()
+	if len(nodes) != 1 {
+		t.Fatalf("decoded %d dependency nodes, want 1", len(nodes))
+	}
+	node := nodes[0]
+	if len(node.CPEs) != 2 || node.CPEs[0] != "cpe:2.3:a:b:p:1:*:*:*:*:*:*:*" || node.CPEs[1] != "cpe:2.3:a:v:p:1:*:*:*:*:*:*:*" {
+		t.Fatalf("decoded CPEs = %v, want the gated, sorted set", node.CPEs)
+	}
+	node.CPEs = []string{"z", "a", "a", "\x01"}
+	data, err := json.Marshal(&graph)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"cpes":["a","z"]`) {
+		t.Fatalf("encoded CPEs are not gated: %s", data)
+	}
+}
