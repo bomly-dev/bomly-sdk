@@ -16,6 +16,27 @@ func NewPackageRegistry() *PackageRegistry {
 	return &PackageRegistry{byPURL: make(map[string]*Package)}
 }
 
+// AddEntryPackages folds the detection-time package facts carried on each
+// graph entry -- licenses, digests and copyright read from a lockfile, the
+// advisories and end-of-life records an ingested document asserted -- into
+// the registry, through Add, so they take the same gates and merge classes
+// as every other package. This is the one fold; a host that seeds its
+// registry from graph nodes calls it afterwards so an entry's facts land on
+// the packages those nodes seeded.
+func (r *PackageRegistry) AddEntryPackages(entries []GraphEntry) {
+	if r == nil {
+		return
+	}
+	for _, entry := range entries {
+		for _, pkg := range entry.Packages {
+			if pkg == nil || pkg.PURL == "" {
+				continue
+			}
+			r.Add(pkg)
+		}
+	}
+}
+
 // Add inserts pkg, merging into any existing record with the same PURL, and
 // returns the canonical stored package. Packages without a PURL are ignored.
 func (r *PackageRegistry) Add(pkg *Package) *Package {

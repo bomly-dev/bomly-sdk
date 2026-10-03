@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
@@ -364,6 +365,34 @@ type DocumentAssertions struct {
 	// from a merged document inherits that document's sources beside its
 	// own identity, so provenance survives more than one hop.
 	Sources []DocumentSource `json:"sources,omitempty"`
+	// Format is the format and specification version the source document was
+	// decoded as -- the token package sbom names a decode target by, such as
+	// "cyclonedx-1.6+json" or "spdx-2.3+json". It describes the source, so a
+	// conversion never re-emits it: the target format's own header says what
+	// the output is, and this field says what the input was.
+	//
+	// Gate: NormalizeDocumentFormat -- a single bounded token with no
+	// whitespace or control characters, the same rule a source scope word
+	// takes. Merge class: scalar, fill-gaps.
+	Format string `json:"format,omitempty"`
+}
+
+// NormalizeDocumentFormat holds a document format token to its gate: trimmed,
+// and refused when it is empty, longer than a vocabulary token, not valid
+// UTF-8, or carries a control or whitespace character. The vocabulary itself
+// is package sbom's (its Target values); this package carries the token
+// without interpreting it, which is why the gate is about shape alone.
+func NormalizeDocumentFormat(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || len(trimmed) > maxVocabularyTokenLength || !utf8.ValidString(trimmed) {
+		return ""
+	}
+	for _, r := range trimmed {
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
+			return ""
+		}
+	}
+	return trimmed
 }
 
 // Normalized returns the assertions with every field held to its gate, and
@@ -409,6 +438,7 @@ func (d DocumentAssertions) Normalized() (DocumentAssertions, bool) {
 	// fields, and stating them once keeps the two from drifting.
 	normalized.Version = documentVersionFor(normalized.Identity, d.Version)
 	normalized.Checksum = documentChecksumFor(d.Checksum)
+	normalized.Format = NormalizeDocumentFormat(d.Format)
 
 	// Sources take their gate one by one: a link a merged export cannot
 	// write is not worth carrying, and one entry failing must not lose the
@@ -584,7 +614,7 @@ func (s *boundedDocumentSources) UnmarshalJSON(data []byte) error {
 func (d DocumentAssertions) IsEmpty() bool {
 	return d.Identity == "" && d.Name == "" && d.DataLicense == "" &&
 		d.Created == "" && d.Comment == "" && len(d.Creators) == 0 && len(d.Tools) == 0 &&
-		d.Version == 0 && d.Checksum == nil && len(d.Sources) == 0
+		d.Version == 0 && d.Checksum == nil && len(d.Sources) == 0 && d.Format == ""
 }
 
 // Clone returns a deep copy.
@@ -632,6 +662,7 @@ func MergeDocumentAssertions(dst, src DocumentAssertions) DocumentAssertions {
 	merged.DataLicense = MergeFillGap(left.DataLicense, right.DataLicense, nil)
 	merged.Created = MergeFillGap(left.Created, right.Created, nil)
 	merged.Comment = MergeFillGap(left.Comment, right.Comment, nil)
+	merged.Format = MergeFillGap(left.Format, right.Format, nil)
 	// Identity, Version, and Checksum are one provenance tuple: the link
 	// forms pair them, and a checksum is a claim about one document's bytes.
 	// Filling each independently let a record identifying document A take

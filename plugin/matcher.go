@@ -36,6 +36,9 @@ type MatcherDescriptor struct {
 	Tags                []string               `json:"tags,omitempty"`
 	SupportedEcosystems []model.Ecosystem      `json:"supportedEcosystems,omitempty"`
 	SupportedManagers   []model.PackageManager `json:"supportedManagers,omitempty"`
+	// Version is the component's own release version; see
+	// ComponentDescriptor.Version. Optional.
+	Version string `json:"version,omitempty"`
 	// Capabilities advertises optional protocol features this matcher
 	// supports, such as CapabilityPackageUpdates.
 	Capabilities []string `json:"capabilities,omitempty"`

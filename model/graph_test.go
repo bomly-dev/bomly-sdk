@@ -1036,3 +1036,29 @@ func TestCopyrightFoldGatesBothWitnesses(t *testing.T) {
 		t.Fatalf("folded copyright = %q, want the valid witness, gated", got)
 	}
 }
+
+func TestCanonicalLocationsFoldsSortsAndNormalizesScopes(t *testing.T) {
+	pos := &SourcePosition{File: "package.json", Line: 3}
+	in := []PackageLocation{
+		{RealPath: "b/package.json", ModuleRoot: "b", Scopes: []Scope{ScopeRuntime, ScopeUnknown}},
+		{RealPath: "a/package.json", ModuleRoot: "a", Position: pos, Scopes: []Scope{ScopeDevelopment}},
+		{RealPath: "a/package.json", ModuleRoot: "a", Scopes: []Scope{ScopeRuntime, ScopeDevelopment}},
+		{RealPath: "a/package.json", ModuleRoot: "a", Position: pos, Scopes: []Scope{ScopeRuntime}, Relationship: DependencyRelationshipDirect},
+	}
+	got := CanonicalLocations(in)
+	if len(got) != 3 || got[0].RealPath != "a/package.json" || got[0].Position != nil || got[1].Position == nil || got[2].RealPath != "b/package.json" {
+		t.Fatalf("canonical locations = %+v", got)
+	}
+	if len(got[1].Scopes) != 2 || got[1].Scopes[0] != ScopeDevelopment || got[1].Relationship != DependencyRelationshipDirect {
+		t.Fatalf("folded usage = %+v, want both witnesses' scopes and the direct relationship", got[1])
+	}
+	if len(got[2].Scopes) != 1 || got[2].Scopes[0] != ScopeRuntime {
+		t.Fatalf("unknown scope survived the fold rule: %+v", got[2])
+	}
+	if in[0].Scopes[1] != ScopeUnknown || len(in) != 4 {
+		t.Fatal("the input was modified")
+	}
+	if CanonicalLocations(nil) != nil {
+		t.Fatal("nothing must canonicalize to nil")
+	}
+}

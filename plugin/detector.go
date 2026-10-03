@@ -107,12 +107,15 @@ func (r DetectionResult) ConsolidatedGraph() (*model.Graph, error) {
 
 // DetectorDescriptor describes a detector registration.
 type DetectorDescriptor struct {
-	Name                  string                  `json:"name"`
-	DisplayName           string                  `json:"displayName,omitempty"`
-	Aliases               []string                `json:"aliases,omitempty"`
-	Tags                  []string                `json:"tags,omitempty"`
-	SupportedEcosystems   []model.Ecosystem       `json:"supportedEcosystems,omitempty"`
-	SupportedManagers     []model.PackageManager  `json:"supportedManagers,omitempty"`
+	Name                string                 `json:"name"`
+	DisplayName         string                 `json:"displayName,omitempty"`
+	Aliases             []string               `json:"aliases,omitempty"`
+	Tags                []string               `json:"tags,omitempty"`
+	SupportedEcosystems []model.Ecosystem      `json:"supportedEcosystems,omitempty"`
+	SupportedManagers   []model.PackageManager `json:"supportedManagers,omitempty"`
+	// Version is the component's own release version; see
+	// ComponentDescriptor.Version. Optional.
+	Version               string                  `json:"version,omitempty"`
 	Technique             DetectorTechnique       `json:"technique,omitempty"`
 	PackageManagerSupport []PackageManagerSupport `json:"packageManagerSupport,omitempty"`
 	FallbackDetectors     []string                `json:"fallbackDetectors,omitempty"`

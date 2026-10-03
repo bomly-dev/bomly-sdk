@@ -14,10 +14,31 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
+	"github.com/bomly-dev/bomly-sdk/model"
 	"github.com/bomly-dev/bomly-sdk/plugin"
 )
 
 const pluginName = "bomly"
+
+// maxMessageBytes bounds one message on the managed transport, in both
+// directions. A protocol v1 request carries at most one graph and one
+// registry, each bounded by model.MaxPayloadBytes, and around them the
+// rest of the request -- the target, the options, the JSON keys and the
+// protobuf framing of the bytes value -- which is small but not nothing,
+// so two payloads that each sit at the bound still fit: the message is
+// three payloads wide, dumb and generous, rather than two plus an estimate
+// of the envelope that would have to track every field added to a request.
+// The decoder bound is the source of truth -- it also governs payloads
+// that never cross this transport -- and the transport is derived from
+// it, so the decoder's own refusal stays reachable rather than being
+// pre-empted by gRPC's 4 MiB default.
+const maxMessageBytes = 3 * model.MaxPayloadBytes
+
+// callOptions widen the reply the host side of a call will accept. The
+// server side is widened where the server is built, in serve; a host that
+// dials a plugin through go-plugin already accepts replies of any size, and
+// this makes the two ends agree on the same bound.
+var callOptions = []grpc.CallOption{grpc.MaxCallRecvMsgSize(maxMessageBytes)}
 
 // ServedDetector is the detector interface implemented by external detector
 // plugins. A detector describes its identity and package-manager support,
@@ -136,8 +157,17 @@ func serve(detector ServedDetector, matcher ServedMatcher, auditor ServedAuditor
 				},
 			},
 		},
-		GRPCServer: hplugin.DefaultGRPCServer,
+		GRPCServer: func(opts []grpc.ServerOption) *grpc.Server {
+			return hplugin.DefaultGRPCServer(serverOptions(opts))
+		},
 	})
+}
+
+// serverOptions widens what the plugin side of the transport will receive.
+// It appends to the options go-plugin hands in rather than replacing them:
+// transport credentials arrive that way.
+func serverOptions(opts []grpc.ServerOption) []grpc.ServerOption {
+	return append(opts, grpc.MaxRecvMsgSize(maxMessageBytes))
 }
 
 type managedPlugin struct {
@@ -413,7 +443,7 @@ type serviceClient struct {
 
 func (c *serviceClient) DetectorDescriptor(ctx context.Context) (*plugin.DetectorDescriptor, error) {
 	out := new(wrapperspb.BytesValue)
-	if err := c.conn.Invoke(ctx, "/bomly.plugin.v1.Plugin/DetectorDescriptor", &emptypb.Empty{}, out); err != nil {
+	if err := c.conn.Invoke(ctx, "/bomly.plugin.v1.Plugin/DetectorDescriptor", &emptypb.Empty{}, out, callOptions...); err != nil {
 		return nil, err
 	}
 	return unmarshalBytes[plugin.DetectorDescriptor](out.Value)
@@ -421,7 +451,7 @@ func (c *serviceClient) DetectorDescriptor(ctx context.Context) (*plugin.Detecto
 
 func (c *serviceClient) DetectorPackageManagerSupport(ctx context.Context) ([]plugin.PackageManagerSupport, error) {
 	out := new(wrapperspb.BytesValue)
-	if err := c.conn.Invoke(ctx, "/bomly.plugin.v1.Plugin/DetectorPackageManagerSupport", &emptypb.Empty{}, out); err != nil {
+	if err := c.conn.Invoke(ctx, "/bomly.plugin.v1.Plugin/DetectorPackageManagerSupport", &emptypb.Empty{}, out, callOptions...); err != nil {
 		return nil, err
 	}
 	support, err := unmarshalBytes[[]plugin.PackageManagerSupport](out.Value)
@@ -457,7 +487,7 @@ func (c *serviceClient) Match(ctx context.Context, req *plugin.MatchRequest) (*p
 
 func (c *serviceClient) MatcherDescriptor(ctx context.Context) (*plugin.MatcherDescriptor, error) {
 	out := new(wrapperspb.BytesValue)
-	if err := c.conn.Invoke(ctx, "/bomly.plugin.v1.Plugin/MatcherDescriptor", &emptypb.Empty{}, out); err != nil {
+	if err := c.conn.Invoke(ctx, "/bomly.plugin.v1.Plugin/MatcherDescriptor", &emptypb.Empty{}, out, callOptions...); err != nil {
 		return nil, err
 	}
 	return unmarshalBytes[plugin.MatcherDescriptor](out.Value)
@@ -477,7 +507,7 @@ func (c *serviceClient) Audit(ctx context.Context, req *plugin.AuditRequest) (*p
 
 func (c *serviceClient) AuditorDescriptor(ctx context.Context) (*plugin.AuditorDescriptor, error) {
 	out := new(wrapperspb.BytesValue)
-	if err := c.conn.Invoke(ctx, "/bomly.plugin.v1.Plugin/AuditorDescriptor", &emptypb.Empty{}, out); err != nil {
+	if err := c.conn.Invoke(ctx, "/bomly.plugin.v1.Plugin/AuditorDescriptor", &emptypb.Empty{}, out, callOptions...); err != nil {
 		return nil, err
 	}
 	return unmarshalBytes[plugin.AuditorDescriptor](out.Value)
@@ -683,7 +713,7 @@ func invokeJSON[TReq any, TResp any](ctx context.Context, conn grpc.ClientConnIn
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 	out := new(wrapperspb.BytesValue)
-	if err := conn.Invoke(ctx, method, wrapperspb.Bytes(payload), out); err != nil {
+	if err := conn.Invoke(ctx, method, wrapperspb.Bytes(payload), out, callOptions...); err != nil {
 		return nil, err
 	}
 	return unmarshalBytes[TResp](out.Value)
@@ -814,7 +844,7 @@ func analyzeHandler(srv any, ctx context.Context, dec func(any) error, intercept
 
 func (c *serviceClient) AnalyzerDescriptor(ctx context.Context) (*plugin.AnalyzerDescriptor, error) {
 	out := new(wrapperspb.BytesValue)
-	if err := c.conn.Invoke(ctx, "/bomly.plugin.v1.Plugin/AnalyzerDescriptor", &emptypb.Empty{}, out); err != nil {
+	if err := c.conn.Invoke(ctx, "/bomly.plugin.v1.Plugin/AnalyzerDescriptor", &emptypb.Empty{}, out, callOptions...); err != nil {
 		return nil, err
 	}
 	return unmarshalBytes[plugin.AnalyzerDescriptor](out.Value)

@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -193,11 +194,53 @@ func (v Vulnerability) MatchesConstraints(constraints []FailOnConstraint) bool {
 }
 
 // FindingPolicyDecision is a resolver's proposed policy status for one
-// finding. Source and Reason provide diagnostic provenance.
+// finding. Source and Reason provide diagnostic provenance: which resolver
+// decided, and why. It is also a wire value, carried on Finding.Decision, so
+// a verdict can be explained after the run that produced it has ended.
+//
+// Gate: Normalized, applied in the JSON codec on both directions -- Status
+// is a FindingPolicyStatus or cleared, since a status outside the vocabulary
+// has no rank and a reader would otherwise have to decide what it meant;
+// Source and Reason are free text, trimmed. Merge class: scalar, fill-gaps
+// -- a decision already recorded is not overwritten by a later resolver's.
 type FindingPolicyDecision struct {
-	Status FindingPolicyStatus
-	Source string
-	Reason string
+	Status FindingPolicyStatus `json:"status,omitempty"`
+	Source string              `json:"source,omitempty"`
+	Reason string              `json:"reason,omitempty"`
+}
+
+// Normalized returns the decision held to its gate: a status outside the
+// vocabulary is cleared, the free text is trimmed.
+func (d FindingPolicyDecision) Normalized() FindingPolicyDecision {
+	out := FindingPolicyDecision{
+		Status: FindingPolicyStatus(strings.TrimSpace(string(d.Status))),
+		Source: strings.TrimSpace(d.Source),
+		Reason: strings.TrimSpace(d.Reason),
+	}
+	if _, ok := FindingPolicyStatusRank(out.Status); !ok {
+		out.Status = ""
+	}
+	return out
+}
+
+// findingPolicyDecisionWire is the codec's shape: the same fields without
+// the methods, so the gate runs once on each direction without recursing.
+type findingPolicyDecisionWire FindingPolicyDecision
+
+// MarshalJSON writes the gated form.
+func (d FindingPolicyDecision) MarshalJSON() ([]byte, error) {
+	return json.Marshal(findingPolicyDecisionWire(d.Normalized()))
+}
+
+// UnmarshalJSON reads through the gate, so a managed auditor or a decoded
+// record cannot put a status the vocabulary does not name on a finding.
+func (d *FindingPolicyDecision) UnmarshalJSON(data []byte) error {
+	var wire findingPolicyDecisionWire
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	*d = FindingPolicyDecision(wire).Normalized()
+	return nil
 }
 
 // FindingPolicyResolver may refine a finding's policy status during auditing.

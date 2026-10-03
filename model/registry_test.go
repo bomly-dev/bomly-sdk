@@ -142,3 +142,29 @@ func TestRegistryMarshalReGatesMutatedRecords(t *testing.T) {
 		t.Fatalf("marshal mutated the stored record: %q", stored.Homepage)
 	}
 }
+
+func TestAddEntryPackagesGoesThroughAdd(t *testing.T) {
+	registry := NewPackageRegistry()
+	seeded := registry.Ensure("pkg:npm/a@1.0.0")
+	seeded.Name = "a"
+	registry.AddEntryPackages([]GraphEntry{
+		{Packages: []*Package{
+			{Coordinates: Coordinates{PURL: "pkg:npm/a@1.0.0"}, Vulnerabilities: []Vulnerability{{ID: "CVE-1", Source: "s"}}, Description: "  from the document  "},
+			nil,
+			{Coordinates: Coordinates{Name: "no-purl"}},
+		}},
+		{Packages: []*Package{{Coordinates: Coordinates{PURL: "pkg:npm/b@1.0.0"}, EOL: &PackageEOL{EOL: true}}}},
+	})
+	a, ok := registry.Get("pkg:npm/a@1.0.0")
+	if !ok || a.Name != "a" || len(a.Vulnerabilities) != 1 || a.Description != "from the document" {
+		t.Fatalf("entry facts did not fold onto the seeded package: %+v", a)
+	}
+	if b, ok := registry.Get("pkg:npm/b@1.0.0"); !ok || b.EOL == nil || !b.EOL.EOL {
+		t.Fatalf("second entry's package missing: %+v", b)
+	}
+	if registry.Len() != 2 {
+		t.Fatalf("Len() = %d, want 2 (nil and purl-less packages ignored)", registry.Len())
+	}
+	var nilRegistry *PackageRegistry
+	nilRegistry.AddEntryPackages(nil)
+}

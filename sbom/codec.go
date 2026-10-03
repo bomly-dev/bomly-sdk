@@ -94,7 +94,7 @@ func UnmarshalJSON(data []byte, target Target) (*Document, error) {
 	if err := requireUnambiguousJSON(data); err != nil {
 		return nil, err
 	}
-	return decodeDocument(c, data)
+	return decodeDocument(c, target, data)
 }
 
 // unmarshalValidated decodes a document whose bytes the caller has already
@@ -104,11 +104,11 @@ func unmarshalValidated(data []byte, target Target) (*Document, error) {
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrUnsupportedTarget, target)
 	}
-	return decodeDocument(c, data)
+	return decodeDocument(c, target, data)
 }
 
 // decodeDocument runs a codec and stamps the document with a checksum over the
-// bytes it was decoded from.
+// bytes it was decoded from and the target it was decoded as.
 //
 // Every ingest path goes through here, which is the point: the checksum can
 // only be computed while the original bytes are in hand, and it cannot be
@@ -119,13 +119,21 @@ func unmarshalValidated(data []byte, target Target) (*Document, error) {
 //
 // SHA-256 because both formats define it and both validators accept it; the
 // spelling each writes is the SDK's to render, not this package's.
-func decodeDocument(c codec, data []byte) (*Document, error) {
+func decodeDocument(c codec, target Target, data []byte) (*Document, error) {
 	doc, err := c.decodeJSON(data)
 	if err != nil {
 		return nil, err
 	}
 	if doc == nil {
 		return nil, ErrNilDocument
+	}
+	// The format is the one the document declared when its codec read one
+	// (CycloneDX names its specification version in the header, and the
+	// decoder interprets the document by it); the target stands in only for
+	// a document that names none, which is also the SPDX case, where the
+	// codec is the version.
+	if doc.Assertions.Format == "" {
+		doc.Assertions.Format = model.NormalizeDocumentFormat(string(target))
 	}
 	sum := sha256.Sum256(data)
 	// The gate runs here rather than at the export site, so a checksum that

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"cmp"
 	"container/heap"
 	"errors"
 	"fmt"
@@ -259,53 +260,18 @@ func foldNodes(surviving, witness GraphNode) {
 		}
 		survivor.Origins = MergeOrigins(survivor.Origins, incoming.Origins)
 		mergeDependencySources(survivor, incoming)
-		// Every witness's assertions about one package survive the fold:
-		// security identifiers and integrity claims union, detection
-		// scalars and metadata fill gaps. Dropping them would lose CPEs or
+		// Every witness's assertions about one package survive the fold
+		// under the classes Assertions declares: sets union, scalars fill
+		// gaps, both sides gated first. Dropping them would lose CPEs or
 		// digests from a second SBOM witness on insertion order alone.
-		survivor.CPEs = mergeStringSet(survivor.CPEs, incoming.CPEs)
-		survivor.Digests = mergeDigestSet(survivor.Digests, incoming.Digests)
-		// License claims are a set for the same reason they are on Package: a
-		// declaration and a conclusion are two claims about one package, and
-		// two witnesses that read different sources both have something to
-		// say.
-		// DetectionLicenses on both sides, not the typed field alone: a
-		// witness built before the typed field existed carries its claims in
-		// the deprecated metadata stash, and metadata merging keeps the
+		//
+		// DetectionLicenses on both sides first, not the typed field alone:
+		// a witness built before the typed field existed carries its claims
+		// in the deprecated metadata stash, and metadata merging keeps the
 		// survivor's value -- so the incoming witness's licenses would be
 		// dropped before seeding ever saw them.
 		survivor.Licenses = MergeLicenses(DetectionLicenses(survivor), DetectionLicenses(incoming))
-		survivor.ExternalReferences = MergeExternalReferences(survivor.ExternalReferences, incoming.ExternalReferences)
-		// The component-level document assertions are scalars — one supplier,
-		// one homepage — so a later witness contributes only what the first
-		// did not know.
-		//
-		// Both sides are gated before the gap is measured, not after. A node
-		// built in process never passed a codec, so a survivor could hold an
-		// unpublishable value — a homepage carrying credentials — which is
-		// non-empty and therefore blocks a valid incoming one, and is then
-		// dropped at encode. The result would be that a witness with a good
-		// homepage lost it to a witness that never had one.
-		survivor.Copyright = NormalizeCopyright(survivor.Copyright)
-		survivor.Description = NormalizeDescription(survivor.Description)
-		survivor.Homepage = NormalizeHomepage(survivor.Homepage)
-		survivor.Supplier = normalizedContact(survivor.Supplier)
-		survivor.Originator = normalizedContact(survivor.Originator)
-		if survivor.Copyright == "" {
-			survivor.Copyright = NormalizeCopyright(incoming.Copyright)
-		}
-		if survivor.Description == "" {
-			survivor.Description = NormalizeDescription(incoming.Description)
-		}
-		if survivor.Homepage == "" {
-			survivor.Homepage = NormalizeHomepage(incoming.Homepage)
-		}
-		if survivor.Supplier == nil {
-			survivor.Supplier = normalizedContact(incoming.Supplier)
-		}
-		if survivor.Originator == nil {
-			survivor.Originator = normalizedContact(incoming.Originator)
-		}
+		survivor.MergeFrom(incoming.Assertions)
 		// The source's own scope word fills a gap like the other document
 		// assertions, gated on both sides first for the same reason.
 		survivor.SourceScope = NormalizeSourceScope(survivor.SourceScope)
@@ -496,6 +462,58 @@ func mergeNodeLocations(dst *[]PackageLocation, additions []PackageLocation) {
 		}
 		*dst = append(*dst, clonePackageLocations([]PackageLocation{location})[0])
 	}
+}
+
+// CanonicalLocations returns a dependency's locations in their canonical
+// form: folded by usage record the way a graph folds a second witness's
+// (mergeNodeLocations), each record's scopes held to the same fold rule,
+// and the records sorted by what names a usage -- real path, access path,
+// module root, position. Two graphs that visited the same sites in a
+// different order then publish the same list, which is what a byte-stable
+// encoding of a node needs. The input is not modified; nil for none.
+func CanonicalLocations(locations []PackageLocation) []PackageLocation {
+	if len(locations) == 0 {
+		return nil
+	}
+	var out []PackageLocation
+	mergeNodeLocations(&out, locations)
+	for i := range out {
+		out[i].Scopes = mergeScopeSet(out[i].Scopes, nil)
+	}
+	slices.SortStableFunc(out, compareUsageRecords)
+	return out
+}
+
+// compareUsageRecords orders two locations by usage identity; an absent
+// position sorts before any stated one.
+func compareUsageRecords(a, b PackageLocation) int {
+	if c := strings.Compare(a.RealPath, b.RealPath); c != 0 {
+		return c
+	}
+	if c := strings.Compare(a.AccessPath, b.AccessPath); c != 0 {
+		return c
+	}
+	if c := strings.Compare(a.ModuleRoot, b.ModuleRoot); c != 0 {
+		return c
+	}
+	switch {
+	case a.Position == nil && b.Position == nil:
+		return 0
+	case a.Position == nil:
+		return -1
+	case b.Position == nil:
+		return 1
+	}
+	if c := strings.Compare(a.Position.File, b.Position.File); c != 0 {
+		return c
+	}
+	if c := cmp.Compare(a.Position.Line, b.Position.Line); c != 0 {
+		return c
+	}
+	if c := cmp.Compare(a.Position.Column, b.Position.Column); c != 0 {
+		return c
+	}
+	return cmp.Compare(a.Position.EndLine, b.Position.EndLine)
 }
 
 // usageRecordIndex returns the index of the record in existing that names

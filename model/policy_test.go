@@ -1,6 +1,10 @@
 package model
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 func TestParseFailOn(t *testing.T) {
 	cases := []struct {
@@ -183,5 +187,45 @@ func TestMatchesConstraints(t *testing.T) {
 				t.Errorf("MatchesConstraints = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestFindingDecisionRoundTripsAndClones(t *testing.T) {
+	input := Finding{ID: "f", Kind: FindingKindVulnerability, PolicyStatus: FindingPolicyStatusSuppressed,
+		Decision: &FindingPolicyDecision{Status: FindingPolicyStatusSuppressed, Source: "baseline", Reason: "accepted 2026-09-01"}}
+	data, err := json.Marshal(input)
+	if err != nil {
+		t.Fatalf("Marshal(): %v", err)
+	}
+	if !strings.Contains(string(data), `"decision":{"status":"suppressed","source":"baseline","reason":"accepted 2026-09-01"}`) {
+		t.Fatalf("decision not encoded: %s", data)
+	}
+	var decoded Finding
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("Unmarshal(): %v", err)
+	}
+	if decoded.Decision == nil || *decoded.Decision != *input.Decision {
+		t.Fatalf("decision = %+v, want %+v", decoded.Decision, input.Decision)
+	}
+	clone := input.Clone()
+	clone.Decision.Reason = "changed"
+	if input.Decision.Reason != "accepted 2026-09-01" {
+		t.Fatal("Clone shares the decision with its source")
+	}
+	if data, _ := json.Marshal(Finding{ID: "f", Kind: FindingKindPackage}); strings.Contains(string(data), "decision") {
+		t.Fatalf("an absent decision must be omitted: %s", data)
+	}
+	// The codec is the gate: a status the vocabulary does not name is
+	// cleared on the way in and on the way out, never carried to a reader
+	// that would have to decide what it ranks as.
+	var gated Finding
+	if err := json.Unmarshal([]byte(`{"id":"f","kind":"vulnerability","decision":{"status":"allow","source":" s ","reason":"r"}}`), &gated); err != nil {
+		t.Fatalf("Unmarshal(): %v", err)
+	}
+	if gated.Decision == nil || gated.Decision.Status != "" || gated.Decision.Source != "s" {
+		t.Fatalf("decoded decision = %+v, want the unknown status cleared", gated.Decision)
+	}
+	if data, _ := json.Marshal(FindingPolicyDecision{Status: "allow", Reason: "r"}); string(data) != `{"reason":"r"}` {
+		t.Fatalf("an unknown status was encoded: %s", data)
 	}
 }

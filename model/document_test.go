@@ -814,3 +814,45 @@ func TestIndexUsagesJoinsAcrossNodes(t *testing.T) {
 		t.Errorf("an unknown package gave %d usages", len(got))
 	}
 }
+
+func TestNormalizeDocumentFormat(t *testing.T) {
+	for input, want := range map[string]string{
+		" cyclonedx-1.6+json ": "cyclonedx-1.6+json",
+		"spdx-2.3+json":        "spdx-2.3+json",
+		"":                     "",
+		"cyclonedx 1.6":        "",
+		"spdx\x00":             "",
+		"\xff":                 "",
+		strings.Repeat("x", maxVocabularyTokenLength+1): "",
+	} {
+		if got := NormalizeDocumentFormat(input); got != want {
+			t.Errorf("NormalizeDocumentFormat(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestDocumentAssertionsFormatIsGatedMergedAndEncoded(t *testing.T) {
+	normalized, ok := (DocumentAssertions{Format: " spdx-2.3+json "}).Normalized()
+	if !ok || normalized.Format != "spdx-2.3+json" {
+		t.Fatalf("Normalized() = %+v, %v", normalized, ok)
+	}
+	if _, ok := (DocumentAssertions{Format: "not a token"}).Normalized(); ok {
+		t.Fatal("an unpublishable format alone must leave the assertions empty")
+	}
+	merged := MergeDocumentAssertions(DocumentAssertions{Name: "left"}, DocumentAssertions{Format: "cyclonedx-1.6+json"})
+	if merged.Format != "cyclonedx-1.6+json" {
+		t.Fatalf("merge did not fill the format gap: %+v", merged)
+	}
+	merged = MergeDocumentAssertions(DocumentAssertions{Format: "spdx-2.3+json"}, DocumentAssertions{Format: "cyclonedx-1.6+json"})
+	if merged.Format != "spdx-2.3+json" {
+		t.Fatalf("merge overwrote a recorded format: %+v", merged)
+	}
+	data, err := json.Marshal(DocumentAssertions{Format: "spdx-2.3+json"})
+	if err != nil || string(data) != `{"format":"spdx-2.3+json"}` {
+		t.Fatalf("encoded %s, %v", data, err)
+	}
+	var decoded DocumentAssertions
+	if err := json.Unmarshal([]byte(`{"format":" spdx-2.3+json "}`), &decoded); err != nil || decoded.Format != "spdx-2.3+json" {
+		t.Fatalf("decoded %+v, %v", decoded, err)
+	}
+}

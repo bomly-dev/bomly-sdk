@@ -27,6 +27,11 @@ type ComponentDescriptor struct {
 	Tags                []string               `json:"tags,omitempty"`
 	SupportedEcosystems []model.Ecosystem      `json:"supportedEcosystems,omitempty"`
 	SupportedManagers   []model.PackageManager `json:"supportedManagers,omitempty"`
+	// Version is the component's own release version, as its author states
+	// it. A host records it beside the name so a result can say which
+	// version of a component produced it. Optional; held to the name's
+	// domain (bounded, valid UTF-8, no control characters) when present.
+	Version string `json:"version,omitempty"`
 }
 
 // Label returns the user-facing component label, falling back to Name.
@@ -210,6 +215,12 @@ func validateComponentDescriptor(kind string, descriptor ComponentDescriptor) er
 	if !utf8.ValidString(descriptor.Name) || model.ContainsControlChar(descriptor.Name) {
 		return fmt.Errorf("%s descriptor name must be valid UTF-8 without control characters", kind)
 	}
+	if len(descriptor.Version) > model.MaxComponentNameLength {
+		return fmt.Errorf("%s descriptor version exceeds %d bytes", kind, model.MaxComponentNameLength)
+	}
+	if !utf8.ValidString(descriptor.Version) || model.ContainsControlChar(descriptor.Version) {
+		return fmt.Errorf("%s descriptor version must be valid UTF-8 without control characters", kind)
+	}
 	for _, alias := range descriptor.Aliases {
 		if strings.TrimSpace(alias) == "" {
 			return fmt.Errorf("%s descriptor aliases must not contain empty values", kind)
@@ -224,19 +235,19 @@ func validateComponentDescriptor(kind string, descriptor ComponentDescriptor) er
 }
 
 func componentFromDetectorDescriptor(descriptor DetectorDescriptor) ComponentDescriptor {
-	return ComponentDescriptor{Name: descriptor.Name, DisplayName: descriptor.DisplayName, Aliases: descriptor.Aliases, Tags: descriptor.Tags, SupportedEcosystems: descriptor.SupportedEcosystems, SupportedManagers: descriptor.SupportedManagers}
+	return ComponentDescriptor{Name: descriptor.Name, DisplayName: descriptor.DisplayName, Aliases: descriptor.Aliases, Tags: descriptor.Tags, SupportedEcosystems: descriptor.SupportedEcosystems, SupportedManagers: descriptor.SupportedManagers, Version: descriptor.Version}
 }
 
 func componentFromMatcherDescriptor(descriptor MatcherDescriptor) ComponentDescriptor {
-	return ComponentDescriptor{Name: descriptor.Name, DisplayName: descriptor.DisplayName, Aliases: descriptor.Aliases, Tags: descriptor.Tags, SupportedEcosystems: descriptor.SupportedEcosystems, SupportedManagers: descriptor.SupportedManagers}
+	return ComponentDescriptor{Name: descriptor.Name, DisplayName: descriptor.DisplayName, Aliases: descriptor.Aliases, Tags: descriptor.Tags, SupportedEcosystems: descriptor.SupportedEcosystems, SupportedManagers: descriptor.SupportedManagers, Version: descriptor.Version}
 }
 
 func componentFromAuditorDescriptor(descriptor AuditorDescriptor) ComponentDescriptor {
-	return ComponentDescriptor{Name: descriptor.Name, DisplayName: descriptor.DisplayName, Aliases: descriptor.Aliases, Tags: descriptor.Tags, SupportedEcosystems: descriptor.SupportedEcosystems, SupportedManagers: descriptor.SupportedManagers}
+	return ComponentDescriptor{Name: descriptor.Name, DisplayName: descriptor.DisplayName, Aliases: descriptor.Aliases, Tags: descriptor.Tags, SupportedEcosystems: descriptor.SupportedEcosystems, SupportedManagers: descriptor.SupportedManagers, Version: descriptor.Version}
 }
 
 func componentFromAnalyzerDescriptor(descriptor AnalyzerDescriptor) ComponentDescriptor {
-	return ComponentDescriptor{Name: descriptor.Name, DisplayName: descriptor.DisplayName, Aliases: descriptor.Aliases, Tags: descriptor.Tags, SupportedEcosystems: descriptor.SupportedEcosystems, SupportedManagers: descriptor.SupportedManagers}
+	return ComponentDescriptor{Name: descriptor.Name, DisplayName: descriptor.DisplayName, Aliases: descriptor.Aliases, Tags: descriptor.Tags, SupportedEcosystems: descriptor.SupportedEcosystems, SupportedManagers: descriptor.SupportedManagers, Version: descriptor.Version}
 }
 
 func includesComponentName(include []string, name string) bool {

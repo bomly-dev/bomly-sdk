@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -1050,5 +1051,54 @@ func TestPackageCopyrightIsGated(t *testing.T) {
 	dep.Copyright = "Copyright\x07 Meta"
 	if seeded := PackageFromDependencyNode(dep); seeded == nil || seeded.Copyright != "Copyright Meta" {
 		t.Fatalf("seeded package = %+v, want the gated copyright", seeded)
+	}
+}
+
+// Licenses are a set: two witnesses arriving in either order publish the
+// same claims in the same order -- by kind (none, declared, concluded),
+// then by claim -- so equal packages encode to equal bytes.
+func TestMergeLicensesOrdersClaimsByKindThenClaim(t *testing.T) {
+	a := MergeLicenses([]PackageLicense{{Value: "MIT", Type: LicenseTypeConcluded}, {Value: "ISC"}, {Value: "MIT", Type: LicenseTypeDeclared}, {Value: "Apache-2.0", Type: LicenseTypeDeclared}}, nil)
+	b := MergeLicenses(nil, []PackageLicense{{Value: "Apache-2.0", Type: LicenseTypeDeclared}, {Value: "MIT", Type: LicenseTypeDeclared}, {Value: "ISC"}, {Value: "MIT", Type: LicenseTypeConcluded}})
+	if !reflect.DeepEqual(a, b) {
+		t.Fatalf("order of arrival changed the set:\n%+v\n%+v", a, b)
+	}
+	want := []string{"ISC", "Apache-2.0", "MIT", "MIT"}
+	for i, license := range a {
+		if license.Value != want[i] {
+			t.Fatalf("merged licenses = %+v, want values %v", a, want)
+		}
+	}
+	if a[0].Type != "" || a[1].Type != LicenseTypeDeclared || a[3].Type != LicenseTypeConcluded {
+		t.Fatalf("kinds are not in order none, declared, concluded: %+v", a)
+	}
+}
+
+// Vulnerabilities pass their recommendation gate and take a fixed order at
+// the package's one door, on both wire directions and in the merge.
+func TestPackageNormalizesAndOrdersVulnerabilities(t *testing.T) {
+	var decoded Package
+	if err := json.Unmarshal([]byte(`{"purl":"pkg:npm/a@1.0.0","vulnerabilities":[{"id":"CVE-2","source":"osv","recommendation":"  up\u0007grade  "},{"id":"CVE-1","source":"osv"}]}`), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Vulnerabilities) != 2 || decoded.Vulnerabilities[0].ID != "CVE-1" || decoded.Vulnerabilities[1].Recommendation != "upgrade" {
+		t.Fatalf("decoded vulnerabilities = %+v, want ordered by (source, ID) with the recommendation gated", decoded.Vulnerabilities)
+	}
+	p := &Package{Coordinates: Coordinates{PURL: "pkg:npm/a@1.0.0"}, Vulnerabilities: []Vulnerability{{ID: "CVE-1", Source: "osv", Recommendation: " \x01 "}}}
+	p.mergeVulnerabilities([]Vulnerability{{ID: "CVE-1", Source: "osv", Recommendation: "patch"}, {ID: "CVE-0", Source: "osv", Recommendation: " fix\x02 "}})
+	if p.Vulnerabilities[0].Recommendation != "patch" || p.Vulnerabilities[1].Recommendation != "fix" {
+		t.Fatalf("merged recommendations = %+v, want the unpublishable value replaced and the appended one gated", p.Vulnerabilities)
+	}
+}
+
+// Encoding a package must not reorder or rewrite the vulnerabilities of the
+// package its holder still owns.
+func TestPackageMarshalDoesNotMutateTheHoldersVulnerabilities(t *testing.T) {
+	p := &Package{Coordinates: Coordinates{PURL: "pkg:npm/a@1.0.0"}, Vulnerabilities: []Vulnerability{{ID: "CVE-2", Source: "osv", Recommendation: " x "}, {ID: "CVE-1", Source: "osv"}}}
+	if _, err := json.Marshal(p); err != nil {
+		t.Fatal(err)
+	}
+	if p.Vulnerabilities[0].ID != "CVE-2" || p.Vulnerabilities[0].Recommendation != " x " {
+		t.Fatalf("marshal mutated the holder's package: %+v", p.Vulnerabilities)
 	}
 }

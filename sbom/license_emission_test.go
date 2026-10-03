@@ -171,7 +171,8 @@ func TestCycloneDXMultipleLicenses(t *testing.T) {
 		if len(licenses) != 2 {
 			t.Fatalf("expected 2 license entries, got %#v", licenses)
 		}
-		for i, want := range []string{"MIT", "Apache-2.0"} {
+		// Listed in the set's sorted order, not the order of arrival.
+		for i, want := range []string{"Apache-2.0", "MIT"} {
 			if licenses[i].License == nil || licenses[i].License.ID != want {
 				t.Fatalf("expected license.id %q at %d, got %#v", want, i, licenses[i])
 			}
@@ -191,7 +192,7 @@ func TestCycloneDXMultipleLicenses(t *testing.T) {
 		if len(licenses) != 1 {
 			t.Fatalf("expected a single composed entry, got %#v", licenses)
 		}
-		if licenses[0].Expression != "(Apache-2.0 OR MIT) AND Unicode-DFS-2016" {
+		if licenses[0].Expression != "Unicode-DFS-2016 AND (Apache-2.0 OR MIT)" {
 			t.Fatalf("expected the compound member preserved, got %#v", licenses[0])
 		}
 	})
@@ -242,7 +243,8 @@ func TestSPDXLicenseComposition(t *testing.T) {
 				{Value: "MIT"},
 				{Value: "Apache-2.0"},
 			},
-			want: "MIT AND Apache-2.0",
+			// Claims of one kind compose in their sorted order.
+			want: "Apache-2.0 AND MIT",
 		},
 		{
 			name: "compound elements are parenthesized",
@@ -304,7 +306,7 @@ func TestSPDXLicenseFieldsSeparateDeclaredFromConcluded(t *testing.T) {
 		{"nothing", nil, "NOASSERTION", "NOASSERTION"},
 		{"untyped", []model.PackageLicense{{Value: "MIT"}}, "MIT", "NOASSERTION"},
 		{"untyped expression", []model.PackageLicense{{SPDXExpression: "MIT OR Apache-2.0"}}, "MIT OR Apache-2.0", "NOASSERTION"},
-		{"untyped pair", []model.PackageLicense{{Value: "MIT"}, {Value: "Apache-2.0"}}, "MIT AND Apache-2.0", "NOASSERTION"},
+		{"untyped pair", []model.PackageLicense{{Value: "MIT"}, {Value: "Apache-2.0"}}, "Apache-2.0 AND MIT", "NOASSERTION"},
 		{"untyped free text", []model.PackageLicense{{Value: "see LICENSE file"}}, spdxkit.MintLicenseRef("see LICENSE file").RefID, "NOASSERTION"},
 		{"declared", []model.PackageLicense{{Value: "MIT", Type: declared}}, "MIT", "NOASSERTION"},
 		{"concluded only", []model.PackageLicense{{Value: "MIT", Type: concluded}}, "NOASSERTION", "MIT"},
@@ -496,7 +498,7 @@ func TestMultipleLicensesDivergeByFormat(t *testing.T) {
 	if len(cdxLicenses) != 2 {
 		t.Fatalf("expected CycloneDX to list both licenses, got %#v", cdxLicenses)
 	}
-	if got := spdxPackageLicense(t, licensedGraph(t, licenses...)).PackageLicenseDeclared; got != "MIT AND Apache-2.0" {
+	if got := spdxPackageLicense(t, licensedGraph(t, licenses...)).PackageLicenseDeclared; got != "Apache-2.0 AND MIT" {
 		t.Fatalf("expected SPDX to compose, got %q", got)
 	}
 }

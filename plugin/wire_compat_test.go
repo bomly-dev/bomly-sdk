@@ -126,6 +126,10 @@ func TestWireV1NewFieldsAreOmitEmpty(t *testing.T) {
 		"Graph":              model.New(),
 		"DocumentAssertions": &model.DocumentAssertions{Identity: "https://example.test/spdxdocs/app"},
 		"DocumentSource":     &model.DocumentSource{Identity: "https://example.test/spdxdocs/src"},
+		"Finding":            &model.Finding{ID: "x", Kind: model.FindingKindPackage},
+		"PolicyDecision":     &model.FindingPolicyDecision{},
+		"ExecutionTarget":    &ExecutionTarget{},
+		"Vulnerability":      &model.Vulnerability{ID: "x"},
 	} {
 		data, err := json.Marshal(value)
 		if err != nil {
@@ -150,6 +154,12 @@ func TestWireV1NewFieldsAreOmitEmpty(t *testing.T) {
 			"external_references",
 			// DocumentAssertions' link-form fields (bomly-sdk#55, #61).
 			"checksum", "sources",
+			// A finding's recorded decision, a component's version, and the
+			// commit a target resolved to.
+			"decision", "status", "reason", "version", "commitSha",
+			// The source document's format token, an advisory's VEX block, and
+			// its stated remediation guidance.
+			"format", "analysis", "recommendation",
 		} {
 			if _, ok := decoded[forbidden]; ok {
 				t.Errorf("%s: zero-valued %q must be omitted from the wire", name, forbidden)

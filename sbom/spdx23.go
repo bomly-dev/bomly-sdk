@@ -753,6 +753,10 @@ func spdxAdditionalOriginReferences(component Component) []*v23.PackageExternalR
 // which is not a URL: the locator was unpublishable, and SPDX ingest ran the
 // same gate and dropped it, so the vulnerability vanished on the next hop.
 // A vulnerability with no advisory URL has no SPDX 2.3 reference to write.
+//
+// The reference is all SPDX 2.3 can hold of an advisory: it has no slot for
+// a rating, a CWE, or a VEX impact analysis, so Vulnerability.Analysis is
+// not written here and an SPDX export does not carry it.
 func spdxVulnerabilityLocator(vuln Vulnerability) (string, bool) {
 	for _, advisory := range vuln.Advisories {
 		ref, ok := model.ExternalReference{

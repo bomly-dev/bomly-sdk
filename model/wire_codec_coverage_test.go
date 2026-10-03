@@ -7,9 +7,10 @@ import (
 	"testing"
 )
 
-// The structs Graph's custom codec emits are unexported, so the contract
-// package's wire walk (its reachableWireTypes follows exported fields only)
-// cannot register them as roots. This package can name them, so it applies
+// The structs the custom codecs emit -- Graph's, and the gated value types
+// that marshal through an untyped copy of themselves -- are unexported, so
+// the contract package's wire walk (its reachableWireTypes follows exported
+// fields only) cannot register them as roots. This package can name them, so it applies
 // the same two rules here: a zero value puts only declared always-sent keys
 // on the wire, and every tagged field declares omitempty unless it is one of
 // those keys.
@@ -17,7 +18,7 @@ func TestWireCodecStructsDeclareOmitEmpty(t *testing.T) {
 	alwaysSent := map[string]string{
 		"nodeWire.id": "the encoded node identity (ADR-0041)",
 	}
-	for _, root := range []any{graphJSON{}, nodeWire{}} {
+	for _, root := range []any{graphJSON{}, nodeWire{}, vulnerabilityAnalysisWire{}, findingPolicyDecisionWire{}} {
 		typ := reflect.TypeOf(root)
 		encoded, err := json.Marshal(reflect.New(typ).Interface())
 		if err != nil {

@@ -2,6 +2,7 @@ package sbom
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -220,9 +221,14 @@ func (c cycloneDXCodec) decodeJSON(data []byte) (*Document, error) {
 		}
 	}
 
+	assertions := cycloneDXDocumentAssertions(bom)
+	// The format the document declared, not the one the caller asked to
+	// read it as: a 1.5 document read through the 1.6 target is a 1.5
+	// document, and the decoder above interpreted it as one.
+	assertions.Format = model.NormalizeDocumentFormat(string(cycloneDXTarget(specVersion)))
 	return &Document{
 		Name:               defaultDocumentName,
-		Assertions:         cycloneDXDocumentAssertions(bom),
+		Assertions:         assertions,
 		Tool:               cycloneDXPrimaryToolName(bom.Metadata),
 		Tools:              cycloneDXToolNames(bom.Metadata),
 		Created:            created,
@@ -347,7 +353,61 @@ func decodeCycloneDXVulnerability(source cdx.Vulnerability) Vulnerability {
 			}
 		}
 	}
+	vuln.Analysis = decodeCycloneDXAnalysis(source.Analysis)
 	return vuln
+}
+
+// decodeCycloneDXAnalysis reads the VEX block through the model's gate, so a
+// state or justification outside the specification's vocabulary is dropped
+// here rather than carried as a word CycloneDX does not define.
+func decodeCycloneDXAnalysis(source *cdx.VulnerabilityAnalysis) *model.VulnerabilityAnalysis {
+	if source == nil {
+		return nil
+	}
+	analysis := model.VulnerabilityAnalysis{
+		State:         model.ImpactAnalysisState(source.State),
+		Justification: model.ImpactAnalysisJustification(source.Justification),
+		Detail:        source.Detail,
+		FirstIssued:   source.FirstIssued,
+		LastUpdated:   source.LastUpdated,
+	}
+	if source.Response != nil {
+		for _, response := range *source.Response {
+			analysis.Response = append(analysis.Response, model.ImpactAnalysisResponse(response))
+		}
+	}
+	normalized, ok := analysis.Normalized()
+	if !ok {
+		return nil
+	}
+	return &normalized
+}
+
+// cycloneDXAnalysis writes the VEX block back in the library's shape; the
+// value was gated on the way in and again wherever it was merged.
+func cycloneDXAnalysis(analysis *model.VulnerabilityAnalysis) *cdx.VulnerabilityAnalysis {
+	if analysis == nil {
+		return nil
+	}
+	normalized, ok := analysis.Normalized()
+	if !ok {
+		return nil
+	}
+	out := &cdx.VulnerabilityAnalysis{
+		State:         cdx.ImpactAnalysisState(normalized.State),
+		Justification: cdx.ImpactAnalysisJustification(normalized.Justification),
+		Detail:        normalized.Detail,
+		FirstIssued:   normalized.FirstIssued,
+		LastUpdated:   normalized.LastUpdated,
+	}
+	if len(normalized.Response) > 0 {
+		responses := make([]cdx.ImpactAnalysisResponse, 0, len(normalized.Response))
+		for _, response := range normalized.Response {
+			responses = append(responses, cdx.ImpactAnalysisResponse(response))
+		}
+		out.Response = &responses
+	}
+	return out
 }
 
 // decodeCycloneDXComponent reads one component, from the inventory or from
@@ -622,6 +682,21 @@ func chooseRoot(doc *Document) *Component {
 		}
 	}
 	return nil
+}
+
+// cycloneDXTarget is the inverse of toCycloneDXVersion: the target token
+// for a declared specification version.
+func cycloneDXTarget(version cdx.SpecVersion) Target {
+	switch version {
+	case cdx.SpecVersion1_4:
+		return TargetCycloneDX14JSON
+	case cdx.SpecVersion1_5:
+		return TargetCycloneDX15JSON
+	case cdx.SpecVersion1_6:
+		return TargetCycloneDX16JSON
+	default:
+		return TargetCycloneDX17JSON
+	}
 }
 
 func toCycloneDXVersion(target Target) cdx.SpecVersion {
@@ -1013,41 +1088,61 @@ func cycloneDXIngestedEOL(properties *[]cdx.Property) *EOL {
 }
 
 // cycloneDXVulnerabilities flattens per-component vulnerabilities into the
-// BOM-level vulnerabilities array, deduplicating by advisory ID and collecting
-// every affected component BOMRef under Affects.
+// BOM-level vulnerabilities array. Copies of one advisory fold into one
+// entry, collecting every affected component's BOMRef under Affects -- but
+// only while they say the same thing. A BOM-level entry has one analysis,
+// one recommendation, one rating and one description for every ref it
+// affects, so folding a component whose copy says not_affected, or
+// recommends its own fix, with one whose copy says otherwise would publish
+// for the second component words written about the first. Copies that
+// differ in any field therefore become distinct entries with the same ID,
+// which CycloneDX permits: the array's uniqueness constraint is on whole
+// entries, not on IDs. Order is first appearance.
 func cycloneDXVulnerabilities(components []Component) []cdx.Vulnerability {
 	type accumulator struct {
-		vuln  Vulnerability
-		refs  []string
-		order int
+		vuln Vulnerability
+		refs []string
 	}
-	byID := make(map[string]*accumulator)
-	order := 0
+	byKey := make(map[string]*accumulator)
+	var ordered []*accumulator
 	for _, comp := range components {
 		for _, v := range comp.Vulnerabilities {
 			if strings.TrimSpace(v.ID) == "" {
 				continue
 			}
-			acc, ok := byID[v.ID]
+			key := vulnerabilityKey(v)
+			acc, ok := byKey[key]
 			if !ok {
-				acc = &accumulator{vuln: v, order: order}
-				order++
-				byID[v.ID] = acc
+				acc = &accumulator{vuln: v}
+				byKey[key] = acc
+				ordered = append(ordered, acc)
 			}
 			acc.refs = append(acc.refs, comp.ID)
 		}
 	}
-	if len(byID) == 0 {
+	if len(ordered) == 0 {
 		return nil
 	}
-	out := make([]cdx.Vulnerability, 0, len(byID))
-	for _, acc := range byID {
+	out := make([]cdx.Vulnerability, 0, len(ordered))
+	for _, acc := range ordered {
 		out = append(out, cycloneDXVulnerability(acc.vuln, acc.refs))
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return byID[out[i].ID].order < byID[out[j].ID].order
-	})
 	return out
+}
+
+// vulnerabilityKey fingerprints a component's copy of an advisory as the
+// CycloneDX entry it would become, without its affected references, so two
+// copies that the format would publish identically fold and two that differ
+// in anything the format carries do not. Keying on the model's copy instead
+// split entries on fields the format does not export (fixed versions), and
+// a re-ingest then folded what the first export had kept apart. A copy that
+// cannot be encoded keys on its ID alone.
+func vulnerabilityKey(v Vulnerability) string {
+	key, err := json.Marshal(cycloneDXVulnerability(v, nil))
+	if err != nil {
+		return v.ID
+	}
+	return string(key)
 }
 
 func cycloneDXVulnerability(v Vulnerability, refs []string) cdx.Vulnerability {
@@ -1078,12 +1173,21 @@ func cycloneDXVulnerability(v Vulnerability, refs []string) cdx.Vulnerability {
 		vuln.CWEs = new(append([]int(nil), v.CWEs...))
 	}
 	if len(v.Advisories) > 0 {
+		// The reference form of the published-URL rule: an advisory is a
+		// citation, so its path and query stay, while credentials, local
+		// paths and non-http schemes are cleared here as they are for every
+		// other URL a document carries.
 		advisories := make([]cdx.Advisory, 0, len(v.Advisories))
 		for _, url := range v.Advisories {
-			advisories = append(advisories, cdx.Advisory{URL: url})
+			if normalized, ok := model.NormalizeURL(url, model.URLFormReference); ok {
+				advisories = append(advisories, cdx.Advisory{URL: normalized})
+			}
 		}
-		vuln.Advisories = &advisories
+		if len(advisories) > 0 {
+			vuln.Advisories = &advisories
+		}
 	}
+	vuln.Analysis = cycloneDXAnalysis(v.Analysis)
 	if len(refs) > 0 {
 		sorted := append([]string(nil), refs...)
 		sort.Strings(sorted)
