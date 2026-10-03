@@ -844,6 +844,9 @@ func (p *Package) NormalizeAssertions() {
 		var folded Package
 		folded.mergeVulnerabilities(p.Vulnerabilities)
 		p.Vulnerabilities = folded.Vulnerabilities
+		for i := range p.Vulnerabilities {
+			p.Vulnerabilities[i] = p.Vulnerabilities[i].Normalized()
+		}
 		sort.SliceStable(p.Vulnerabilities, func(i, j int) bool {
 			return vulnerabilityIdentityKey(p.Vulnerabilities[i]) < vulnerabilityIdentityKey(p.Vulnerabilities[j])
 		})
@@ -985,8 +988,9 @@ func (p *Package) mergeVulnerabilities(incoming []Vulnerability) {
 			}
 			continue
 		}
-		clone := v.Clone()
-		clone.Recommendation = NormalizeDescription(clone.Recommendation)
+		// Gated as it is appended, so a merge never carries an ungated value
+		// into a package even before the package passes its door.
+		clone := v.Clone().Normalized()
 		p.Vulnerabilities = append(p.Vulnerabilities, clone)
 		idx[key] = len(p.Vulnerabilities) - 1
 	}

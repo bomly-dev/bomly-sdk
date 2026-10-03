@@ -1268,3 +1268,60 @@ func FuzzRootAttributor(f *testing.F) {
 		}
 	})
 }
+
+// FuzzVulnerabilityJSON drives the vulnerability codec with untrusted text
+// in every gated field and checks the gate's invariants: decoding is a
+// fixed point, nothing published past a bound, no control character other
+// than a line break or tab survives, and every reference URL is one the
+// URL gate accepts.
+func FuzzVulnerabilityJSON(f *testing.F) {
+	for _, seed := range []string{
+		"", "plain", " padded ", "a\nb\tc", "\x00\x01", "app\u009b2J",
+		"https://example.test/advisory", "https://user:token@example.test/a", "file:///etc/passwd",
+		"golang.org/x/net", strings.Repeat("x", 9000),
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, raw string) {
+		if len(raw) > maxFuzzInputSize {
+			t.Skip()
+		}
+		v := Vulnerability{ID: "CVE-1", Summary: raw, Details: raw, Title: raw, Recommendation: raw,
+			Reasons: []string{raw, raw}, References: []Reference{{URL: raw, Type: ReferenceType(raw)}}}
+		data, err := json.Marshal(v)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		var decoded Vulnerability
+		if err := json.Unmarshal(data, &decoded); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		again, err := json.Marshal(decoded)
+		if err != nil {
+			t.Fatalf("re-marshal: %v", err)
+		}
+		if string(again) != string(data) {
+			t.Fatalf("the codec is not a fixed point:\n%s\n%s", data, again)
+		}
+		for _, text := range append([]string{decoded.Summary, decoded.Title, decoded.Recommendation}, decoded.Reasons...) {
+			if len(text) > maxDescriptionLength {
+				t.Fatalf("%d bytes survived the %d-byte description bound", len(text), maxDescriptionLength)
+			}
+		}
+		if len(decoded.Details) > maxAdvisoryDetailsLength {
+			t.Fatalf("%d bytes of details survived the advisory bound", len(decoded.Details))
+		}
+		for _, text := range append([]string{decoded.Summary, decoded.Details, decoded.Title, decoded.Recommendation}, decoded.Reasons...) {
+			for _, r := range text {
+				if r != '\n' && r != '\r' && r != '\t' && unicode.IsControl(r) {
+					t.Fatalf("a control character survived the gate: %q", text)
+				}
+			}
+		}
+		for _, reference := range decoded.References {
+			if normalized, ok := NormalizeURL(reference.URL, URLFormReference); !ok || normalized != reference.URL {
+				t.Fatalf("an ungated reference URL survived: %q", reference.URL)
+			}
+		}
+	})
+}
