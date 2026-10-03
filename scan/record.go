@@ -197,6 +197,34 @@ type Dependency struct {
 	Licenses     []model.PackageLicense       `json:"licenses,omitempty"`
 }
 
+// Normalized returns the dependency held to its gate: Relationship passes
+// model.ParseDependencyRelationship, so a value outside the vocabulary --
+// which the graph comparison would otherwise take as a stated relationship
+// and report against the canonical one -- is cleared rather than carried.
+func (d Dependency) Normalized() Dependency {
+	d.Relationship = model.ParseDependencyRelationship(string(d.Relationship))
+	return d
+}
+
+// dependencyWire is the codec's shape: the same fields without the methods,
+// so the gate runs once on each direction without recursing.
+type dependencyWire Dependency
+
+// MarshalJSON writes the gated form.
+func (d Dependency) MarshalJSON() ([]byte, error) {
+	return json.Marshal(dependencyWire(d.Normalized()))
+}
+
+// UnmarshalJSON reads through the gate.
+func (d *Dependency) UnmarshalJSON(data []byte) error {
+	var wire dependencyWire
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	*d = Dependency(wire).Normalized()
+	return nil
+}
+
 // AuditSummary counts findings by severity.
 type AuditSummary struct {
 	Critical int `json:"critical,omitempty"`

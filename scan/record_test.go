@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/bomly-dev/bomly-sdk/model"
 )
 
 // The contract package's wire walk stops at the model and plugin packages,
@@ -105,5 +107,22 @@ func TestSubjectCodecAppliesTheCommitGate(t *testing.T) {
 	data, err := json.Marshal(Subject{Kind: "git-repository", Ref: "main", CommitSHA: "main"})
 	if err != nil || string(data) != `{"kind":"git-repository","ref":"main"}` {
 		t.Fatalf("encoded %s, %v; want the non-commit cleared", data, err)
+	}
+}
+
+// A dependency's relationship is a closed vocabulary; the codec gates it on
+// both directions so a comparison never takes " DIRECT " or an unknown word
+// as a stated relationship.
+func TestDependencyCodecGatesTheRelationship(t *testing.T) {
+	var decoded Dependency
+	if err := json.Unmarshal([]byte(`{"id":"pkg:npm/a@1.0.0","relationship":" DIRECT "}`), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Relationship != model.DependencyRelationshipDirect {
+		t.Fatalf("decoded relationship = %q, want direct", decoded.Relationship)
+	}
+	data, err := json.Marshal(Dependency{ID: "pkg:npm/a@1.0.0", Relationship: "sideways"})
+	if err != nil || string(data) != `{"id":"pkg:npm/a@1.0.0"}` {
+		t.Fatalf("encoded %s, %v; want the unknown relationship cleared", data, err)
 	}
 }
