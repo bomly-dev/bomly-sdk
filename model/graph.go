@@ -1,6 +1,7 @@
 package model
 
 import (
+	"cmp"
 	"container/heap"
 	"errors"
 	"fmt"
@@ -461,6 +462,58 @@ func mergeNodeLocations(dst *[]PackageLocation, additions []PackageLocation) {
 		}
 		*dst = append(*dst, clonePackageLocations([]PackageLocation{location})[0])
 	}
+}
+
+// CanonicalLocations returns a dependency's locations in their canonical
+// form: folded by usage record the way a graph folds a second witness's
+// (mergeNodeLocations), each record's scopes held to the same fold rule,
+// and the records sorted by what names a usage -- real path, access path,
+// module root, position. Two graphs that visited the same sites in a
+// different order then publish the same list, which is what a byte-stable
+// encoding of a node needs. The input is not modified; nil for none.
+func CanonicalLocations(locations []PackageLocation) []PackageLocation {
+	if len(locations) == 0 {
+		return nil
+	}
+	var out []PackageLocation
+	mergeNodeLocations(&out, locations)
+	for i := range out {
+		out[i].Scopes = mergeScopeSet(out[i].Scopes, nil)
+	}
+	slices.SortStableFunc(out, compareUsageRecords)
+	return out
+}
+
+// compareUsageRecords orders two locations by usage identity; an absent
+// position sorts before any stated one.
+func compareUsageRecords(a, b PackageLocation) int {
+	if c := strings.Compare(a.RealPath, b.RealPath); c != 0 {
+		return c
+	}
+	if c := strings.Compare(a.AccessPath, b.AccessPath); c != 0 {
+		return c
+	}
+	if c := strings.Compare(a.ModuleRoot, b.ModuleRoot); c != 0 {
+		return c
+	}
+	switch {
+	case a.Position == nil && b.Position == nil:
+		return 0
+	case a.Position == nil:
+		return -1
+	case b.Position == nil:
+		return 1
+	}
+	if c := strings.Compare(a.Position.File, b.Position.File); c != 0 {
+		return c
+	}
+	if c := cmp.Compare(a.Position.Line, b.Position.Line); c != 0 {
+		return c
+	}
+	if c := cmp.Compare(a.Position.Column, b.Position.Column); c != 0 {
+		return c
+	}
+	return cmp.Compare(a.Position.EndLine, b.Position.EndLine)
 }
 
 // usageRecordIndex returns the index of the record in existing that names

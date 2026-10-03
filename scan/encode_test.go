@@ -243,3 +243,75 @@ func TestEncodeSortsScopes(t *testing.T) {
 		t.Fatalf("scopes are not sorted and deduplicated: %s", left)
 	}
 }
+
+// A digest is verified over the section's bytes as written, so a record a
+// later minor of the schema wrote -- carrying a key this reader does not
+// know -- and a record a tool indented for a reader both verify.
+func TestDecodeVerifiesDigestsOverTheBytesAsWritten(t *testing.T) {
+	data, err := Encode(sampleRecord())
+	if err != nil {
+		t.Fatal(err)
+	}
+	later := bytes.Replace(data, []byte(`"path":"a/package-lock.json"`), []byte(`"path":"a/package-lock.json","from_a_later_minor":{"x":[1,2]}`), 1)
+	if bytes.Equal(later, data) {
+		t.Fatal("the fixture did not take the extra key")
+	}
+	var digests struct {
+		Digests SectionDigests `json:"digests"`
+	}
+	if err := json.Unmarshal(later, &digests); err != nil {
+		t.Fatal(err)
+	}
+	// The writer of that key digested its own bytes; stand in for it.
+	actual, err := sectionDigestsOf(later)
+	if err != nil {
+		t.Fatal(err)
+	}
+	later = bytes.Replace(later, []byte(digests.Digests.Manifests), []byte(actual.Manifests), 1)
+	if _, err := Decode(later); err != nil {
+		t.Fatalf("a record from a later minor was refused: %v", err)
+	}
+	var indented bytes.Buffer
+	if err := json.Indent(&indented, data, "", "  "); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Decode(indented.Bytes()); err != nil {
+		t.Fatalf("an indented record was refused: %v", err)
+	}
+	// Content that moved is still refused.
+	moved := bytes.Replace(data, []byte(`"pkg:npm/z@1.0.0"`), []byte(`"pkg:npm/y@1.0.0"`), 1)
+	if _, err := Decode(moved); !errors.Is(err, ErrDigestMismatch) {
+		t.Fatalf("changed content decoded: %v", err)
+	}
+}
+
+// Findings sharing an ID and a package can still be two findings; the
+// bytes must not depend on the order the auditors produced them. Locations
+// are a set folded by usage, in whatever order the sites were visited.
+func TestEncodeOrdersFindingsAndLocationsTotally(t *testing.T) {
+	a, b := sampleRecord(), sampleRecord()
+	vuln := model.Finding{ID: "X", PackageRef: "pkg:npm/a@1.0.0", Kind: model.FindingKindVulnerability, VulnerabilityID: "X"}
+	policy := model.Finding{ID: "X", PackageRef: "pkg:npm/a@1.0.0", Kind: model.FindingKindPackage, RuleID: "denied"}
+	a.Findings = append(a.Findings, vuln, policy)
+	b.Findings = append(b.Findings, policy, vuln)
+	a.Waivers = append(a.Waivers, Waiver{PackageRef: "p2"}, Waiver{PackageRef: "p1"})
+	b.Waivers = append(b.Waivers, Waiver{PackageRef: "p1"}, Waiver{PackageRef: "p2"})
+	first := model.PackageLocation{RealPath: "a/package-lock.json", ModuleRoot: "a", Scopes: []model.Scope{model.ScopeRuntime, model.ScopeDevelopment}}
+	second := model.PackageLocation{RealPath: "a/package.json", ModuleRoot: "a", Scopes: []model.Scope{model.ScopeDevelopment, model.ScopeRuntime}}
+	a.Manifests[1].Dependencies[1].Locations = []model.PackageLocation{second, first, first}
+	b.Manifests[1].Dependencies[1].Locations = []model.PackageLocation{first, second}
+	left, err := Encode(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := Encode(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(left, right) {
+		t.Fatalf("input order changed the bytes:\n%s\n%s", left, right)
+	}
+	if strings.Count(string(left), `"real_path":"a/package-lock.json"`) != 1 || strings.Index(string(left), `"real_path":"a/package-lock.json"`) > strings.Index(string(left), `"real_path":"a/package.json"`) {
+		t.Fatalf("locations are not folded and sorted: %s", left)
+	}
+}
