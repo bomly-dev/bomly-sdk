@@ -829,6 +829,21 @@ func (p *Package) NormalizeAssertions() {
 	}
 	p.Assertions = p.Normalized()
 	p.DetectedOrigins = MergeOrigins(nil, p.DetectedOrigins)
+	// The vulnerabilities take the gates they declare and a fixed order:
+	// they are a set unioned by (source, ID), so the order matchers ran in
+	// is not content, and two registries that agree on the set must encode
+	// to the same bytes.
+	for i := range p.Vulnerabilities {
+		p.Vulnerabilities[i].Recommendation = NormalizeDescription(p.Vulnerabilities[i].Recommendation)
+	}
+	sort.SliceStable(p.Vulnerabilities, func(i, j int) bool {
+		return vulnerabilityIdentityKey(p.Vulnerabilities[i]) < vulnerabilityIdentityKey(p.Vulnerabilities[j])
+	})
+}
+
+// vulnerabilityIdentityKey is the identity mergeVulnerabilities unions by.
+func vulnerabilityIdentityKey(v Vulnerability) string {
+	return v.Source + "\x00" + v.ID
 }
 
 // Clone returns a deep copy of the package.
@@ -935,10 +950,10 @@ func (p *Package) mergeVulnerabilities(incoming []Vulnerability) {
 	}
 	idx := make(map[string]int, len(p.Vulnerabilities))
 	for i, v := range p.Vulnerabilities {
-		idx[v.Source+"\x00"+v.ID] = i
+		idx[vulnerabilityIdentityKey(v)] = i
 	}
 	for _, v := range incoming {
-		key := v.Source + "\x00" + v.ID
+		key := vulnerabilityIdentityKey(v)
 		if existing, ok := idx[key]; ok {
 			dst := &p.Vulnerabilities[existing]
 			if dst.Reachability == nil && v.Reachability != nil {
@@ -953,12 +968,17 @@ func (p *Package) mergeVulnerabilities(incoming []Vulnerability) {
 			if v.Analysis != nil {
 				dst.Analysis = MergeVulnerabilityAnalysis(dst.Analysis, v.Analysis)
 			}
-			if dst.Recommendation == "" {
+			// Both sides gated before the gap is measured, as the assertions
+			// are: a destination built in process may hold an unpublishable
+			// value that would block a publishable one.
+			if dst.Recommendation = NormalizeDescription(dst.Recommendation); dst.Recommendation == "" {
 				dst.Recommendation = NormalizeDescription(v.Recommendation)
 			}
 			continue
 		}
-		p.Vulnerabilities = append(p.Vulnerabilities, v.Clone())
+		clone := v.Clone()
+		clone.Recommendation = NormalizeDescription(clone.Recommendation)
+		p.Vulnerabilities = append(p.Vulnerabilities, clone)
 		idx[key] = len(p.Vulnerabilities) - 1
 	}
 }

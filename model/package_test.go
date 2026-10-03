@@ -1073,3 +1073,20 @@ func TestMergeLicensesOrdersClaimsByKindThenClaim(t *testing.T) {
 		t.Fatalf("kinds are not in order none, declared, concluded: %+v", a)
 	}
 }
+
+// Vulnerabilities pass their recommendation gate and take a fixed order at
+// the package's one door, on both wire directions and in the merge.
+func TestPackageNormalizesAndOrdersVulnerabilities(t *testing.T) {
+	var decoded Package
+	if err := json.Unmarshal([]byte(`{"purl":"pkg:npm/a@1.0.0","vulnerabilities":[{"id":"CVE-2","source":"osv","recommendation":"  up\u0007grade  "},{"id":"CVE-1","source":"osv"}]}`), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Vulnerabilities) != 2 || decoded.Vulnerabilities[0].ID != "CVE-1" || decoded.Vulnerabilities[1].Recommendation != "upgrade" {
+		t.Fatalf("decoded vulnerabilities = %+v, want ordered by (source, ID) with the recommendation gated", decoded.Vulnerabilities)
+	}
+	p := &Package{Coordinates: Coordinates{PURL: "pkg:npm/a@1.0.0"}, Vulnerabilities: []Vulnerability{{ID: "CVE-1", Source: "osv", Recommendation: " \x01 "}}}
+	p.mergeVulnerabilities([]Vulnerability{{ID: "CVE-1", Source: "osv", Recommendation: "patch"}, {ID: "CVE-0", Source: "osv", Recommendation: " fix\x02 "}})
+	if p.Vulnerabilities[0].Recommendation != "patch" || p.Vulnerabilities[1].Recommendation != "fix" {
+		t.Fatalf("merged recommendations = %+v, want the unpublishable value replaced and the appended one gated", p.Vulnerabilities)
+	}
+}
