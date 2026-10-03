@@ -1110,12 +1110,15 @@ func cycloneDXVulnerabilities(components []Component) []cdx.Vulnerability {
 	return out
 }
 
-// vulnerabilityKey fingerprints a component's copy of an advisory as its
-// encoding, analysis gated by its codec, so two copies that say the same
-// thing fold and two that differ in any field do not. A copy that cannot
-// be encoded keys on its ID alone.
+// vulnerabilityKey fingerprints a component's copy of an advisory as the
+// CycloneDX entry it would become, without its affected references, so two
+// copies that the format would publish identically fold and two that differ
+// in anything the format carries do not. Keying on the model's copy instead
+// split entries on fields the format does not export (fixed versions), and
+// a re-ingest then folded what the first export had kept apart. A copy that
+// cannot be encoded keys on its ID alone.
 func vulnerabilityKey(v Vulnerability) string {
-	key, err := json.Marshal(v)
+	key, err := json.Marshal(cycloneDXVulnerability(v, nil))
 	if err != nil {
 		return v.ID
 	}
