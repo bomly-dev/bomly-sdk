@@ -19,10 +19,14 @@ type Diff struct {
 	RemovedFindings        []FindingRef
 }
 
-// VulnerabilityRef names one advisory on one package.
+// VulnerabilityRef names one advisory on one package. The identity is the
+// one Package.mergeVulnerabilities unions by -- source and ID -- so an
+// advisory that moved from one source to another under the same ID is a
+// removal and an addition, not nothing.
 type VulnerabilityRef struct {
 	PackageRef      string `json:"package_ref,omitempty"`
 	VulnerabilityID string `json:"vulnerability_id,omitempty"`
+	Source          string `json:"source,omitempty"`
 }
 
 // FindingRef names one finding: the identity Encode orders findings by,
@@ -49,8 +53,8 @@ func (r FindingRef) key() string {
 // by rebuilding each record's dependency graph -- across all its manifests,
 // folded by identity -- and handing the pair to model.Compare, so the answer
 // is the graph comparison's, not a second one. Advisories and findings are
-// compared by identity: an advisory is (package, ID), a finding is (ID,
-// package, kind, vulnerability, rule).
+// compared by identity: an advisory is (package, source, ID), a finding is
+// (ID, package, kind, vulnerability, rule).
 func Compare(base, head *Record) (Diff, error) {
 	if base == nil || head == nil {
 		return Diff{}, fmt.Errorf("scan compare: both records are required")
@@ -138,7 +142,7 @@ func vulnerabilityDelta(base, head []*model.Package) (added, removed []Vulnerabi
 				continue
 			}
 			for _, v := range pkg.Vulnerabilities {
-				out[VulnerabilityRef{PackageRef: pkg.PURL, VulnerabilityID: v.ID}] = struct{}{}
+				out[VulnerabilityRef{PackageRef: pkg.PURL, VulnerabilityID: v.ID, Source: v.Source}] = struct{}{}
 			}
 		}
 		return out
@@ -159,7 +163,10 @@ func vulnerabilityDelta(base, head []*model.Package) (added, removed []Vulnerabi
 			if refs[i].PackageRef != refs[j].PackageRef {
 				return refs[i].PackageRef < refs[j].PackageRef
 			}
-			return refs[i].VulnerabilityID < refs[j].VulnerabilityID
+			if refs[i].VulnerabilityID != refs[j].VulnerabilityID {
+				return refs[i].VulnerabilityID < refs[j].VulnerabilityID
+			}
+			return refs[i].Source < refs[j].Source
 		}
 	}
 	sort.Slice(added, less(added))

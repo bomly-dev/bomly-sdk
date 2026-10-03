@@ -35,8 +35,8 @@ func TestCompareReportsDependencyVulnerabilityAndFindingDeltas(t *testing.T) {
 		len(diff.Dependencies.Updated) != 1 || diff.Dependencies.Updated[0].After.NodeID() != "pkg:npm/b@2.0.0" {
 		t.Fatalf("dependency diff = %+v", diff.Dependencies)
 	}
-	if len(diff.AddedVulnerabilities) != 1 || diff.AddedVulnerabilities[0] != (VulnerabilityRef{"pkg:npm/b@2.0.0", "CVE-NEW"}) ||
-		len(diff.RemovedVulnerabilities) != 1 || diff.RemovedVulnerabilities[0] != (VulnerabilityRef{"pkg:npm/b@1.0.0", "CVE-OLD"}) {
+	if len(diff.AddedVulnerabilities) != 1 || diff.AddedVulnerabilities[0] != (VulnerabilityRef{PackageRef: "pkg:npm/b@2.0.0", VulnerabilityID: "CVE-NEW"}) ||
+		len(diff.RemovedVulnerabilities) != 1 || diff.RemovedVulnerabilities[0] != (VulnerabilityRef{PackageRef: "pkg:npm/b@1.0.0", VulnerabilityID: "CVE-OLD"}) {
 		t.Fatalf("vulnerability delta = %+v / %+v", diff.AddedVulnerabilities, diff.RemovedVulnerabilities)
 	}
 	if len(diff.AddedFindings) != 1 || diff.AddedFindings[0] != (FindingRef{ID: "CVE-NEW", PackageRef: "pkg:npm/b@2.0.0"}) ||
@@ -141,5 +141,19 @@ func TestCompareDistinguishesFindingsByKindVulnerabilityAndRule(t *testing.T) {
 	}
 	if len(diff.AddedFindings) != 1 || diff.AddedFindings[0].RuleID != "denied" || len(diff.RemovedFindings) != 1 || diff.RemovedFindings[0].VulnerabilityID != "X" {
 		t.Fatalf("finding delta = %+v / %+v", diff.AddedFindings, diff.RemovedFindings)
+	}
+}
+
+// An advisory's identity is (source, ID), as the registry unions them; the
+// same ID from another source is a different advisory.
+func TestCompareDistinguishesAdvisoriesBySource(t *testing.T) {
+	base := &Record{Packages: []*model.Package{{Coordinates: model.Coordinates{PURL: "pkg:npm/a@1.0.0"}, Vulnerabilities: []model.Vulnerability{{ID: "CVE-1", Source: "nvd"}}}}}
+	head := &Record{Packages: []*model.Package{{Coordinates: model.Coordinates{PURL: "pkg:npm/a@1.0.0"}, Vulnerabilities: []model.Vulnerability{{ID: "CVE-1", Source: "vendor"}}}}}
+	diff, err := Compare(base, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(diff.AddedVulnerabilities) != 1 || diff.AddedVulnerabilities[0].Source != "vendor" || len(diff.RemovedVulnerabilities) != 1 || diff.RemovedVulnerabilities[0].Source != "nvd" {
+		t.Fatalf("vulnerability delta = %+v / %+v", diff.AddedVulnerabilities, diff.RemovedVulnerabilities)
 	}
 }
