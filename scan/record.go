@@ -20,6 +20,8 @@
 package scan
 
 import (
+	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/bomly-dev/bomly-sdk/model"
@@ -74,8 +76,48 @@ type Subject struct {
 	// Ref is the revision that was asked for; CommitSHA is the one found.
 	Ref       string `json:"ref,omitempty"`
 	CommitSHA string `json:"commit_sha,omitempty"`
-	// ImageDigest identifies a container image subject.
-	ImageDigest string `json:"image_digest,omitempty"`
+	// ImageReference is the container image reference the scan was asked
+	// for, as given (repository and tag, or repository and digest); a
+	// public identity, unlike a local path, and the one thing that tells
+	// two tagged images' records apart. ImageDigest is the digest part
+	// when the reference was pinned by one: an identity, where a tag is
+	// not.
+	ImageReference string `json:"image_reference,omitempty"`
+	ImageDigest    string `json:"image_digest,omitempty"`
+}
+
+// Normalized returns the subject held to its gate: CommitSHA passes
+// plugin.NormalizeCommitSHA, the same gate the execution target applies,
+// so a record cannot carry a ref name or a padded hash as a commit; the
+// other fields are trimmed.
+func (s Subject) Normalized() Subject {
+	return Subject{
+		Kind:           plugin.ExecutionTargetKind(strings.TrimSpace(string(s.Kind))),
+		RepositoryURL:  strings.TrimSpace(s.RepositoryURL),
+		Ref:            strings.TrimSpace(s.Ref),
+		CommitSHA:      plugin.NormalizeCommitSHA(s.CommitSHA),
+		ImageReference: strings.TrimSpace(s.ImageReference),
+		ImageDigest:    strings.TrimSpace(s.ImageDigest),
+	}
+}
+
+// subjectWire is the codec's shape: the same fields without the methods,
+// so the gate runs once on each direction without recursing.
+type subjectWire Subject
+
+// MarshalJSON writes the gated form.
+func (s Subject) MarshalJSON() ([]byte, error) {
+	return json.Marshal(subjectWire(s.Normalized()))
+}
+
+// UnmarshalJSON reads through the gate.
+func (s *Subject) UnmarshalJSON(data []byte) error {
+	var wire subjectWire
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	*s = Subject(wire).Normalized()
+	return nil
 }
 
 // Run describes one execution of the pipeline.
@@ -127,10 +169,14 @@ type Manifest struct {
 // and the detection-time facts a manifest states. Enrichment lives once, on
 // the package PackageRef names.
 type Dependency struct {
-	ID         string                  `json:"id,omitempty"`
-	Name       string                  `json:"name,omitempty"`
-	Version    string                  `json:"version,omitempty"`
-	PURL       string                  `json:"purl,omitempty"`
+	ID      string `json:"id,omitempty"`
+	Name    string `json:"name,omitempty"`
+	Version string `json:"version,omitempty"`
+	PURL    string `json:"purl,omitempty"`
+	// Source is where the dependency was resolved from -- a registry, Git,
+	// a URL, a file, a workspace -- as the detector recorded it; a change
+	// between scans is a review-worthy transition the comparison reports.
+	Source     model.DependencySource  `json:"source,omitempty"`
 	Scopes     []model.Scope           `json:"scopes,omitempty"`
 	DependsOn  []string                `json:"depends_on,omitempty"`
 	Matched    bool                    `json:"matched,omitempty"`

@@ -90,3 +90,20 @@ func TestSubjectCannotCarryALocalPath(t *testing.T) {
 		}
 	}
 }
+
+// The subject applies the commit gate in its codec, the same one the
+// execution target applies, so a record cannot carry a ref name or a
+// padded hash as a commit on either direction.
+func TestSubjectCodecAppliesTheCommitGate(t *testing.T) {
+	var subject Subject
+	if err := json.Unmarshal([]byte(`{"kind":"git-repository","commit_sha":" 0123ABCDEF0123abcdef ","image_reference":" alpine:3.20 "}`), &subject); err != nil {
+		t.Fatal(err)
+	}
+	if subject.CommitSHA != "0123abcdef0123abcdef" || subject.ImageReference != "alpine:3.20" {
+		t.Fatalf("decoded subject = %+v", subject)
+	}
+	data, err := json.Marshal(Subject{Kind: "git-repository", Ref: "main", CommitSHA: "main"})
+	if err != nil || string(data) != `{"kind":"git-repository","ref":"main"}` {
+		t.Fatalf("encoded %s, %v; want the non-commit cleared", data, err)
+	}
+}
