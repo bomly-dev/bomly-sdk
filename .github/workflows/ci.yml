@@ -72,13 +72,15 @@ jobs:
           version: v2.13.2
 
   # Builds, vets and unit-tests bomly-cli's main branch against this pull
-  # request's SDK through a throwaway Go workspace (scripts/cli-test.sh), so a
-  # change that breaks the CLI is seen before a tag rather than after it.
+  # request's SDK through a throwaway Go workspace (scripts/cli-test.sh).
+  # Opt-in with the `cli-compat` label: the normal path is testing locally
+  # with `make sdk-local` / `make cli-test` before the pull request, and the
+  # full CLI suite takes several minutes the SDK's own checks do not.
   # Informational, not a required check: an approved v0 break
   # (api:break-approved) is expected to fail here until the CLI adopts it.
   cli-compat:
     name: CLI compatibility
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'cli-compat')
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository

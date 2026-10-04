@@ -328,7 +328,7 @@ make install-hooks # pre-commit runs fmt-check and lint; pre-push runs make test
 ```
 
 Locally, `make test` is the gate before a push; CI owns the rest (lint,
-vet, tidiness, the API diff, and `CLI compatibility`).
+vet, tidiness, and the API diff).
 
 ### Developing the SDK and the CLI together
 
@@ -342,9 +342,10 @@ only after adopting each one.
 2. Change both repositories and run `make test` in the CLI. From this side,
    `make cli-test CLI=<cli checkout>` runs the CLI's build, vet and unit
    tests against this checkout without touching it.
-3. Open the SDK pull request. Its `CLI compatibility` job runs bomly-cli's
-   `main` against it; it is informational, and expected to fail on an
-   approved break until the CLI adopts it.
+3. Open the SDK pull request. The `cli-compat` label adds an informational
+   `CLI compatibility` job that runs bomly-cli's `main` against it -- for
+   when you could not run the CLI locally; it takes several minutes, and an
+   approved break is expected to fail it until the CLI adopts it.
 4. Push every review fix **before** the pull request is merged and tagged —
    a commit that lands after the squash is not in the tag.
 5. After the tag: in the CLI, `make sdk-pinned`, then `go get
