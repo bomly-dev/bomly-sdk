@@ -150,16 +150,37 @@ func decodeDocument(c codec, target Target, data []byte) (*Document, error) {
 	if doc.Assertions.Format == "" {
 		doc.Assertions.Format = model.NormalizeDocumentFormat(string(target))
 	}
-	sum := sha1.Sum(data)
 	// The gate runs here rather than at the export site, so a checksum that
 	// could not be published never reaches the model at all.
-	if checksum, ok := (model.Digest{
-		Algorithm: model.DigestAlgorithmSHA1,
-		Value:     hex.EncodeToString(sum[:]),
-	}).Normalized(); ok {
+	if checksum, ok := sourceChecksum(data); ok {
 		doc.Assertions.Checksum = &checksum
 	}
 	return doc, nil
+}
+
+// sourceChecksum is the SHA-1 of a source document's bytes, or false when it
+// cannot be computed.
+//
+// It cannot be computed in one case that matters: a Go runtime started with
+// GODEBUG=fips140=only, where crypto/sha1 panics by design ("use of SHA-1 is
+// not allowed in FIPS 140-only mode"). The standard library offers no way to
+// ask beforehand -- crypto/fips140.Enabled reports the module, not the
+// "only" restriction -- so the panic is contained here, at the one call.
+// Ingest must not crash a scan over a checksum whose only use is naming the
+// document in a later export. Without it the document is simply left unnamed
+// as a source in SPDX, the same outcome as any source that carries no
+// checksum; SHA-256 is not substituted, because SPDX would reject it.
+func sourceChecksum(data []byte) (checksum model.Digest, ok bool) {
+	defer func() {
+		if recover() != nil {
+			checksum, ok = model.Digest{}, false
+		}
+	}()
+	sum := sha1.Sum(data)
+	return model.Digest{
+		Algorithm: model.DigestAlgorithmSHA1,
+		Value:     hex.EncodeToString(sum[:]),
+	}.Normalized()
 }
 
 // DetectJSONTarget identifies the supported SBOM JSON format represented by data.
