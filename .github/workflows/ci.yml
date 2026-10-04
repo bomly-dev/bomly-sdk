@@ -71,6 +71,51 @@ jobs:
           # Keep in sync with GOLANGCI_LINT_VERSION in the Makefile.
           version: v2.13.2
 
+  # Builds, vets and unit-tests bomly-cli's main branch against this pull
+  # request's SDK through a throwaway Go workspace (scripts/cli-test.sh).
+  # Opt-in with the `cli-compat` label: the normal path is testing locally
+  # with `make sdk-local` / `make cli-test` before the pull request, and the
+  # full CLI suite takes several minutes the SDK's own checks do not.
+  # Informational, not a required check: an approved v0 break
+  # (api:break-approved) is expected to fail here until the CLI adopts it.
+  cli-compat:
+    name: CLI compatibility
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'cli-compat')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check out bomly-cli
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: bomly-dev/bomly-cli
+          ref: main
+          path: bomly-cli
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: bomly-cli/go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            bomly-cli/go.sum
+      - name: Test bomly-cli against this SDK
+        env:
+          CLI: bomly-cli
+        run: scripts/cli-test.sh
+      - name: Summarize
+        if: failure()
+        run: |
+          {
+            echo "### bomly-cli main does not pass against this SDK change"
+            echo
+            echo "Expected for an approved break (api:break-approved): the CLI adopts it after the tag."
+            echo "Otherwise, reproduce locally with \`make cli-test CLI=<bomly-cli checkout>\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # API-compatibility gate (ADR-0040 program, plan step 0.1): diff the exported
   # Go API against the latest release tag with gorelease. Incompatible changes
   # fail the job unless the PR carries the `api:break-approved` label, so a
