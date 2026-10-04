@@ -75,7 +75,7 @@ func TestATransformedConversionLinksItsSource(t *testing.T) {
 		if refs[0].URI != "https://acme.example/spdx/acme-platform-7f3c" {
 			t.Fatalf("linked %q, want the source namespace", refs[0].URI)
 		}
-		if refs[0].Checksum.Value != sha256Hex(documentRichSPDX) {
+		if refs[0].Checksum.Value != ingestChecksumHex(documentRichSPDX) {
 			t.Fatalf("checksum = %q, want a digest of the source bytes", refs[0].Checksum.Value)
 		}
 	})

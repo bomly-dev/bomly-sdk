@@ -2,7 +2,7 @@ package sbom
 
 import (
 	"bytes"
-	"crypto/sha256"
+	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -117,8 +117,23 @@ func unmarshalValidated(data []byte, target Target) (*Document, error) {
 // has exactly one chance to capture it -- here, for every format, including
 // one added later (ADR-0037).
 //
-// SHA-256 because both formats define it and both validators accept it; the
-// spelling each writes is the SDK's to render, not this package's.
+// SHA-1, because SPDX leaves no choice and the record holds one checksum.
+// SPDX 2.3 section 6.6 says the reference's checksum is "a checksum of the
+// external document following the checksum format defined in 8.4", and
+// section 8.4 gives that format as "an algorithm identifier (SHA1), a
+// separator (\":\") and a checksum value", with cardinality "1..1 for the SHA1
+// algorithm, 0..* for all other algorithms". An externalDocumentRef has a
+// single checksum, so it is the SHA1 one, and the official validator
+// (spdx/tools-java) rejects a document that writes any other: "Checksum
+// algorithm is not SHA1 for external reference".
+//
+// This was SHA-256 until a merged export was run through that validator; the
+// comment here said both validators accepted it, and only CycloneDX's did.
+// CycloneDX defines SHA-1 for a reference hash too, so one checksum serves
+// both formats. It identifies which bytes a source document had; it is not a
+// defence against a forged one, and the algorithm is the specification's
+// choice rather than a judgment about its strength. The spelling each format
+// writes is the SDK's to render, not this package's.
 func decodeDocument(c codec, target Target, data []byte) (*Document, error) {
 	doc, err := c.decodeJSON(data)
 	if err != nil {
@@ -135,11 +150,11 @@ func decodeDocument(c codec, target Target, data []byte) (*Document, error) {
 	if doc.Assertions.Format == "" {
 		doc.Assertions.Format = model.NormalizeDocumentFormat(string(target))
 	}
-	sum := sha256.Sum256(data)
+	sum := sha1.Sum(data)
 	// The gate runs here rather than at the export site, so a checksum that
 	// could not be published never reaches the model at all.
 	if checksum, ok := (model.Digest{
-		Algorithm: model.DigestAlgorithmSHA256,
+		Algorithm: model.DigestAlgorithmSHA1,
 		Value:     hex.EncodeToString(sum[:]),
 	}).Normalized(); ok {
 		doc.Assertions.Checksum = &checksum
