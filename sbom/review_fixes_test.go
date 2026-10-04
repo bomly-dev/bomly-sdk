@@ -201,7 +201,7 @@ func TestSPDXIDAllocatorNeverRepeatsAnIdentifier(t *testing.T) {
 // The same rule at both sites that mint SPDX identifiers: packages, and the
 // external document references a merged export writes for its sources.
 func TestCollidingIdentifiersStayDistinctAcrossThreeSources(t *testing.T) {
-	checksum := model.Digest{Algorithm: model.DigestAlgorithmSHA256, Value: strings.Repeat("0", 64)}
+	checksum := model.Digest{Algorithm: model.DigestAlgorithmSHA1, Value: strings.Repeat("0", 40)}
 	doc := &Document{
 		Namespace: "https://bomly.dev/spdx/merged",
 		Sources: []model.DocumentAssertions{

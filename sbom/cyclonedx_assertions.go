@@ -579,9 +579,13 @@ func cycloneDXIngestedSources(refs *[]cdx.ExternalReference) []model.DocumentSou
 			continue
 		}
 		source := model.DocumentSource{Identity: ref.URL}
-		// The first hash that clears the digest gate. A reference may carry
-		// several; the record holds one, and the SPDX projection it feeds has
-		// one slot too.
+		// One hash, because the record holds one. SHA-1 when the reference
+		// offers it, in whatever position: it is the only algorithm an SPDX
+		// reference can carry (SPDX 2.3 sections 6.6 and 8.4), so keeping a
+		// SHA-256 listed ahead of it would drop this source from an SPDX
+		// export that the document had given everything needed to name.
+		// Otherwise the first hash that clears the digest gate, which
+		// CycloneDX can still write.
 		if ref.Hashes != nil {
 			for _, hash := range *ref.Hashes {
 				checksum, ok := (model.Digest{
@@ -591,8 +595,13 @@ func cycloneDXIngestedSources(refs *[]cdx.ExternalReference) []model.DocumentSou
 				if !ok {
 					continue
 				}
-				source.Checksum = &checksum
-				break
+				if source.Checksum == nil {
+					source.Checksum = &checksum
+				}
+				if checksum.Algorithm == model.DigestAlgorithmSHA1 {
+					source.Checksum = &checksum
+					break
+				}
 			}
 		}
 		sources = append(sources, source)

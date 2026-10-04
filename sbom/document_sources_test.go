@@ -1,7 +1,7 @@
 package sbom
 
 import (
-	"crypto/sha256"
+	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
 	"slices"
@@ -11,6 +11,7 @@ import (
 	cdx "github.com/CycloneDX/cyclonedx-go"
 
 	"github.com/bomly-dev/bomly-sdk/model"
+	"github.com/spdx/tools-golang/spdx/v2/common"
 )
 
 // mergedExport ingests two documents, merges their graphs, and exports the
@@ -116,11 +117,14 @@ func TestMergedSPDXExportNamesItsSources(t *testing.T) {
 			t.Errorf("externalDocumentId %q is used twice", ref.ID)
 		}
 		seenIDs[ref.ID] = struct{}{}
-		if ref.Checksum.Algorithm != "SHA256" {
-			t.Errorf("checksum algorithm = %q, want SPDX's own spelling", ref.Checksum.Algorithm)
+		// SHA1 and nothing else: SPDX 2.3 section 8.4 requires exactly one
+		// SHA1 where section 6.6 gives a reference a single checksum, and
+		// spdx/tools-java rejects the document otherwise.
+		if ref.Checksum.Algorithm != string(common.SHA1) {
+			t.Errorf("checksum algorithm = %q, want %q", ref.Checksum.Algorithm, common.SHA1)
 		}
-		if len(ref.Checksum.Value) != 64 {
-			t.Errorf("checksum for %q = %q, want a SHA-256 hex digest", ref.URI, ref.Checksum.Value)
+		if len(ref.Checksum.Value) != 40 {
+			t.Errorf("checksum for %q = %q, want a SHA-1 hex digest", ref.URI, ref.Checksum.Value)
 		}
 		byURI[ref.URI] = ref.Checksum.Value
 	}
@@ -150,8 +154,8 @@ func TestSourceLinkChecksumCoversTheSourceBytes(t *testing.T) {
 	raw, _ := mergedExport(t, TargetSPDX23JSON, documentRichSPDX, serialCycloneDX)
 
 	want := map[string]string{
-		"https://acme.example/spdx/acme-platform-7f3c":   sha256Hex(documentRichSPDX),
-		"urn:cdx:3e671687-395b-41f5-a30f-a58921a69b79/1": sha256Hex(serialCycloneDX),
+		"https://acme.example/spdx/acme-platform-7f3c":   ingestChecksumHex(documentRichSPDX),
+		"urn:cdx:3e671687-395b-41f5-a30f-a58921a69b79/1": ingestChecksumHex(serialCycloneDX),
 	}
 	for _, ref := range spdxExternalDocumentRefs(t, raw) {
 		expected, known := want[ref.URI]
@@ -279,9 +283,10 @@ func containsStringValue(values []string, want string) bool {
 	return slices.Contains(values, want)
 }
 
-// sha256Hex is the digest form the ingest checksum is written in.
-func sha256Hex(value string) string {
-	sum := sha256.Sum256([]byte(value))
+// ingestChecksumHex is the digest form the ingest checksum is written in:
+// SHA-1, which is the only algorithm an SPDX document reference may carry.
+func ingestChecksumHex(value string) string {
+	sum := sha1.Sum([]byte(value))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -295,8 +300,8 @@ func sha256Hex(value string) string {
 // including the collision suffix; this is the case that says so.
 func TestCollidingSourceIdentitiesGetDistinctReferenceIDs(t *testing.T) {
 	checksum := model.Digest{
-		Algorithm: model.DigestAlgorithmSHA256,
-		Value:     "0000000000000000000000000000000000000000000000000000000000000000",
+		Algorithm: model.DigestAlgorithmSHA1,
+		Value:     "0000000000000000000000000000000000000000",
 	}
 	doc := &Document{
 		Namespace: "https://bomly.dev/spdx/merged",
@@ -311,5 +316,41 @@ func TestCollidingSourceIdentitiesGetDistinctReferenceIDs(t *testing.T) {
 	}
 	if refs[0].DocumentRefID == refs[1].DocumentRefID {
 		t.Errorf("both sources share the id %q; SPDX requires them to be distinct", refs[0].DocumentRefID)
+	}
+}
+
+// A source link whose checksum is not SHA1 is left out of an SPDX export and
+// kept in a CycloneDX one.
+//
+// Ingest records SHA-1, but a link can reach an export from elsewhere: a
+// CycloneDX document's own reference to its source, read back with the
+// SHA-256 hash it carried. SPDX has one checksum slot per reference and
+// section 8.4 makes it the SHA1 one, so writing that link would make the
+// whole document invalid; CycloneDX defines SHA-256 for a reference hash and
+// keeps it. This is the case the official validator found.
+func TestSPDXOmitsASourceLinkThatIsNotSHA1(t *testing.T) {
+	sha1Digest := model.Digest{Algorithm: model.DigestAlgorithmSHA1, Value: strings.Repeat("a", 40)}
+	sha256Digest := model.Digest{Algorithm: model.DigestAlgorithmSHA256, Value: strings.Repeat("b", 64)}
+	doc := &Document{
+		Namespace: "https://bomly.dev/spdx/merged",
+		Sources: []model.DocumentAssertions{
+			{Identity: "https://acme.example/spdx/has-sha1", Checksum: &sha1Digest},
+			{Identity: "https://acme.example/spdx/has-sha256", Checksum: &sha256Digest},
+		},
+	}
+
+	refs := spdxSourceLinks(doc)
+	if len(refs) != 1 {
+		t.Fatalf("SPDX refs = %+v, want only the SHA1-carrying source", refs)
+	}
+	if refs[0].URI != "https://acme.example/spdx/has-sha1" || refs[0].Checksum.Algorithm != common.SHA1 {
+		t.Fatalf("SPDX ref = %+v, want the SHA1 source written as %q", refs[0], common.SHA1)
+	}
+
+	// Both are still links as far as the format-neutral list is concerned,
+	// which is what the CycloneDX export writes from.
+	links := documentSourceLinks(doc, documentIdentity{Namespace: doc.NamespaceOrDefault()})
+	if len(links) != 2 {
+		t.Fatalf("source links = %+v, want both sources", links)
 	}
 }

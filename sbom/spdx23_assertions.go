@@ -489,6 +489,18 @@ func spdxSourceLinks(doc *Document) []v23.ExternalDocumentRef {
 		if !ok {
 			continue
 		}
+		// SHA1 only. Section 6.6 points the reference's checksum at the
+		// format of section 8.4, which requires exactly one SHA1 ("1..1 for
+		// the SHA1 algorithm") and has a single slot here, and spdx/tools-java
+		// rejects the whole document otherwise. Ingest records SHA-1 for that
+		// reason, but a link can also arrive from somewhere that did not: a
+		// CycloneDX document's own source reference read back with a SHA-256
+		// hash, or a detector writing the assertions directly. Such a source
+		// goes unnamed, on the same ground as one with no checksum at all --
+		// an invalid export is the worse outcome.
+		if checksum.Algorithm != model.DigestAlgorithmSHA1 {
+			continue
+		}
 		algorithm := checksum.Algorithm.SPDXName()
 		if algorithm == "" {
 			// The SDK's registry says SPDX does not define this algorithm.
