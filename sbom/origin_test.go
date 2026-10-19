@@ -124,14 +124,58 @@ func TestRepositoryOriginIsPublishedInBothFormats(t *testing.T) {
 	if got := spdxPackageByName(t, spdxRaw, "react")["downloadLocation"]; got != want {
 		t.Errorf("SPDX downloadLocation = %v, want %q", got, want)
 	}
-	// CycloneDX external references have no revision slot, so the reference is
-	// the plain repository URL.
-	if got := cycloneDXReferences(t, cdxRaw, "react")["vcs"]; got != repository {
-		t.Errorf("CycloneDX vcs ref = %q, want %q", got, repository)
+	// CycloneDX has no revision slot of its own, so the vcs reference carries
+	// the same locator: one string for one origin in both exports.
+	if got := cycloneDXReferences(t, cdxRaw, "react")["vcs"]; got != want {
+		t.Errorf("CycloneDX vcs ref = %q, want %q", got, want)
 	}
 	if got := cycloneDXReferences(t, cdxRaw, "react")["distribution"]; got != "" {
 		t.Errorf("repository origin also emitted a distribution ref: %q", got)
 	}
+}
+
+// A pinned origin is one source, so it is one vcs reference: the locator
+// carrying the revision, never that plus the plain URL beside it. The plain
+// form used to be re-added from the component's single-valued repository
+// field, which the first origin also fills.
+func TestPinnedRepositoryOriginIsOneVCSReference(t *testing.T) {
+	const (
+		repository = "https://github.com/facebook/react"
+		revision   = "b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7"
+	)
+	g := originGraph(t, func(_, pkg *model.DependencyNode) {
+		pkg.Origins = model.MergeOrigins(nil, repositoryOriginsFor(repository, revision))
+	})
+	_, cdxRaw := marshalBoth(t, g)
+
+	var doc struct {
+		Components []struct {
+			Name               string `json:"name"`
+			ExternalReferences []struct {
+				Type string `json:"type"`
+				URL  string `json:"url"`
+			} `json:"externalReferences"`
+		} `json:"components"`
+	}
+	if err := json.Unmarshal(cdxRaw, &doc); err != nil {
+		t.Fatalf("decode CycloneDX: %v", err)
+	}
+	for _, component := range doc.Components {
+		if component.Name != "react" {
+			continue
+		}
+		var vcs []string
+		for _, ref := range component.ExternalReferences {
+			if ref.Type == "vcs" {
+				vcs = append(vcs, ref.URL)
+			}
+		}
+		if len(vcs) != 1 || vcs[0] != "git+"+repository+"@"+revision {
+			t.Fatalf("vcs references = %q, want exactly the pinned locator", vcs)
+		}
+		return
+	}
+	t.Fatal("react component not found")
 }
 
 func TestUnpinnedRepositoryOriginOmitsTheRevisionSuffix(t *testing.T) {
@@ -140,10 +184,14 @@ func TestUnpinnedRepositoryOriginOmitsTheRevisionSuffix(t *testing.T) {
 		pkg.Origins = model.MergeOrigins(nil, repositoryOriginsFor(repository, ""))
 	})
 
-	spdxRaw, _ := marshalBoth(t, g)
+	spdxRaw, cdxRaw := marshalBoth(t, g)
 
 	if got := spdxPackageByName(t, spdxRaw, "react")["downloadLocation"]; got != "git+"+repository {
 		t.Errorf("SPDX downloadLocation = %v, want %q", got, "git+"+repository)
+	}
+	// With nothing to pin, CycloneDX keeps the location a reader can open.
+	if got := cycloneDXReferences(t, cdxRaw, "react")["vcs"]; got != repository {
+		t.Errorf("CycloneDX vcs ref = %q, want the plain repository URL %q", got, repository)
 	}
 }
 

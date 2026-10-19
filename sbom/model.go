@@ -29,10 +29,20 @@ const (
 
 // ProjectRoot describes the scanned project so the projection can synthesize
 // a primary component when the graph itself has no single root (multiple
-// manifests, multiple ecosystems). Name is required; Version is optional.
+// manifests, multiple ecosystems). Name is required; Version and Description
+// are optional.
 type ProjectRoot struct {
 	Name    string
 	Version string
+	// Description is what the synthesized root is, in the caller's words,
+	// written as the primary component's description in both formats
+	// (CycloneDX component.description, SPDX 2.3 section 7.19). The scanned
+	// project is a source tree rather than a distributed artifact, so it
+	// carries no content hash, and a consumer reading the document deserves
+	// to be told that rather than left to wonder (bomly-cli issue #508).
+	// Gate: model.NormalizeDescription, the same one every component
+	// description passes.
+	Description string
 }
 
 // Provenance carries optional producer metadata emitted into SBOM documents.

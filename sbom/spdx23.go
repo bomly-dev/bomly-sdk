@@ -710,20 +710,11 @@ func spdxDownloadLocation(component Component) string {
 	return "NOASSERTION"
 }
 
-// spdxVCSLocator renders a repository in SPDX 2.3's version-control form,
-// "<tool>+<transport>://<host><path>[@<revision>]". The grammar has no query
-// component and no room for anything but the revision after "@", which is why
-// the origin invariant strips both before a URL gets here.
+// spdxVCSLocator renders a component's repository in SPDX 2.3's
+// version-control form, "<tool>+<transport>://<host><path>[@<revision>]";
+// vcsLocator holds the grammar, which the CycloneDX export shares.
 func spdxVCSLocator(component Component) string {
-	repository := strings.TrimSpace(component.VCSURL)
-	if repository == "" {
-		return ""
-	}
-	locator := "git+" + repository
-	if revision := strings.TrimSpace(component.VCSRevision); revision != "" {
-		locator += "@" + revision
-	}
-	return locator
+	return vcsLocator(component.VCSURL, component.VCSRevision)
 }
 
 // spdxSourceInfo records the source repository when it is not already the

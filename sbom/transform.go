@@ -354,11 +354,12 @@ func projectRootComponent(spec ProjectRoot) Component {
 		purl = ""
 	}
 	return Component{
-		ID:      projectRootIDPrefix + sanitizeSPDXID(name),
-		Name:    name,
-		Version: version,
-		Type:    "application",
-		PURL:    purl,
+		ID:          projectRootIDPrefix + sanitizeSPDXID(name),
+		Name:        name,
+		Version:     version,
+		Type:        "application",
+		PURL:        purl,
+		Description: model.NormalizeDescription(spec.Description),
 	}
 }
 
