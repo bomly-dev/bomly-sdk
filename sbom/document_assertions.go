@@ -188,11 +188,16 @@ type documentIdentity struct {
 
 // names reports whether an identity refers to this same document.
 //
-// One document has two spellings across the formats: an SPDX namespace, and a
-// BOM-Link over a CycloneDX serial. Parsed by the library that owns the link
-// grammar, and compared on the serial rather than the rendered link, because a
-// source that numbered itself version 2 spells the same document differently
-// than the version this export would write.
+// One document has three spellings across the formats: an SPDX namespace, a
+// BOM-Link over a CycloneDX serial, and -- for a document Bomly wrote -- a
+// namespace in Bomly's own form carrying the serial's UUID, which is what
+// mintDocumentIdentity derives the serial from when a restating conversion
+// adopts it. Without that third reading, the CycloneDX export of a restated
+// Bomly SPDX document linked its source as a "bom" reference while carrying
+// that source's identity: a self-reference. A BOM-Link is parsed by the
+// library that owns the link grammar, and compared on the serial rather than
+// the rendered link, because a source that numbered itself version 2 spells
+// the same document differently than the version this export would write.
 func (d documentIdentity) names(identity string) bool {
 	if identity == "" {
 		return false
@@ -203,6 +208,9 @@ func (d documentIdentity) names(identity string) bool {
 	if d.Serial != "" {
 		if link, err := cdx.ParseBOMLink(identity); err == nil &&
 			link.SerialNumber() == d.Serial && link.Version() == d.SerialVersion {
+			return true
+		}
+		if uuid := bomlyNamespaceUUID(identity); uuid != "" && uuid == serialUUID(d.Serial) {
 			return true
 		}
 	}

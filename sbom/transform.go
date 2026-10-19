@@ -297,17 +297,30 @@ func mintDocumentIdentity(doc *Document) {
 // same serial grammar by prefixing it back.
 func documentUUID(doc *Document) string {
 	if serial := strings.TrimSpace(doc.SerialNumber); serial != "" {
-		if link, err := cdx.NewBOMLink(serial, 1, nil); err == nil {
-			return strings.TrimPrefix(link.SerialNumber(), "urn:uuid:")
-		}
+		return serialUUID(serial)
+	}
+	return bomlyNamespaceUUID(doc.Namespace)
+}
+
+// serialUUID is the UUID an urn:uuid CycloneDX serial carries, or "" for a
+// value that is not one by cyclonedx-go's own grammar.
+func serialUUID(serial string) string {
+	link, err := cdx.NewBOMLink(strings.TrimSpace(serial), 1, nil)
+	if err != nil {
 		return ""
 	}
-	if tail, ok := strings.CutPrefix(strings.TrimSpace(doc.Namespace), bomlyNamespacePrefix); ok {
-		if _, err := cdx.NewBOMLink("urn:uuid:"+tail, 1, nil); err == nil {
-			return tail
-		}
+	return strings.TrimPrefix(link.SerialNumber(), "urn:uuid:")
+}
+
+// bomlyNamespaceUUID is the UUID a namespace in Bomly's form carries, or ""
+// for any other namespace, including a Bomly-prefixed one whose tail is not
+// a UUID.
+func bomlyNamespaceUUID(namespace string) string {
+	tail, ok := strings.CutPrefix(strings.TrimSpace(namespace), bomlyNamespacePrefix)
+	if !ok {
+		return ""
 	}
-	return ""
+	return serialUUID("urn:uuid:" + tail)
 }
 
 // projectRootComponent synthesizes the pseudo component representing the

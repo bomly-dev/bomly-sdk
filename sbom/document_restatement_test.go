@@ -238,4 +238,12 @@ func TestARestatingConversionAdoptsTheSourcesStatedRevision(t *testing.T) {
 	if bom.SerialNumber != "urn:uuid:0f3c9a2e-5d4b-4c6a-8e1f-7a2b3c4d5e6f" || bom.Version != 3 {
 		t.Errorf("cyclonedx serial %q version %d, want the source's UUID at revision 3", bom.SerialNumber, bom.Version)
 	}
+	// Having adopted the source's identity, the export does not also link
+	// the source: that would be a reference to itself.
+	if bom.ExternalReferences != nil {
+		t.Errorf("cyclonedx external references = %+v, want none: the source is this document", *bom.ExternalReferences)
+	}
+	if len(spdxDoc.ExternalDocumentReferences) != 0 {
+		t.Errorf("spdx external document refs = %+v, want none: the source is this document", spdxDoc.ExternalDocumentReferences)
+	}
 }
