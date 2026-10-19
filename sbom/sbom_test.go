@@ -64,7 +64,7 @@ func TestMarshalDepGraphJSON_SPDX23ToolCreators(t *testing.T) {
 	g := mustGraph(t)
 	out, err := MarshalDepGraphJSON(g, TargetSPDX23JSON, BuildOptions{
 		ToolName:  "bomly-cli-test",
-		ToolNames: []string{"bomly-detector:npm-detector", "bomly-detector:go-detector"},
+		ToolNames: []string{"bomly-detector:npm-detector", "acme-detector", "bomly-detector:go-detector"},
 		Created:   time.Date(2026, 2, 28, 12, 0, 0, 0, time.UTC),
 	}, EncodeOptions{})
 	if err != nil {
@@ -81,10 +81,11 @@ func TestMarshalDepGraphJSON_SPDX23ToolCreators(t *testing.T) {
 			got = append(got, creator.Creator)
 		}
 	}
-	// The SDK's merged order, not the caller's: the same list the CycloneDX
-	// encoder writes, so the two exports of one scan credit the same tools in
-	// the same order (issue #109).
-	want := []string{"bomly-cli-test", "bomly-detector:go-detector", "bomly-detector:npm-detector"}
+	// The producing tool first, then the SDK's merged order rather than the
+	// caller's: the same list the CycloneDX encoder writes, so the two exports
+	// of one scan credit the same tools in the same order (issue #109), and
+	// the decoder below reads the producer back as the first creator.
+	want := []string{"bomly-cli-test", "acme-detector", "bomly-detector:go-detector", "bomly-detector:npm-detector"}
 	if !equalStringSlices(got, want) {
 		t.Fatalf("tools = %#v, want %#v", got, want)
 	}

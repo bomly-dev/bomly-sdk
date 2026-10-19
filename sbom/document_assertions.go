@@ -296,7 +296,27 @@ func documentTools(doc *Document) []model.DocumentTool {
 		model.DocumentAssertions{Tools: own},
 		model.DocumentAssertions{Tools: doc.Assertions.Tools},
 	)
-	return merged.Tools
+	// The producing tool first, whatever the merge's sort put ahead of it:
+	// both decoders read the first credited tool back as Document.Tool, so a
+	// source tool sorting before it would become this document's producer on
+	// the next ingest. The merged order holds for the rest. The producer's
+	// own entry is preferred over a same-named one at another version.
+	tools := merged.Tools
+	primary := -1
+	for index, tool := range tools {
+		if tool.Name != doc.ToolOrDefault() {
+			continue
+		}
+		if primary < 0 || tool.Version == doc.ToolVersion && tools[primary].Version != doc.ToolVersion {
+			primary = index
+		}
+	}
+	if primary > 0 {
+		producer := tools[primary]
+		tools = append(tools[:primary:primary], tools[primary+1:]...)
+		tools = append([]model.DocumentTool{producer}, tools...)
+	}
+	return tools
 }
 
 // toolIsRestatedInFull reports whether a tool this document names by name
