@@ -412,21 +412,10 @@ func spdxDocumentCreators(doc *Document) []common.Creator {
 		creators = append(creators, common.Creator{CreatorType: creatorType, Creator: value})
 	}
 
-	for _, tool := range doc.ToolNamesOrDefault() {
-		version := ""
-		if tool == doc.ToolOrDefault() {
-			version = doc.ToolVersion
-		}
-		if toolIsRestatedInFull(model.DocumentTool{Name: tool, Version: version}, doc.Assertions.Tools) {
-			continue
-		}
-		// SPDX creator convention appends the tool version as "name-version".
-		if version != "" {
-			tool += "-" + version
-		}
-		add(spdxToolCreatorType, tool)
-	}
-	for _, tool := range doc.Assertions.Tools {
+	// The same list, in the same order, as the CycloneDX encoder writes:
+	// documentTools owns the union, and spdxToolCreator the "name-version"
+	// convention SPDX spells a tool in.
+	for _, tool := range documentTools(doc) {
 		add(spdxToolCreatorType, spdxToolCreator(tool))
 	}
 	if doc.Provenance.Manufacturer != "" {

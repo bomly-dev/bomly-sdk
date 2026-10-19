@@ -268,6 +268,10 @@ func MarshalDepGraphJSON(g *model.Graph, target Target, buildOpts BuildOptions, 
 
 // MarshalGraphEntriesJSON converts the prepared graph entries and the graph
 // they consolidated into directly into a target JSON SBOM.
+//
+// Each call builds a new document with its own identity. To write one scan in
+// several formats, build once with FromGraphEntries and call MarshalJSON per
+// target, so every encoding carries the same UUID (see BuildOptions).
 func MarshalGraphEntriesJSON(g *model.Graph, entries []model.GraphEntry, target Target, buildOpts BuildOptions, encodeOpts EncodeOptions) ([]byte, error) {
 	doc, err := FromGraphEntries(g, entries, buildOpts)
 	if err != nil {

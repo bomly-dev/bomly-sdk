@@ -259,6 +259,39 @@ func documentSourceLinks(doc *Document, emitted documentIdentity) []model.Docume
 	return links
 }
 
+// documentTools is the one list of tools both encoders credit: the ones this
+// run used, plus the ones its source documents credited, in the SDK's merged
+// order.
+//
+// The union is the SDK's, not a local one. Its merge class for tools keys on
+// the whole (vendor, name, version) triple, and a key written here by hand
+// omitted the vendor -- so a source crediting "Acme / cdx-gen / 9.1.0" was
+// silently suppressed by a vendorless entry of the same name and version,
+// discarding the one field the source added.
+//
+// Both encoders read this list, in this order, because each used to assemble
+// its own: CycloneDX through the merge, SPDX in the caller's order, and the
+// two exports of one scan credited the same tools in two different orders
+// (issue #109).
+func documentTools(doc *Document) []model.DocumentTool {
+	own := make([]model.DocumentTool, 0, len(doc.ToolNamesOrDefault()))
+	for _, name := range doc.ToolNamesOrDefault() {
+		tool := model.DocumentTool{Name: name}
+		if name == doc.ToolOrDefault() {
+			tool.Version = doc.ToolVersion
+		}
+		if toolIsRestatedInFull(tool, doc.Assertions.Tools) {
+			continue
+		}
+		own = append(own, tool)
+	}
+	merged := model.MergeDocumentAssertions(
+		model.DocumentAssertions{Tools: own},
+		model.DocumentAssertions{Tools: doc.Assertions.Tools},
+	)
+	return merged.Tools
+}
+
 // toolIsRestatedInFull reports whether a tool this document names by name
 // (and maybe version) alone is one the assertions already credit with every
 // field it has. A decoded CycloneDX document holds each tool twice: by name

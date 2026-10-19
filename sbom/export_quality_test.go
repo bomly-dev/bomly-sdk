@@ -565,3 +565,206 @@ func TestMarshalDepGraphJSON_SPDX23SupplierOnNaturalPrimaryPackage(t *testing.T)
 		t.Fatalf("expected exactly one supplied package, got %d", suppliers)
 	}
 }
+
+// A pinned identity slot fills the other from the same UUID: a build is one
+// document, however the caller named it (issue #109). A namespace in a form
+// that carries no UUID leaves the serial to be minted.
+func TestFromDepGraph_PinnedIdentitySlotDerivesTheOther(t *testing.T) {
+	const uuid = "0f3c9a2e-5d4b-4c6a-8e1f-7a2b3c4d5e6f"
+
+	fromSerial, err := FromDepGraph(mustGraph(t), BuildOptions{SerialNumber: "urn:uuid:" + uuid})
+	if err != nil {
+		t.Fatalf("from depgraph: %v", err)
+	}
+	if fromSerial.Namespace != "https://bomly.dev/spdx/"+uuid {
+		t.Errorf("namespace = %q, want the pinned serial's UUID", fromSerial.Namespace)
+	}
+
+	fromNamespace, err := FromDepGraph(mustGraph(t), BuildOptions{DocumentNS: "https://bomly.dev/spdx/" + uuid})
+	if err != nil {
+		t.Fatalf("from depgraph: %v", err)
+	}
+	if fromNamespace.SerialNumber != "urn:uuid:"+uuid {
+		t.Errorf("serial = %q, want the pinned namespace's UUID", fromNamespace.SerialNumber)
+	}
+
+	foreign, err := FromDepGraph(mustGraph(t), BuildOptions{DocumentNS: "https://acme.example/spdx/release-7"})
+	if err != nil {
+		t.Fatalf("from depgraph: %v", err)
+	}
+	if foreign.Namespace != "https://acme.example/spdx/release-7" {
+		t.Errorf("namespace = %q, want the pinned one kept", foreign.Namespace)
+	}
+	if !uuidURNPattern.MatchString(foreign.SerialNumber) {
+		t.Errorf("serial = %q, want a freshly minted urn:uuid", foreign.SerialNumber)
+	}
+
+	malformed, err := FromDepGraph(mustGraph(t), BuildOptions{DocumentNS: "https://bomly.dev/spdx/not-a-uuid"})
+	if err != nil {
+		t.Fatalf("from depgraph: %v", err)
+	}
+	if !uuidURNPattern.MatchString(malformed.SerialNumber) {
+		t.Errorf("serial = %q, want a freshly minted urn:uuid, not the namespace tail", malformed.SerialNumber)
+	}
+}
+
+// The two encodings of one build describe one document: the same UUID in
+// the SPDX namespace and the CycloneDX serial, the same lifecycle phase and
+// document version, the same tools, the same timestamp. Measured on the CLI's
+// two exports of one scan, these were the whole of a 56% difference between
+// documents with identical inventories (issue #109).
+func TestOneBuildEncodesToTheSameDocumentInBothFormats(t *testing.T) {
+	doc, err := FromDepGraph(mustMultiRootGraph(t), BuildOptions{
+		DocumentName: "demo-project",
+		ProjectRoot:  &ProjectRoot{Name: "demo-project", Version: "v1.2.3-1-gabcdef0"},
+		ToolVersion:  "0.28.2",
+		ToolNames:    []string{"npm-detector", "github-actions-detector"},
+		Lifecycle:    "pre-build",
+		Provenance:   Provenance{SecurityContact: "security@example.com"},
+	})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+
+	spdxRaw, err := MarshalJSON(doc, TargetSPDX23JSON, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("marshal spdx: %v", err)
+	}
+	cdxRaw, err := MarshalJSON(doc, TargetCycloneDX17JSON, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("marshal cyclonedx: %v", err)
+	}
+	var spdxDoc v23.Document
+	if err := json.Unmarshal(spdxRaw, &spdxDoc); err != nil {
+		t.Fatalf("unmarshal spdx: %v", err)
+	}
+	var bom cdx.BOM
+	if err := json.Unmarshal(cdxRaw, &bom); err != nil {
+		t.Fatalf("unmarshal cyclonedx: %v", err)
+	}
+
+	// One identity, spelled in each format's form.
+	uuid := strings.TrimPrefix(bom.SerialNumber, "urn:uuid:")
+	if uuid == "" || uuid == bom.SerialNumber {
+		t.Fatalf("cyclonedx serial = %q, want an urn:uuid", bom.SerialNumber)
+	}
+	if spdxDoc.DocumentNamespace != "https://bomly.dev/spdx/"+uuid {
+		t.Errorf("spdx namespace = %q, want the cyclonedx serial's UUID %s", spdxDoc.DocumentNamespace, uuid)
+	}
+
+	// The lifecycle phase and document version CycloneDX holds in fields and
+	// SPDX 2.3 holds nowhere, carried in the creator comment.
+	comment := spdxDoc.CreationInfo.CreatorComment
+	if (*bom.Metadata.Lifecycles)[0].Phase != cdx.LifecyclePhasePreBuild || !strings.Contains(comment, "Lifecycle: pre-build") {
+		t.Errorf("lifecycle: cyclonedx %+v, spdx creator comment %q", bom.Metadata.Lifecycles, comment)
+	}
+	if bom.Version != 1 || !strings.Contains(comment, "DocumentVersion: 1") {
+		t.Errorf("document version: cyclonedx %d, spdx creator comment %q", bom.Version, comment)
+	}
+	if !strings.Contains(comment, "SecurityContact: security@example.com") {
+		t.Errorf("creator comment lost the provenance it carried before: %q", comment)
+	}
+
+	// The same tools, each in its format's "name-version" or name+version
+	// shape: SPDX "Tool: bomly-cli-0.28.2" is the specification's own
+	// convention and stays.
+	var spdxTools []string
+	for _, creator := range spdxDoc.CreationInfo.Creators {
+		if creator.CreatorType == "Tool" {
+			spdxTools = append(spdxTools, creator.Creator)
+		}
+	}
+	var cdxTools []string
+	for _, tool := range *bom.Metadata.Tools.Components {
+		rendered := tool.Name
+		if tool.Version != "" {
+			rendered += "-" + tool.Version
+		}
+		cdxTools = append(cdxTools, rendered)
+	}
+	if want := []string{"bomly-cli-0.28.2", "github-actions-detector", "npm-detector"}; strings.Join(spdxTools, ",") != strings.Join(want, ",") || strings.Join(cdxTools, ",") != strings.Join(want, ",") {
+		t.Errorf("tools: spdx %v, cyclonedx %v, want both %v", spdxTools, cdxTools, want)
+	}
+
+	if spdxDoc.CreationInfo.Created != bom.Metadata.Timestamp {
+		t.Errorf("created: spdx %q, cyclonedx %q", spdxDoc.CreationInfo.Created, bom.Metadata.Timestamp)
+	}
+
+	// And read back: an SPDX round trip keeps the phase and version the way
+	// a CycloneDX one does.
+	reread, err := UnmarshalJSON(spdxRaw, TargetSPDX23JSON)
+	if err != nil {
+		t.Fatalf("ingest spdx: %v", err)
+	}
+	if reread.Lifecycle != "pre-build" || reread.SerialVersion != 1 {
+		t.Errorf("reread spdx: Lifecycle = %q, SerialVersion = %d, want pre-build and 1", reread.Lifecycle, reread.SerialVersion)
+	}
+}
+
+// Two one-shot marshals are two builds, and so two documents: the API shape
+// the CLI used when the divergence was measured. The test pins what the doc
+// comments promise, so a caller who reads only this knows to build once.
+func TestTwoMarshalsOfOneGraphAreTwoDocuments(t *testing.T) {
+	first, err := MarshalDepGraphJSON(mustGraph(t), TargetCycloneDX17JSON, BuildOptions{}, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	second, err := MarshalDepGraphJSON(mustGraph(t), TargetSPDX23JSON, BuildOptions{}, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var bom cdx.BOM
+	if err := json.Unmarshal(first, &bom); err != nil {
+		t.Fatalf("unmarshal cyclonedx: %v", err)
+	}
+	var spdxDoc v23.Document
+	if err := json.Unmarshal(second, &spdxDoc); err != nil {
+		t.Fatalf("unmarshal spdx: %v", err)
+	}
+	if uuid := strings.TrimPrefix(bom.SerialNumber, "urn:uuid:"); strings.HasSuffix(spdxDoc.DocumentNamespace, uuid) {
+		t.Fatalf("two builds shared a UUID: serial %q, namespace %q", bom.SerialNumber, spdxDoc.DocumentNamespace)
+	}
+}
+
+// The SPDX carrier is held to the same gates as the CycloneDX fields: a phase
+// outside the vocabulary is absent from both documents, and a version that is
+// not a positive integer reads back as unset. A comment someone else wrote
+// in another shape is simply not read.
+func TestSPDXCreatorCommentCarrierIsGated(t *testing.T) {
+	out, err := MarshalDepGraphJSON(mustGraph(t), TargetSPDX23JSON, BuildOptions{Lifecycle: "sometime"}, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("marshal spdx: %v", err)
+	}
+	var spdxDoc v23.Document
+	if err := json.Unmarshal(out, &spdxDoc); err != nil {
+		t.Fatalf("unmarshal spdx: %v", err)
+	}
+	if comment := spdxDoc.CreationInfo.CreatorComment; strings.Contains(comment, "Lifecycle") || comment != "DocumentVersion: 1" {
+		t.Errorf("creator comment = %q, want only the document version", comment)
+	}
+
+	for comment, want := range map[string]struct {
+		lifecycle string
+		version   int
+	}{
+		"Lifecycle: post-build; DocumentVersion: 3":      {"post-build", 3},
+		"lifecycle:Build;documentversion:2":              {"build", 2},
+		"SecurityContact: a@b.example; Lifecycle: build": {"build", 0},
+		"Lifecycle: sometime; DocumentVersion: zero":     {"", 0},
+		"DocumentVersion: 0":                             {"", 0},
+		"DocumentVersion: -1":                            {"", 0},
+		"Produced by hand":                               {"", 0},
+		"":                                               {"", 0},
+	} {
+		ci := &v23.CreationInfo{CreatorComment: comment}
+		if got := parseSPDXCreatorLifecycle(ci); got != want.lifecycle {
+			t.Errorf("lifecycle of %q = %q, want %q", comment, got, want.lifecycle)
+		}
+		if got := parseSPDXCreatorDocumentVersion(ci); got != want.version {
+			t.Errorf("version of %q = %d, want %d", comment, got, want.version)
+		}
+	}
+	if parseSPDXCreatorLifecycle(nil) != "" || parseSPDXCreatorDocumentVersion(nil) != 0 {
+		t.Error("nil creation info should read as unset")
+	}
+}

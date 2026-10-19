@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	cdx "github.com/CycloneDX/cyclonedx-go"
+
 	"github.com/bomly-dev/bomly-sdk/graphview"
 	"github.com/bomly-dev/bomly-sdk/purlkit"
 	"github.com/bomly-dev/bomly-sdk/spdxkit"
@@ -248,23 +250,64 @@ func FromGraphEntries(g *model.Graph, entries []model.GraphEntry, opts BuildOpti
 	return doc, nil
 }
 
-// mintDocumentIdentity fills whichever identity slots are still empty with a
-// freshly generated one, so a document always identifies itself.
+// bomlyNamespacePrefix is the SPDX documentNamespace form Bomly mints:
+// this prefix followed by the UUID the CycloneDX serialNumber carries after
+// "urn:uuid:". The form is Bomly's own policy -- SPDX 6.5 asks only for a
+// unique absolute URI -- and it exists so that the two encodings of one
+// document share one UUID.
+const bomlyNamespacePrefix = "https://bomly.dev/spdx/"
+
+// mintDocumentIdentity fills whichever identity slots are still empty, so a
+// document always identifies itself, and fills them from one UUID: a build is
+// one document, and its SPDX namespace and CycloneDX serial say so by
+// carrying the same UUID (issue #109).
 //
-// Both slots share a nonce when both are minted, which keeps an export's
-// SPDX namespace and CycloneDX serial recognizably the same document.
+// A slot the caller or a restated source already filled is kept. When that
+// filled slot carries a UUID -- an urn:uuid serial, or a namespace in Bomly's
+// own form -- the empty slot is derived from it rather than minted fresh, so
+// pinning one slot never leaves the other naming a different document. A
+// namespace in any other form carries nothing a serial can be made from, and
+// the serial is minted on its own.
+//
+// Two builds are two documents, with two UUIDs. A scan exported in two formats
+// is built once and encoded twice -- FromGraphEntries, then MarshalJSON per
+// target -- not marshalled from the graph once per target.
 func mintDocumentIdentity(doc *Document) {
-	nonce := ""
-	if doc.SerialNumber == "" {
+	nonce := documentUUID(doc)
+	if nonce == "" {
 		nonce = newUUIDv4()
+	}
+	if doc.SerialNumber == "" {
 		doc.SerialNumber = "urn:uuid:" + nonce
 	}
 	if doc.Namespace == "" {
-		if nonce == "" {
-			nonce = newUUIDv4()
-		}
-		doc.Namespace = "https://bomly.dev/spdx/" + nonce
+		doc.Namespace = bomlyNamespacePrefix + nonce
 	}
+}
+
+// documentUUID is the UUID a document's filled identity slot carries, or ""
+// when neither slot holds one: an urn:uuid serial, or a namespace in Bomly's
+// form, which is that same UUID after bomlyNamespacePrefix.
+//
+// The serial grammar is cyclonedx-go's: NewBOMLink accepts exactly the
+// urn:uuid serials the CycloneDX schema does, so a serial it refuses is not a
+// UUID this function should copy into a namespace. The "urn:uuid:" prefix is
+// stripped the way the library's own BOMLink.String does. Bomly's namespace
+// form is Bomly's, so its prefix is matched here, and the tail is held to the
+// same serial grammar by prefixing it back.
+func documentUUID(doc *Document) string {
+	if serial := strings.TrimSpace(doc.SerialNumber); serial != "" {
+		if link, err := cdx.NewBOMLink(serial, 1, nil); err == nil {
+			return strings.TrimPrefix(link.SerialNumber(), "urn:uuid:")
+		}
+		return ""
+	}
+	if tail, ok := strings.CutPrefix(strings.TrimSpace(doc.Namespace), bomlyNamespacePrefix); ok {
+		if _, err := cdx.NewBOMLink("urn:uuid:"+tail, 1, nil); err == nil {
+			return tail
+		}
+	}
+	return ""
 }
 
 // projectRootComponent synthesizes the pseudo component representing the

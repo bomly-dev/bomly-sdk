@@ -113,7 +113,7 @@ func (spdx23Codec) encodeJSON(doc *Document, opts EncodeOptions) ([]byte, error)
 	creation := &v23.CreationInfo{
 		Creators:       spdxDocumentCreators(doc),
 		Created:        doc.CreatedOrNow().Format("2006-01-02T15:04:05Z"),
-		CreatorComment: spdxCreatorComment(doc.Provenance),
+		CreatorComment: spdxCreatorComment(doc),
 	}
 
 	spdxDoc := &v23.Document{
@@ -229,6 +229,8 @@ func (spdx23Codec) decodeJSON(data []byte) (*Document, error) {
 		Tool:               extractSPDXToolName(spdxDoc.CreationInfo),
 		Tools:              extractSPDXToolNames(spdxDoc.CreationInfo),
 		Created:            parseSPDXCreated(spdxDoc.CreationInfo),
+		SerialVersion:      parseSPDXCreatorDocumentVersion(spdxDoc.CreationInfo),
+		Lifecycle:          parseSPDXCreatorLifecycle(spdxDoc.CreationInfo),
 		Components:         components,
 		Dependencies:       dependencies,
 		Roots:              roots,
@@ -321,20 +323,88 @@ func spdxPrimaryPackagePurpose(componentType string) string {
 	}
 }
 
-// spdxCreatorComment folds provenance contact metadata into the SPDX creation
-// comment; SPDX 2.3 has no first-class fields for these.
-func spdxCreatorComment(p Provenance) string {
-	fields := make([]string, 0, 3)
-	if contact := strings.TrimSpace(p.SecurityContact); contact != "" {
+// The keys of the creator-comment carrier that the decoder reads back. The
+// provenance keys beside them are written and not read: a security contact is
+// configuration, not a claim the document makes about itself.
+const (
+	spdxCreatorLifecycleKey       = "Lifecycle"
+	spdxCreatorDocumentVersionKey = "DocumentVersion"
+)
+
+// spdxCreatorComment renders the SPDX creation comment: provenance contact
+// metadata, then the two CycloneDX document fields SPDX 2.3 has no slot for,
+// so that the SPDX and CycloneDX encodings of one build say the same thing
+// about the document (issue #109).
+//
+// SPDX 2.3 section 6.10 defines the creator comment as "an optional field for
+// creators of the SPDX file to provide general comments about the creation
+// of the SPDX file or any other relevant comment", and tools-golang carries
+// it as the free string CreationInfo.CreatorComment. Nothing in SPDX 2.3
+// holds a lifecycle phase or a document revision: a new revision of an SPDX
+// document is a new namespace. So both ride in the comment, as "key: value"
+// pairs joined by "; ", which is Bomly's own carrier and is read back by
+// parseSPDXCreatorField.
+//
+//   - "Lifecycle" is CycloneDX metadata.lifecycles[].phase, whose schema says
+//     "Lifecycles communicate the stage(s) in which data in the BOM was
+//     captured", in that vocabulary's own spelling. It is written only when
+//     the phase passes the same gate the CycloneDX encoder applies, so an
+//     invalid phase is absent from both documents rather than from one.
+//   - "DocumentVersion" is CycloneDX's top-level version, whose schema says
+//     "The default version is '1'", and is written for every document the way
+//     the CycloneDX encoder always writes one.
+func spdxCreatorComment(doc *Document) string {
+	fields := make([]string, 0, 5)
+	if contact := strings.TrimSpace(doc.Provenance.SecurityContact); contact != "" {
 		fields = append(fields, "SecurityContact: "+contact)
 	}
-	if disclosure := strings.TrimSpace(p.VulnerabilityDisclosureURL); disclosure != "" {
+	if disclosure := strings.TrimSpace(doc.Provenance.VulnerabilityDisclosureURL); disclosure != "" {
 		fields = append(fields, "VulnerabilityDisclosure: "+disclosure)
 	}
-	if supportEnd := strings.TrimSpace(p.SupportEnd); supportEnd != "" {
+	if supportEnd := strings.TrimSpace(doc.Provenance.SupportEnd); supportEnd != "" {
 		fields = append(fields, "SupportEnd: "+supportEnd)
 	}
+	if phase := cycloneDXLifecyclePhase(doc.Lifecycle); phase != "" {
+		fields = append(fields, spdxCreatorLifecycleKey+": "+string(phase))
+	}
+	fields = append(fields, spdxCreatorDocumentVersionKey+": "+strconv.Itoa(doc.SerialVersionOrDefault()))
 	return strings.Join(fields, "; ")
+}
+
+// parseSPDXCreatorField reads one "key: value" pair back out of the creator
+// comment spdxCreatorComment writes, or "" when the comment has no such key.
+//
+// The comment is free text on someone else's document, so a pair that does
+// not parse is simply absent: the caller gates the value it gets.
+func parseSPDXCreatorField(ci *v23.CreationInfo, key string) string {
+	if ci == nil {
+		return ""
+	}
+	for part := range strings.SplitSeq(ci.CreatorComment, ";") {
+		name, value, ok := strings.Cut(part, ":")
+		if ok && strings.EqualFold(strings.TrimSpace(name), key) {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+// parseSPDXCreatorLifecycle reads back the lifecycle phase the encoder
+// writes, through the CycloneDX vocabulary gate, so an SPDX round trip keeps
+// the phase the way a CycloneDX one does.
+func parseSPDXCreatorLifecycle(ci *v23.CreationInfo) string {
+	return string(cycloneDXLifecyclePhase(parseSPDXCreatorField(ci, spdxCreatorLifecycleKey)))
+}
+
+// parseSPDXCreatorDocumentVersion reads back the document revision the
+// encoder writes. Zero, the model's "unset", for a document that states none
+// or states something that is not a positive integer.
+func parseSPDXCreatorDocumentVersion(ci *v23.CreationInfo) int {
+	version, err := strconv.Atoi(parseSPDXCreatorField(ci, spdxCreatorDocumentVersionKey))
+	if err != nil || version < 1 {
+		return 0
+	}
+	return version
 }
 
 func spdxPackageComment(component Component) string {

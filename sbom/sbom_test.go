@@ -81,7 +81,10 @@ func TestMarshalDepGraphJSON_SPDX23ToolCreators(t *testing.T) {
 			got = append(got, creator.Creator)
 		}
 	}
-	want := []string{"bomly-cli-test", "bomly-detector:npm-detector", "bomly-detector:go-detector"}
+	// The SDK's merged order, not the caller's: the same list the CycloneDX
+	// encoder writes, so the two exports of one scan credit the same tools in
+	// the same order (issue #109).
+	want := []string{"bomly-cli-test", "bomly-detector:go-detector", "bomly-detector:npm-detector"}
 	if !equalStringSlices(got, want) {
 		t.Fatalf("tools = %#v, want %#v", got, want)
 	}
