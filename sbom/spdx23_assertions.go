@@ -352,6 +352,10 @@ func spdxDocumentAssertions(doc *v23.Document) model.DocumentAssertions {
 	}
 	if doc.CreationInfo != nil {
 		assertions.Created = doc.CreationInfo.Created
+		// The revision Bomly's own carrier states, so a restated conversion
+		// adopts it with the identity (inheritDocumentIdentity); zero for a
+		// document that states none, as for CycloneDX.
+		assertions.Version = parseSPDXCreatorDocumentVersion(doc.CreationInfo)
 		for _, creator := range doc.CreationInfo.Creators {
 			if strings.EqualFold(strings.TrimSpace(creator.CreatorType), spdxToolCreatorType) {
 				// Kept whole: see documentSourceTools for why the

@@ -129,7 +129,7 @@ func applySourceAssertions(doc *Document, sources []model.DocumentAssertions, re
 	// The data license is deliberately not inherited: SPDX 2.3 fixes it at
 	// CC0-1.0 for the document itself, so re-asserting a source's value would
 	// write an invalid document. It stays preserved in the model.
-	inheritDocumentIdentity(doc, only.Identity)
+	inheritDocumentIdentity(doc, only.Identity, only.Version)
 }
 
 // inheritDocumentIdentity adopts a single source's identity as this
@@ -140,7 +140,13 @@ func applySourceAssertions(doc *Document, sources []model.DocumentAssertions, re
 // that is not a BOM-Link cannot become one; the SPDX namespace is any URI and
 // takes either form. An identity that cannot be adopted is not lost -- it is
 // linked instead, by documentSourceLinks.
-func inheritDocumentIdentity(doc *Document, identity string) {
+//
+// The revision travels with the identity. Keeping only the serial made the
+// export claim to be revision 1 of a document whose revision 2 it read; a
+// BOM-Link carries its own in its tail, and an SPDX source states one only
+// through Bomly's creator-comment carrier (version), which reaches the
+// serial mintDocumentIdentity derives from a Bomly-form namespace.
+func inheritDocumentIdentity(doc *Document, identity string, version int) {
 	if identity == "" {
 		return
 	}
@@ -155,10 +161,11 @@ func inheritDocumentIdentity(doc *Document, identity string) {
 	// position on how a BOM-Link is spelled.
 	link, err := cdx.ParseBOMLink(identity)
 	if err != nil {
+		if version > 0 {
+			doc.SerialVersion = version
+		}
 		return
 	}
-	// The revision travels with the serial. Keeping only the serial made the
-	// export claim to be revision 1 of a document whose revision 2 it read.
 	doc.SerialNumber = link.SerialNumber()
 	doc.SerialVersion = link.Version()
 }

@@ -7,6 +7,7 @@ import (
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
 	"github.com/bomly-dev/bomly-sdk/internal/testnodes"
+	v23 "github.com/spdx/tools-golang/spdx/v2/v2_3"
 
 	"github.com/bomly-dev/bomly-sdk/model"
 )
@@ -166,5 +167,75 @@ func TestADocumentBesideANativeManifestIsNotRestated(t *testing.T) {
 	}
 	if alone.Namespace != "https://acme.example/spdx/acme-platform-7f3c" {
 		t.Fatalf("a lone document stopped restating: namespace = %q", alone.Namespace)
+	}
+}
+
+// A restating conversion of a Bomly SPDX document adopts the revision the
+// document stated in Bomly's creator-comment carrier along with its identity:
+// the SPDX export repeats it, and the CycloneDX export, whose serial is the
+// namespace's UUID, numbers itself the same revision rather than 1. Only the
+// carrier counts; the lifecycle stays the exporting caller's claim.
+func TestARestatingConversionAdoptsTheSourcesStatedRevision(t *testing.T) {
+	const bomlySPDX = `{
+  "spdxVersion": "SPDX-2.3",
+  "dataLicense": "CC0-1.0",
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "name": "demo",
+  "documentNamespace": "https://bomly.dev/spdx/0f3c9a2e-5d4b-4c6a-8e1f-7a2b3c4d5e6f",
+  "creationInfo": {
+    "created": "2026-01-02T03:04:05Z",
+    "creators": ["Tool: bomly-cli-0.28.2"],
+    "comment": "SecurityContact: security@example.com\nbomly:lifecycle=post-build;document_version=3"
+  },
+  "packages": [
+    {
+      "SPDXID": "SPDXRef-widget",
+      "name": "widget",
+      "versionInfo": "1.0.0",
+      "externalRefs": [
+        {"referenceCategory": "PACKAGE-MANAGER", "referenceType": "purl", "referenceLocator": "pkg:npm/widget@1.0.0"}
+      ]
+    }
+  ]
+}`
+	_, entry := ingestDocument(t, bomlySPDX)
+	if entry.Document.Version != 3 {
+		t.Fatalf("ingested version = %d, want the carrier's 3", entry.Document.Version)
+	}
+	doc, err := FromGraphEntries(entry.Graph, []model.GraphEntry{entry}, BuildOptions{RestatesSource: true})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if doc.Namespace != "https://bomly.dev/spdx/0f3c9a2e-5d4b-4c6a-8e1f-7a2b3c4d5e6f" {
+		t.Fatalf("namespace = %q, want the source's adopted", doc.Namespace)
+	}
+	if doc.SerialNumber != "urn:uuid:0f3c9a2e-5d4b-4c6a-8e1f-7a2b3c4d5e6f" || doc.SerialVersion != 3 {
+		t.Fatalf("serial = %q revision %d, want the namespace's UUID at revision 3", doc.SerialNumber, doc.SerialVersion)
+	}
+	if doc.Lifecycle != "" {
+		t.Fatalf("lifecycle = %q, want none: the phase is the exporting caller's claim", doc.Lifecycle)
+	}
+
+	spdxRaw, err := MarshalJSON(doc, TargetSPDX23JSON, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("marshal spdx: %v", err)
+	}
+	var spdxDoc v23.Document
+	if err := json.Unmarshal(spdxRaw, &spdxDoc); err != nil {
+		t.Fatalf("unmarshal spdx: %v", err)
+	}
+	if !strings.HasSuffix(spdxDoc.CreationInfo.CreatorComment, "bomly:document_version=3") {
+		t.Errorf("spdx creator comment = %q, want revision 3 restated", spdxDoc.CreationInfo.CreatorComment)
+	}
+	cdxRaw, err := MarshalJSON(doc, TargetCycloneDX16JSON, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("marshal cyclonedx: %v", err)
+	}
+	var bom cdx.BOM
+	if err := json.Unmarshal(cdxRaw, &bom); err != nil {
+		t.Fatalf("unmarshal cyclonedx: %v", err)
+	}
+	if bom.SerialNumber != "urn:uuid:0f3c9a2e-5d4b-4c6a-8e1f-7a2b3c4d5e6f" || bom.Version != 3 {
+		t.Errorf("cyclonedx serial %q version %d, want the source's UUID at revision 3", bom.SerialNumber, bom.Version)
 	}
 }

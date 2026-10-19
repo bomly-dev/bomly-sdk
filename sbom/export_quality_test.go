@@ -655,11 +655,9 @@ func TestOneBuildEncodesToTheSameDocumentInBothFormats(t *testing.T) {
 	// The lifecycle phase and document version CycloneDX holds in fields and
 	// SPDX 2.3 holds nowhere, carried in the creator comment.
 	comment := spdxDoc.CreationInfo.CreatorComment
-	if (*bom.Metadata.Lifecycles)[0].Phase != cdx.LifecyclePhasePreBuild || !strings.Contains(comment, "Lifecycle: pre-build") {
-		t.Errorf("lifecycle: cyclonedx %+v, spdx creator comment %q", bom.Metadata.Lifecycles, comment)
-	}
-	if bom.Version != 1 || !strings.Contains(comment, "DocumentVersion: 1") {
-		t.Errorf("document version: cyclonedx %d, spdx creator comment %q", bom.Version, comment)
+	if (*bom.Metadata.Lifecycles)[0].Phase != cdx.LifecyclePhasePreBuild || bom.Version != 1 ||
+		!strings.HasSuffix(comment, "\nbomly:lifecycle=pre-build;document_version=1") {
+		t.Errorf("lifecycle and version: cyclonedx %+v / %d, spdx creator comment %q", bom.Metadata.Lifecycles, bom.Version, comment)
 	}
 	if !strings.Contains(comment, "SecurityContact: security@example.com") {
 		t.Errorf("creator comment lost the provenance it carried before: %q", comment)
@@ -739,7 +737,7 @@ func TestSPDXCreatorCommentCarrierIsGated(t *testing.T) {
 	if err := json.Unmarshal(out, &spdxDoc); err != nil {
 		t.Fatalf("unmarshal spdx: %v", err)
 	}
-	if comment := spdxDoc.CreationInfo.CreatorComment; strings.Contains(comment, "Lifecycle") || comment != "DocumentVersion: 1" {
+	if comment := spdxDoc.CreationInfo.CreatorComment; comment != "bomly:document_version=1" {
 		t.Errorf("creator comment = %q, want only the document version", comment)
 	}
 
@@ -747,14 +745,17 @@ func TestSPDXCreatorCommentCarrierIsGated(t *testing.T) {
 		lifecycle string
 		version   int
 	}{
-		"Lifecycle: post-build; DocumentVersion: 3":      {"post-build", 3},
-		"lifecycle:Build;documentversion:2":              {"build", 2},
-		"SecurityContact: a@b.example; Lifecycle: build": {"build", 0},
-		"Lifecycle: sometime; DocumentVersion: zero":     {"", 0},
-		"DocumentVersion: 0":                             {"", 0},
-		"DocumentVersion: -1":                            {"", 0},
-		"Produced by hand":                               {"", 0},
-		"":                                               {"", 0},
+		"bomly:lifecycle=post-build;document_version=3":                          {"post-build", 3},
+		"SecurityContact: a@b.example\nbomly:lifecycle=build;document_version=2": {"build", 2},
+		"bomly:Lifecycle=Build":                          {"build", 0},
+		"bomly:lifecycle=sometime;document_version=zero": {"", 0},
+		"bomly:document_version=0":                       {"", 0},
+		"bomly:document_version=-1":                      {"", 0},
+		// A third party's prose is not Bomly's claim, whatever words it uses.
+		"Lifecycle: build; DocumentVersion: 3":   {"", 0},
+		"Produced in the build; lifecycle=build": {"", 0},
+		"Produced by hand":                       {"", 0},
+		"":                                       {"", 0},
 	} {
 		ci := &v23.CreationInfo{CreatorComment: comment}
 		if got := parseSPDXCreatorLifecycle(ci); got != want.lifecycle {
