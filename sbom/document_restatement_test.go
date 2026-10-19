@@ -247,3 +247,36 @@ func TestARestatingConversionAdoptsTheSourcesStatedRevision(t *testing.T) {
 		t.Errorf("spdx external document refs = %+v, want none: the source is this document", spdxDoc.ExternalDocumentReferences)
 	}
 }
+
+// A Bomly-form namespace carrying this document's UUID names this document
+// only at this document's revision. Revision 2 built from revision 1 of the
+// same UUID still links revision 1: that link is provenance, not a reference
+// to itself. A source that stated no revision is revision 1.
+func TestAnEarlierRevisionOfTheSameUUIDIsStillLinked(t *testing.T) {
+	const uuid = "0f3c9a2e-5d4b-4c6a-8e1f-7a2b3c4d5e6f"
+	for name, tc := range map[string]struct {
+		revision      int
+		sourceVersion int
+		linked        bool
+	}{
+		"same revision":             {2, 2, false},
+		"earlier revision":          {2, 1, true},
+		"unstated is revision one":  {1, 0, false},
+		"unstated under revision 2": {2, 0, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			doc := &Document{
+				SerialNumber:  "urn:uuid:" + uuid,
+				SerialVersion: tc.revision,
+				Sources: []model.DocumentAssertions{{
+					Identity: "https://bomly.dev/spdx/" + uuid,
+					Version:  tc.sourceVersion,
+				}},
+			}
+			links := documentSourceLinks(doc, documentIdentity{Serial: doc.SerialNumber, SerialVersion: doc.SerialVersionOrDefault()})
+			if got := len(links) == 1; got != tc.linked {
+				t.Fatalf("links = %+v, want linked=%v", links, tc.linked)
+			}
+		})
+	}
+}

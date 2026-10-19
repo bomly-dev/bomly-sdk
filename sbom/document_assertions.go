@@ -198,7 +198,16 @@ type documentIdentity struct {
 // library that owns the link grammar, and compared on the serial rather than
 // the rendered link, because a source that numbered itself version 2 spells
 // the same document differently than the version this export would write.
-func (d documentIdentity) names(identity string) bool {
+//
+// The revision counts in the third reading too: revision 2 of a UUID built
+// from revision 1 of the same UUID names a distinct prior document, and the
+// link to it is provenance, not a self-reference. A source that stated no
+// revision is revision 1, as ADR-0037 reads an unnumbered document, which is
+// also the revision the BOM-Link grammar assigns one. The plain namespace
+// reading stays revision-blind: SPDX names a document by its namespace alone
+// and has no revision to compare.
+func (d documentIdentity) names(source model.DocumentSource) bool {
+	identity := source.Identity
 	if identity == "" {
 		return false
 	}
@@ -211,7 +220,7 @@ func (d documentIdentity) names(identity string) bool {
 			return true
 		}
 		if uuid := bomlyNamespaceUUID(identity); uuid != "" && uuid == serialUUID(d.Serial) {
-			return true
+			return max(source.Version, 1) == max(d.SerialVersion, 1)
 		}
 	}
 	return false
@@ -263,7 +272,7 @@ func documentSourceLinks(doc *Document, emitted documentIdentity) []model.Docume
 
 	links := make([]model.DocumentSource, 0, len(folded.Sources))
 	for _, source := range folded.Sources {
-		if emitted.names(source.Identity) {
+		if emitted.names(source) {
 			continue
 		}
 		links = append(links, source)
