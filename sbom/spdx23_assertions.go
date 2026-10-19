@@ -352,6 +352,10 @@ func spdxDocumentAssertions(doc *v23.Document) model.DocumentAssertions {
 	}
 	if doc.CreationInfo != nil {
 		assertions.Created = doc.CreationInfo.Created
+		// The revision Bomly's own carrier states, so a restated conversion
+		// adopts it with the identity (inheritDocumentIdentity); zero for a
+		// document that states none, as for CycloneDX.
+		assertions.Version = parseSPDXCreatorDocumentVersion(doc.CreationInfo)
 		for _, creator := range doc.CreationInfo.Creators {
 			if strings.EqualFold(strings.TrimSpace(creator.CreatorType), spdxToolCreatorType) {
 				// Kept whole: see documentSourceTools for why the
@@ -412,21 +416,10 @@ func spdxDocumentCreators(doc *Document) []common.Creator {
 		creators = append(creators, common.Creator{CreatorType: creatorType, Creator: value})
 	}
 
-	for _, tool := range doc.ToolNamesOrDefault() {
-		version := ""
-		if tool == doc.ToolOrDefault() {
-			version = doc.ToolVersion
-		}
-		if toolIsRestatedInFull(model.DocumentTool{Name: tool, Version: version}, doc.Assertions.Tools) {
-			continue
-		}
-		// SPDX creator convention appends the tool version as "name-version".
-		if version != "" {
-			tool += "-" + version
-		}
-		add(spdxToolCreatorType, tool)
-	}
-	for _, tool := range doc.Assertions.Tools {
+	// The same list, in the same order, as the CycloneDX encoder writes:
+	// documentTools owns the union, and spdxToolCreator the "name-version"
+	// convention SPDX spells a tool in.
+	for _, tool := range documentTools(doc) {
 		add(spdxToolCreatorType, spdxToolCreator(tool))
 	}
 	if doc.Provenance.Manufacturer != "" {

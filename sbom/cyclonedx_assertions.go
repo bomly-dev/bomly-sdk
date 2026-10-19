@@ -476,35 +476,15 @@ func cycloneDXDocumentAuthors(doc *Document) []cdx.OrganizationalContact {
 	return authors
 }
 
-// cycloneDXMetadataTools renders the tools credited with the document: the
-// ones this run used, plus the ones its source documents credited.
-//
-// The union is the SDK's, not a local one. Its merge class for tools keys on
-// the whole (vendor, name, version) triple, and a key written here by hand
-// omitted the vendor -- so a source crediting "Acme / cdx-gen / 9.1.0" was
-// silently suppressed by a vendorless entry of the same name and version,
-// discarding the one field the source added.
+// cycloneDXMetadataTools renders the tools credited with the document, the
+// list documentTools assembles for both formats.
 func cycloneDXMetadataTools(doc *Document) *cdx.ToolsChoice {
-	own := make([]model.DocumentTool, 0, len(doc.ToolNamesOrDefault()))
-	for _, name := range doc.ToolNamesOrDefault() {
-		tool := model.DocumentTool{Name: name}
-		if name == doc.ToolOrDefault() {
-			tool.Version = doc.ToolVersion
-		}
-		if toolIsRestatedInFull(tool, doc.Assertions.Tools) {
-			continue
-		}
-		own = append(own, tool)
-	}
-	merged := model.MergeDocumentAssertions(
-		model.DocumentAssertions{Tools: own},
-		model.DocumentAssertions{Tools: doc.Assertions.Tools},
-	)
-	if len(merged.Tools) == 0 {
+	tools := documentTools(doc)
+	if len(tools) == 0 {
 		return nil
 	}
-	components := make([]cdx.Component, 0, len(merged.Tools))
-	for _, tool := range merged.Tools {
+	components := make([]cdx.Component, 0, len(tools))
+	for _, tool := range tools {
 		component := cdx.Component{Type: cdx.ComponentTypeApplication, Name: tool.Name, Version: tool.Version}
 		if tool.Vendor != "" {
 			component.Manufacturer = &cdx.OrganizationalEntity{Name: tool.Vendor}

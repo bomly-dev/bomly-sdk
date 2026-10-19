@@ -129,7 +129,7 @@ func applySourceAssertions(doc *Document, sources []model.DocumentAssertions, re
 	// The data license is deliberately not inherited: SPDX 2.3 fixes it at
 	// CC0-1.0 for the document itself, so re-asserting a source's value would
 	// write an invalid document. It stays preserved in the model.
-	inheritDocumentIdentity(doc, only.Identity)
+	inheritDocumentIdentity(doc, only.Identity, only.Version)
 }
 
 // inheritDocumentIdentity adopts a single source's identity as this
@@ -140,7 +140,13 @@ func applySourceAssertions(doc *Document, sources []model.DocumentAssertions, re
 // that is not a BOM-Link cannot become one; the SPDX namespace is any URI and
 // takes either form. An identity that cannot be adopted is not lost -- it is
 // linked instead, by documentSourceLinks.
-func inheritDocumentIdentity(doc *Document, identity string) {
+//
+// The revision travels with the identity. Keeping only the serial made the
+// export claim to be revision 1 of a document whose revision 2 it read; a
+// BOM-Link carries its own in its tail, and an SPDX source states one only
+// through Bomly's creator-comment carrier (version), which reaches the
+// serial mintDocumentIdentity derives from a Bomly-form namespace.
+func inheritDocumentIdentity(doc *Document, identity string, version int) {
 	if identity == "" {
 		return
 	}
@@ -155,10 +161,11 @@ func inheritDocumentIdentity(doc *Document, identity string) {
 	// position on how a BOM-Link is spelled.
 	link, err := cdx.ParseBOMLink(identity)
 	if err != nil {
+		if version > 0 {
+			doc.SerialVersion = version
+		}
 		return
 	}
-	// The revision travels with the serial. Keeping only the serial made the
-	// export claim to be revision 1 of a document whose revision 2 it read.
 	doc.SerialNumber = link.SerialNumber()
 	doc.SerialVersion = link.Version()
 }
@@ -181,12 +188,26 @@ type documentIdentity struct {
 
 // names reports whether an identity refers to this same document.
 //
-// One document has two spellings across the formats: an SPDX namespace, and a
-// BOM-Link over a CycloneDX serial. Parsed by the library that owns the link
-// grammar, and compared on the serial rather than the rendered link, because a
-// source that numbered itself version 2 spells the same document differently
-// than the version this export would write.
-func (d documentIdentity) names(identity string) bool {
+// One document has three spellings across the formats: an SPDX namespace, a
+// BOM-Link over a CycloneDX serial, and -- for a document Bomly wrote -- a
+// namespace in Bomly's own form carrying the serial's UUID, which is what
+// mintDocumentIdentity derives the serial from when a restating conversion
+// adopts it. Without that third reading, the CycloneDX export of a restated
+// Bomly SPDX document linked its source as a "bom" reference while carrying
+// that source's identity: a self-reference. A BOM-Link is parsed by the
+// library that owns the link grammar, and compared on the serial rather than
+// the rendered link, because a source that numbered itself version 2 spells
+// the same document differently than the version this export would write.
+//
+// The revision counts in the third reading too: revision 2 of a UUID built
+// from revision 1 of the same UUID names a distinct prior document, and the
+// link to it is provenance, not a self-reference. A source that stated no
+// revision is revision 1, as ADR-0037 reads an unnumbered document, which is
+// also the revision the BOM-Link grammar assigns one. The plain namespace
+// reading stays revision-blind: SPDX names a document by its namespace alone
+// and has no revision to compare.
+func (d documentIdentity) names(source model.DocumentSource) bool {
+	identity := source.Identity
 	if identity == "" {
 		return false
 	}
@@ -197,6 +218,9 @@ func (d documentIdentity) names(identity string) bool {
 		if link, err := cdx.ParseBOMLink(identity); err == nil &&
 			link.SerialNumber() == d.Serial && link.Version() == d.SerialVersion {
 			return true
+		}
+		if uuid := bomlyNamespaceUUID(identity); uuid != "" && uuid == serialUUID(d.Serial) {
+			return max(source.Version, 1) == max(d.SerialVersion, 1)
 		}
 	}
 	return false
@@ -248,7 +272,7 @@ func documentSourceLinks(doc *Document, emitted documentIdentity) []model.Docume
 
 	links := make([]model.DocumentSource, 0, len(folded.Sources))
 	for _, source := range folded.Sources {
-		if emitted.names(source.Identity) {
+		if emitted.names(source) {
 			continue
 		}
 		links = append(links, source)
@@ -257,6 +281,59 @@ func documentSourceLinks(doc *Document, emitted documentIdentity) []model.Docume
 		return nil
 	}
 	return links
+}
+
+// documentTools is the one list of tools both encoders credit: the ones this
+// run used, plus the ones its source documents credited, in the SDK's merged
+// order.
+//
+// The union is the SDK's, not a local one. Its merge class for tools keys on
+// the whole (vendor, name, version) triple, and a key written here by hand
+// omitted the vendor -- so a source crediting "Acme / cdx-gen / 9.1.0" was
+// silently suppressed by a vendorless entry of the same name and version,
+// discarding the one field the source added.
+//
+// Both encoders read this list, in this order, because each used to assemble
+// its own: CycloneDX through the merge, SPDX in the caller's order, and the
+// two exports of one scan credited the same tools in two different orders
+// (issue #109).
+func documentTools(doc *Document) []model.DocumentTool {
+	own := make([]model.DocumentTool, 0, len(doc.ToolNamesOrDefault()))
+	for _, name := range doc.ToolNamesOrDefault() {
+		tool := model.DocumentTool{Name: name}
+		if name == doc.ToolOrDefault() {
+			tool.Version = doc.ToolVersion
+		}
+		if toolIsRestatedInFull(tool, doc.Assertions.Tools) {
+			continue
+		}
+		own = append(own, tool)
+	}
+	merged := model.MergeDocumentAssertions(
+		model.DocumentAssertions{Tools: own},
+		model.DocumentAssertions{Tools: doc.Assertions.Tools},
+	)
+	// The producing tool first, whatever the merge's sort put ahead of it:
+	// both decoders read the first credited tool back as Document.Tool, so a
+	// source tool sorting before it would become this document's producer on
+	// the next ingest. The merged order holds for the rest. The producer's
+	// own entry is preferred over a same-named one at another version.
+	tools := merged.Tools
+	primary := -1
+	for index, tool := range tools {
+		if tool.Name != doc.ToolOrDefault() {
+			continue
+		}
+		if primary < 0 || tool.Version == doc.ToolVersion && tools[primary].Version != doc.ToolVersion {
+			primary = index
+		}
+	}
+	if primary > 0 {
+		producer := tools[primary]
+		tools = append(tools[:primary:primary], tools[primary+1:]...)
+		tools = append([]model.DocumentTool{producer}, tools...)
+	}
+	return tools
 }
 
 // toolIsRestatedInFull reports whether a tool this document names by name

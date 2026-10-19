@@ -113,7 +113,7 @@ func (spdx23Codec) encodeJSON(doc *Document, opts EncodeOptions) ([]byte, error)
 	creation := &v23.CreationInfo{
 		Creators:       spdxDocumentCreators(doc),
 		Created:        doc.CreatedOrNow().Format("2006-01-02T15:04:05Z"),
-		CreatorComment: spdxCreatorComment(doc.Provenance),
+		CreatorComment: spdxCreatorComment(doc),
 	}
 
 	spdxDoc := &v23.Document{
@@ -229,6 +229,8 @@ func (spdx23Codec) decodeJSON(data []byte) (*Document, error) {
 		Tool:               extractSPDXToolName(spdxDoc.CreationInfo),
 		Tools:              extractSPDXToolNames(spdxDoc.CreationInfo),
 		Created:            parseSPDXCreated(spdxDoc.CreationInfo),
+		SerialVersion:      parseSPDXCreatorDocumentVersion(spdxDoc.CreationInfo),
+		Lifecycle:          parseSPDXCreatorLifecycle(spdxDoc.CreationInfo),
 		Components:         components,
 		Dependencies:       dependencies,
 		Roots:              roots,
@@ -321,20 +323,100 @@ func spdxPrimaryPackagePurpose(componentType string) string {
 	}
 }
 
-// spdxCreatorComment folds provenance contact metadata into the SPDX creation
-// comment; SPDX 2.3 has no first-class fields for these.
-func spdxCreatorComment(p Provenance) string {
+// The keys of the creator-comment carrier that the decoder reads back,
+// spelled the way the package-comment carrier spells its own (scope, type,
+// eol_date). The provenance fields written beside the carrier are not read:
+// a security contact is configuration, not a claim the document makes about
+// itself.
+const (
+	spdxCreatorLifecycleKey       = "lifecycle"
+	spdxCreatorDocumentVersionKey = "document_version"
+)
+
+// spdxCreatorComment renders the SPDX creation comment: provenance contact
+// metadata on one line, then, on a line of its own, the two CycloneDX
+// document fields SPDX 2.3 has no slot for, so that the SPDX and CycloneDX
+// encodings of one build say the same thing about the document (issue #109).
+//
+// SPDX 2.3 section 6.10 defines the creator comment as "an optional field for
+// creators of the SPDX file to provide general comments about the creation
+// of the SPDX file or any other relevant comment", and tools-golang carries
+// it as the free string CreationInfo.CreatorComment. Nothing in SPDX 2.3
+// holds a lifecycle phase or a document revision: a new revision of an SPDX
+// document is a new namespace. So both ride in the comment, in the same
+// "bomly:key=value;key=value" carrier the package comment uses, so that the
+// decoder reads Bomly's own claim and never a third party's prose: a comment
+// that happens to say "Lifecycle: build" is not a lifecycle assertion, and
+// only the line that names Bomly is read back, by parseSPDXCreatorField.
+//
+//   - "lifecycle" is CycloneDX metadata.lifecycles[].phase, whose schema says
+//     "Lifecycles communicate the stage(s) in which data in the BOM was
+//     captured", in that vocabulary's own spelling. It is written only when
+//     the phase passes the same gate the CycloneDX encoder applies, so an
+//     invalid phase is absent from both documents rather than from one.
+//   - "document_version" is CycloneDX's top-level version, whose schema says
+//     "The default version is '1'", and is written for every document the way
+//     the CycloneDX encoder always writes one.
+func spdxCreatorComment(doc *Document) string {
 	fields := make([]string, 0, 3)
-	if contact := strings.TrimSpace(p.SecurityContact); contact != "" {
+	if contact := strings.TrimSpace(doc.Provenance.SecurityContact); contact != "" {
 		fields = append(fields, "SecurityContact: "+contact)
 	}
-	if disclosure := strings.TrimSpace(p.VulnerabilityDisclosureURL); disclosure != "" {
+	if disclosure := strings.TrimSpace(doc.Provenance.VulnerabilityDisclosureURL); disclosure != "" {
 		fields = append(fields, "VulnerabilityDisclosure: "+disclosure)
 	}
-	if supportEnd := strings.TrimSpace(p.SupportEnd); supportEnd != "" {
+	if supportEnd := strings.TrimSpace(doc.Provenance.SupportEnd); supportEnd != "" {
 		fields = append(fields, "SupportEnd: "+supportEnd)
 	}
-	return strings.Join(fields, "; ")
+	carrier := make([]string, 0, 2)
+	if phase := cycloneDXLifecyclePhase(doc.Lifecycle); phase != "" {
+		carrier = append(carrier, spdxCreatorLifecycleKey+"="+string(phase))
+	}
+	carrier = append(carrier, spdxCreatorDocumentVersionKey+"="+strconv.Itoa(doc.SerialVersionOrDefault()))
+	lines := make([]string, 0, 2)
+	if len(fields) > 0 {
+		lines = append(lines, strings.Join(fields, "; "))
+	}
+	lines = append(lines, "bomly:"+strings.Join(carrier, ";"))
+	return strings.Join(lines, "\n")
+}
+
+// parseSPDXCreatorField reads one key back out of the "bomly:" carrier line
+// spdxCreatorComment writes, or "" when the comment has no such line or the
+// line has no such key.
+//
+// The comment is free text on someone else's document, so only a line that
+// names Bomly is read, through the package-comment carrier's own parser; a
+// pair that does not parse is simply absent, and the caller gates the value
+// it gets.
+func parseSPDXCreatorField(ci *v23.CreationInfo, key string) string {
+	if ci == nil {
+		return ""
+	}
+	for line := range strings.SplitSeq(ci.CreatorComment, "\n") {
+		if value := parseSPDXCommentField(line, key); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+// parseSPDXCreatorLifecycle reads back the lifecycle phase the encoder
+// writes, through the CycloneDX vocabulary gate, so an SPDX round trip keeps
+// the phase the way a CycloneDX one does.
+func parseSPDXCreatorLifecycle(ci *v23.CreationInfo) string {
+	return string(cycloneDXLifecyclePhase(parseSPDXCreatorField(ci, spdxCreatorLifecycleKey)))
+}
+
+// parseSPDXCreatorDocumentVersion reads back the document revision the
+// encoder writes. Zero, the model's "unset", for a document that states none
+// or states something that is not a positive integer.
+func parseSPDXCreatorDocumentVersion(ci *v23.CreationInfo) int {
+	version, err := strconv.Atoi(parseSPDXCreatorField(ci, spdxCreatorDocumentVersionKey))
+	if err != nil || version < 1 {
+		return 0
+	}
+	return version
 }
 
 func spdxPackageComment(component Component) string {

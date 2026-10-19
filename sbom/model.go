@@ -52,15 +52,27 @@ func (p Provenance) Empty() bool {
 }
 
 // BuildOptions controls how a depgraph is projected into the intermediate SBOM model.
+//
+// One build is one document. The identity slots left empty here are filled
+// from a single UUID, so the SPDX namespace and the CycloneDX serial of the
+// resulting Document name the same document; pinning either slot derives the
+// other from it when it carries a UUID. A scan exported in two formats is
+// therefore built once and encoded twice -- FromGraphEntries, then MarshalJSON
+// per target. Marshalling the graph once per target builds twice and mints
+// two identities (issue #109).
 type BuildOptions struct {
-	DocumentName    string
+	DocumentName string
+	// DocumentNS pins the SPDX documentNamespace. Empty mints one in Bomly's
+	// form, "https://bomly.dev/spdx/<uuid>", sharing the serial's UUID.
 	DocumentNS      string
 	ToolName        string
 	ToolNames       []string
 	ToolVersion     string
 	Created         time.Time
 	RootComponentID string
-	SerialNumber    string
+	// SerialNumber pins the CycloneDX serialNumber, an urn:uuid. Empty mints
+	// one sharing the namespace's UUID.
+	SerialNumber string
 
 	// ProjectRoot, when non-nil, lets the projection synthesize a primary
 	// component for the scanned project when the graph has no single root.
