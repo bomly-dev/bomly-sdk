@@ -124,10 +124,10 @@ func TestRepositoryOriginIsPublishedInBothFormats(t *testing.T) {
 	if got := spdxPackageByName(t, spdxRaw, "react")["downloadLocation"]; got != want {
 		t.Errorf("SPDX downloadLocation = %v, want %q", got, want)
 	}
-	// CycloneDX external references have no revision slot, so the reference is
-	// the plain repository URL.
-	if got := cycloneDXReferences(t, cdxRaw, "react")["vcs"]; got != repository {
-		t.Errorf("CycloneDX vcs ref = %q, want %q", got, repository)
+	// CycloneDX has no revision slot of its own, so the vcs reference carries
+	// the same locator: one string for one origin in both exports.
+	if got := cycloneDXReferences(t, cdxRaw, "react")["vcs"]; got != want {
+		t.Errorf("CycloneDX vcs ref = %q, want %q", got, want)
 	}
 	if got := cycloneDXReferences(t, cdxRaw, "react")["distribution"]; got != "" {
 		t.Errorf("repository origin also emitted a distribution ref: %q", got)
@@ -140,10 +140,14 @@ func TestUnpinnedRepositoryOriginOmitsTheRevisionSuffix(t *testing.T) {
 		pkg.Origins = model.MergeOrigins(nil, repositoryOriginsFor(repository, ""))
 	})
 
-	spdxRaw, _ := marshalBoth(t, g)
+	spdxRaw, cdxRaw := marshalBoth(t, g)
 
 	if got := spdxPackageByName(t, spdxRaw, "react")["downloadLocation"]; got != "git+"+repository {
 		t.Errorf("SPDX downloadLocation = %v, want %q", got, "git+"+repository)
+	}
+	// With nothing to pin, CycloneDX keeps the location a reader can open.
+	if got := cycloneDXReferences(t, cdxRaw, "react")["vcs"]; got != repository {
+		t.Errorf("CycloneDX vcs ref = %q, want the plain repository URL %q", got, repository)
 	}
 }
 

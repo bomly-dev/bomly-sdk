@@ -439,10 +439,11 @@ func decodeCycloneDXComponent(comp cdx.Component, id string, specVersion cdx.Spe
 // cycloneDXSecurityReferences maps provenance contact fields onto external
 // references attached to the primary component.
 // cycloneDXComponentReferences renders where a package came from: the exact
-// file it was fetched from as a distribution reference, or the repository it
-// was resolved from as a vcs reference. The repository is rendered as a plain
-// URL -- CycloneDX external references carry no revision, so the commit a
-// detector resolved is only expressible in the SPDX locator form.
+// file it was fetched from as a distribution reference, and the repository it
+// was resolved from as a vcs reference. A repository pinned to a revision is
+// written in the version-control locator grammar, "git+<url>@<revision>",
+// the same string the SPDX export writes for it; an unpinned one is the plain
+// URL. pinnedVCSReference says why.
 func cycloneDXComponentReferences(component Component) []cdx.ExternalReference {
 	origins := component.Origins
 	if len(origins) == 0 {
@@ -469,12 +470,22 @@ func cycloneDXComponentReferences(component Component) []cdx.ExternalReference {
 	// Every origin, not just the first: CycloneDX allows an external
 	// reference list, so two registries a package resolved from are both
 	// expressible and both stay.
+	repositories := make(map[string]struct{}, len(origins))
 	for _, origin := range origins {
 		add(cdx.ExternalReference{Type: cdx.ERTypeDistribution, URL: strings.TrimSpace(origin.ArtifactURL)})
-		add(cdx.ExternalReference{Type: cdx.ERTypeVCS, URL: strings.TrimSpace(origin.Repository)})
+		add(cdx.ExternalReference{Type: cdx.ERTypeVCS, URL: pinnedVCSReference(origin.Repository, origin.Revision)})
+		if repository := strings.TrimSpace(origin.Repository); repository != "" {
+			repositories[repository] = struct{}{}
+		}
 	}
 	// Enrichment may have filled the repository when no origin asserted one.
-	add(cdx.ExternalReference{Type: cdx.ERTypeVCS, URL: strings.TrimSpace(component.VCSURL)})
+	// A repository an origin already carries is not written a second time
+	// without its revision: that would be two references to one source.
+	if repository := strings.TrimSpace(component.VCSURL); repository != "" {
+		if _, carried := repositories[repository]; !carried {
+			add(cdx.ExternalReference{Type: cdx.ERTypeVCS, URL: repository})
+		}
+	}
 	return refs
 }
 
