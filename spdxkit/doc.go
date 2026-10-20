@@ -5,9 +5,10 @@
 //
 // License strings are untrusted input everywhere — they arrive from
 // lockfiles a repository commits and from registry APIs — and the underlying
-// SPDX expression parser panics on some of them ("(((" dereferences a nil
-// operator). Every entry point here contains that and reports the value as
-// one it could not parse, which is what an unparseable license is. No other
+// SPDX expression parser has panicked on some of them (before go-spdx 2.7.1,
+// "(((" dereferenced a nil operator). Every entry point here contains a
+// parser panic and reports the value as one it could not parse, which is what
+// an unparseable license is, so a regression upstream never escapes. No other
 // package may import github.com/github/go-spdx directly; the module's
 // import-boundary test fails when a call site bypasses this package.
 //

@@ -20,8 +20,8 @@ func FuzzClassify(f *testing.F) {
 		if len(value) > maxFuzzInputSize {
 			t.Skip("input exceeds fuzz bound")
 		}
-		// The underlying parser panics on some inputs; the contract is that
-		// no panic ever escapes and results are deterministic.
+		// The underlying parser has panicked on some inputs; the contract is
+		// that no panic ever escapes and results are deterministic.
 		first := Classify(value)
 		second := Classify(value)
 		if first != second {
