@@ -20,20 +20,22 @@ func TestValid(t *testing.T) {
 	}
 }
 
-func TestValidContainsParserPanic(t *testing.T) {
-	// "(((" dereferences a nil operator inside the upstream parser; the
-	// whole reason this package exists is that the panic never escapes.
+func TestMalformedGroupingIsInvalid(t *testing.T) {
+	// "(((" once dereferenced a nil operator inside the upstream parser;
+	// go-spdx 2.7.1 (github/go-spdx#168) reports it as an error instead. The
+	// containment in this package stays — a third-party parser is contained at
+	// the boundary whatever its current failure mode — and this pins the
+	// outcome either way: the value is invalid, and the batch reports exactly
+	// which member was.
 	if Valid("(((") {
 		t.Fatal(`Valid("(((") = true`)
 	}
 	valid, invalid := ValidateAll([]string{"MIT", "((("})
 	if valid {
-		t.Fatal("ValidateAll with a panicking member reported valid")
+		t.Fatal("ValidateAll with a malformed member reported valid")
 	}
-	if len(invalid) != 2 {
-		// The parser gave up part-way through the batch, so no member can be
-		// reported as checked.
-		t.Fatalf("ValidateAll invalid = %v, want the entire batch", invalid)
+	if len(invalid) != 1 || invalid[0] != "(((" {
+		t.Fatalf("ValidateAll invalid = %v, want only the malformed member", invalid)
 	}
 }
 
@@ -76,15 +78,17 @@ func TestCompose(t *testing.T) {
 	}
 }
 
-func TestSatisfiesAndExtractContainPanics(t *testing.T) {
-	if ok, err := Satisfies("(((", []string{"MIT"}); ok || err != nil {
-		t.Fatalf("Satisfies(panic input) = (%v, %v)", ok, err)
+func TestSatisfiesAndExtractReportMalformedGrouping(t *testing.T) {
+	// An unparseable expression satisfies nothing and extracts nothing; the
+	// parser's error comes back wrapped with the operation, never a panic.
+	if ok, err := Satisfies("(((", []string{"MIT"}); ok || err == nil || !strings.Contains(err.Error(), "spdxkit: satisfies") {
+		t.Fatalf("Satisfies(malformed) = (%v, %v), want (false, wrapped parser error)", ok, err)
 	}
 	if ok, err := Satisfies("MIT", []string{"MIT"}); !ok || err != nil {
 		t.Fatalf("Satisfies(MIT, [MIT]) = (%v, %v)", ok, err)
 	}
-	if licenses, err := Extract("((("); licenses != nil || err != nil {
-		t.Fatalf("Extract(panic input) = (%v, %v)", licenses, err)
+	if licenses, err := Extract("((("); licenses != nil || err == nil || !strings.Contains(err.Error(), "spdxkit: extract licenses") {
+		t.Fatalf("Extract(malformed) = (%v, %v), want (nil, wrapped parser error)", licenses, err)
 	}
 }
 

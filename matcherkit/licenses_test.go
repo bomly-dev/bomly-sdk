@@ -43,8 +43,8 @@ func TestNormalizeLicenseSetClassifiesOnWrite(t *testing.T) {
 }
 
 func TestNormalizeLicenseSetNeverPanicsOnHostileInput(t *testing.T) {
-	// The underlying SPDX parser panics on inputs like "(((" — the spdxkit
-	// guards must hold through this path too.
+	// The underlying SPDX parser has panicked on inputs like "(((" — the
+	// spdxkit guards must hold through this path too.
 	licenses := NormalizeLicenseSet([]string{"((("}, "declared")
 	if len(licenses) != 1 || licenses[0].SPDXExpression != "" {
 		t.Fatalf("hostile input handled wrong: %+v", licenses)
