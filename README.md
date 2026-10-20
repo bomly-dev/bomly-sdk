@@ -126,7 +126,7 @@ an SBOM cannot say.
 - `graphview` — what a document may say about a node: the package URL it publishes, which of its children a document can name, and which nodes count as top-level parents.
 
 Both come from the CLI's `internal/sbom` and `internal/graphview`
-(bomly-cli ADR-0045). The CLI and the Syft and Grype plugins adopt this
+(bomly-cli ADR-0040). The CLI and the Syft and Grype plugins adopt this
 package from the release that carries it, in that order -- the plugins
 first, then the CLI, which pins both -- and delete their copies as they do.
 

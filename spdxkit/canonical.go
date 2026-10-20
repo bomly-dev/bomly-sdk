@@ -4,7 +4,7 @@ import "strings"
 
 // replacements maps deprecated SPDX license identifiers onto their current
 // replacements. This is Bomly's audited authority, relocated from the CLI
-// (ADR-0038: relocated, not deleted): the upstream license list marks an
+// (ADR-0040: relocated, not deleted): the upstream license list marks an
 // entry deprecated and canonicalizes its case, but does not encode what
 // replaces it — "GPL-2.0-only" for "GPL-2.0", or a license-plus-exception
 // expression for "GPL-2.0-with-classpath-exception". Only unambiguous

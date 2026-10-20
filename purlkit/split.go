@@ -4,7 +4,7 @@ import "strings"
 
 // SplitEcosystemName splits an ecosystem-native package name back into its
 // org and name halves — the inverse of the root Coordinates.EcosystemName
-// join, under the same per-ecosystem rules (bomly-cli ADR-0021): joining is
+// join, under the same per-ecosystem rules (bomly-cli ADR-0041): joining is
 // opt-in per ecosystem, so only ecosystems whose advisory databases key on
 // the namespaced form split at all.
 //

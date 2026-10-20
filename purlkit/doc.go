@@ -1,5 +1,5 @@
 // Package purlkit is the single home for package-URL behavior in the Bomly
-// SDK (ADR-0038 in bomly-cli's dev-docs/adr). It owns parsing, building, and
+// SDK (ADR-0040 in bomly-cli's dev-docs/adr). It owns parsing, building, and
 // canonicalizing PURLs — including qualifiers and subpath, which the legacy
 // root helpers cannot represent — the one purl-type mapping table, and the
 // per-ecosystem split of an ecosystem-native name back into org and name.

@@ -122,7 +122,7 @@ func Base(value string) string {
 // string wins when it canonicalizes, otherwise the parts are built —
 // qualifier- and subpath-capable, closing the gap where the legacy fallback
 // chain dropped both. This is the primitive the dependency-level identity
-// rewrite (ADR-0036) wraps.
+// rewrite (ADR-0041) wraps.
 func Canonical(existing string, p PURL) string {
 	if canonical := Canonicalize(existing); canonical != "" {
 		return canonical

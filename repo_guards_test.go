@@ -12,10 +12,10 @@ import (
 )
 
 // boundedImports lists parsing libraries that may only be imported from their
-// owning subpackage (ADR-0038 in bomly-cli's dev-docs/adr): that package is
+// owning subpackage (ADR-0040 in bomly-cli's dev-docs/adr): that package is
 // the single home for the behavior, and a direct import elsewhere
 // reintroduces the divergence it exists to end. The strict JSON readers are
-// bounded the same way for the opposite reason (ADR-0039): the SBOM codec
+// bounded the same way for the opposite reason (ADR-0026): the SBOM codec
 // refuses an ambiguous document on purpose, and the plugin wire in the root
 // package must keep decoding leniently, so nothing outside sbom/ may reach
 // for a reader that would tighten it by accident.
@@ -135,7 +135,7 @@ func TestThirdPartyParsersAreConfinedToTheirKits(t *testing.T) {
 					t.Errorf("%s imports legacy module %s outside its explicit compatibility allowlist", rel, value)
 					continue
 				}
-				t.Errorf("%s imports %s directly; that behavior belongs to %s/ (ADR-0038)", rel, value, bound.kitDir)
+				t.Errorf("%s imports %s directly; that behavior belongs to %s/ (ADR-0040)", rel, value, bound.kitDir)
 			}
 		}
 		return nil

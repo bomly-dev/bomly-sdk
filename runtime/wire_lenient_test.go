@@ -65,7 +65,7 @@ func wireV1TransportGraph(t *testing.T, payload string) *model.Graph {
 // The plugin wire keeps v1 decoding semantics, and these fixtures are what
 // stop that from changing by accident.
 //
-// ADR-0039 moves untrusted-document parsing to encoding/json/v2, whose
+// ADR-0026 moves untrusted-document parsing to encoding/json/v2, whose
 // defaults reject duplicate object names and invalid UTF-8. That is the right
 // posture for an SBOM a stranger produced. It is the wrong posture for this
 // wire: enabled plugins are trusted native processes launched by the user, so

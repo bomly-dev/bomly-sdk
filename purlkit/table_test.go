@@ -72,7 +72,7 @@ func TestEcosystemForTypeRows(t *testing.T) {
 
 func TestEcosystemForTypeRefusesHex(t *testing.T) {
 	// pkg:hex serves both Elixir and Erlang, and nothing in the PURL says
-	// which. The refusal IS the decision (ADR-0038): no second table may
+	// which. The refusal IS the decision (ADR-0040): no second table may
 	// quietly decide otherwise. This test pins the refusal.
 	if got, ok := EcosystemForType("hex"); ok {
 		t.Fatalf("EcosystemForType(hex) = (%q, true), want refusal", got)

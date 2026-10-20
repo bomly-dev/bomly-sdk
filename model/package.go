@@ -230,7 +230,7 @@ const maxExtractedLicenseTextLength = 128 * 1024
 // re-minted from its text, since spdxkit makes the text authoritative: a
 // reference that disagrees with the text it names would produce a document
 // whose citation resolves to the wrong license. And every other expression is
-// put to spdxkit -- the single home for SPDX expression semantics (ADR-0038) --
+// put to spdxkit -- the single home for SPDX expression semantics (ADR-0040) --
 // rather than trusted because it merely lacks a reference prefix.
 //
 // The expression that survives is the canonical one. spdxkit rewrites

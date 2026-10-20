@@ -19,7 +19,7 @@
 // This is a leaf: it imports the root package and nothing else, so the codec
 // (package sbom), the CLI's renderers, and its TUI can all reach it without
 // any of them depending on each other. It moved here with the codec
-// (bomly-cli ADR-0045): the package that names a document's children is the
+// (bomly-cli ADR-0040): the package that names a document's children is the
 // one that has to agree with the renderers about which children exist.
 //
 // PurlFor is a one-line delegation to model.NodePURL, kept so callers read one

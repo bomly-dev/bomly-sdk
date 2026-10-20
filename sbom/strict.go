@@ -97,7 +97,7 @@ type openObjectCost struct {
 }
 
 // requireUnambiguousJSON rejects a document that could be read two ways
-// (ADR-0039).
+// (ADR-0026).
 //
 // Under encoding/json's v1 semantics a repeated object name still parses, and
 // which value wins depends on the Go type being decoded into -- replacement
@@ -112,7 +112,7 @@ type openObjectCost struct {
 // says readers will not agree on such a text (see classifyStrictRefusal).
 //
 // This validates rather than decodes, and the distinction is deliberate. The
-// guarantee ADR-0039 makes, as amended, is exactly these three ambiguity
+// guarantee ADR-0026 makes is exactly these three ambiguity
 // classes, and no others. Decoding through encoding/json/v2 would also change field matching
 // from case-insensitive to case-sensitive and alter how the format libraries'
 // own unmarshalers are invoked -- behavior changes nobody validated and the ADR

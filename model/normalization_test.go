@@ -70,7 +70,7 @@ func TestNormalizePackageIdentityGoPath(t *testing.T) {
 
 	// The identity splits a Go module path at its trailing segment, so the
 	// module path is read back through the ecosystem-native accessor rather
-	// than the bare Name field (ADR-0021). The path is lowercased because the
+	// than the bare Name field (ADR-0041). The path is lowercased because the
 	// purl specification's golang type says so and the library applies that
 	// rule -- identity delegates type semantics rather than keeping a second
 	// opinion (ADR-0041).

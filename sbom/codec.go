@@ -81,7 +81,7 @@ func MarshalJSON(doc *Document, target Target, opts EncodeOptions) ([]byte, erro
 // UnmarshalJSON parses a target JSON SBOM into the intermediate document model.
 //
 // The document is checked for an unambiguous reading before any codec sees it
-// (ADR-0039). This is the one gate every ingest path shares, so a format added
+// (ADR-0026). This is the one gate every ingest path shares, so a format added
 // later inherits it rather than having to remember it.
 func UnmarshalJSON(data []byte, target Target) (*Document, error) {
 	c, ok := codecs[target]
