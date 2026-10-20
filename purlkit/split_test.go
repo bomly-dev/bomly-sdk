@@ -25,7 +25,7 @@ func TestSplitEcosystemName(t *testing.T) {
 		{"swift", "swift", "github.com/apple/swift-log", "github.com/apple", "swift-log"},
 		{"github actions", "github-actions", "actions/checkout", "actions", "checkout"},
 		// Outside the join list the whole input is the name: for OS packages
-		// the org is a distro, never part of the package name (ADR-0021).
+		// the org is a distro, never part of the package name (ADR-0041).
 		{"apk keeps whole", "apk", "alpine/libcrypto3", "", "alpine/libcrypto3"},
 		{"python keeps whole", "python", "requests", "", "requests"},
 		{"unknown ecosystem", "does-not-exist", "a/b", "", "a/b"},

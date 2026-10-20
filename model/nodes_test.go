@@ -52,7 +52,7 @@ func TestDependencyIdentityOverridesContradictingCoordinates(t *testing.T) {
 	}
 	// Coordinates project from the identity, which splits a Go module path
 	// at its trailing segment; the ecosystem-native form comes back through
-	// the accessors, which is what external lookups must use (ADR-0021).
+	// the accessors, which is what external lookups must use (ADR-0041).
 	if got := goNode.EcosystemName(); got != "github.com/example/lib/v2" {
 		t.Fatalf("EcosystemName() = %q, want the rejoined module path", got)
 	}

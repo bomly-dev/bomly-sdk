@@ -373,7 +373,7 @@ func normalizeLocatorByKind(locator string, kind LocatorKind) (string, bool) {
 		}
 		return normalizeIRIReference(locator)
 	case LocatorKindPURL:
-		// purlkit is the single home for package URL semantics (ADR-0038),
+		// purlkit is the single home for package URL semantics (ADR-0040),
 		// so the locator is held to the same standard a dependency identity
 		// is -- including the per-type profile rules.
 		if err := purlkit.ValidateString(locator); err != nil {

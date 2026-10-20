@@ -1,5 +1,5 @@
 // Package spdxkit is the single home for SPDX license behavior in the Bomly
-// SDK (ADR-0038 in bomly-cli's dev-docs/adr): expression validation,
+// SDK (ADR-0040 in bomly-cli's dev-docs/adr): expression validation,
 // classification, deprecated-identifier canonicalization, and deterministic
 // LicenseRef minting.
 //

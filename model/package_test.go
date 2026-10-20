@@ -262,7 +262,7 @@ func TestPackageLicenseValidatesGeneralExpressions(t *testing.T) {
 	})
 
 	t.Run("a deprecated identifier is canonicalized", func(t *testing.T) {
-		// spdxkit owns the replacement map (ADR-0038); Value keeps what the
+		// spdxkit owns the replacement map (ADR-0040); Value keeps what the
 		// source said while the expression is the form Bomly will publish.
 		normalized, ok := PackageLicense{Value: "GPL-2.0", SPDXExpression: "GPL-2.0"}.Normalized()
 		if !ok {

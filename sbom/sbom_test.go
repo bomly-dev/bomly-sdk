@@ -480,7 +480,7 @@ func TestDetectJSONTarget_DetectsSupportedFormats(t *testing.T) {
 	// Recognized, not decoded: the plugin copies of this codec named the
 	// syft format so the refusal could point at the conversion path, and the
 	// CLI copy reported a generic unsupported format. The union keeps the
-	// more specific answer (bomly-cli ADR-0045).
+	// more specific answer (bomly-cli ADR-0040).
 	syftData := mustSyftJSONFixture(t)
 	if target, err := DetectJSONTarget(syftData); err != nil || target != TargetSyftJSON {
 		t.Fatalf("DetectJSONTarget(syft) = (%q, %v), want the syft target recognized", target, err)

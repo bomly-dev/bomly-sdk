@@ -37,7 +37,7 @@ func BuildPackageURL(purlType, namespace, name, version string) string {
 //
 // Prefer this over BuildPackageURL wherever both tokens are known, which is
 // every detector. The type is not a parameter here, so a caller cannot pick
-// one: the mapping is purlkit's (ADR-0038) and stays there.
+// one: the mapping is purlkit's (ADR-0040) and stays there.
 //
 // That matters for a reason a code-review rule could not reach. The type
 // depends on BOTH tokens, and passing one is silently wrong in at least one

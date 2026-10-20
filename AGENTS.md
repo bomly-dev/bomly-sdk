@@ -19,9 +19,9 @@ them sit the helper subpackages (`purlkit`, `spdxkit`, `system`, `filecache`,
 `logkit`, `detectorkit`, `matcherkit`, `testkit`, `conformance`), the SBOM
 codec (`sbom`, with `graphview` beside it), which the CLI and the Syft and
 Grype plugins adopt from the release that carries it in place of the copies
-they carried (bomly-cli ADR-0045), and the scan record (`scan`): the
+they carried (bomly-cli ADR-0040), and the scan record (`scan`): the
 document `bomly scan --json` emits from the release that adopts it
-(bomly-cli ADR-0046), versioned as `bomly.scan.v1`.
+(bomly-cli ADR-0011), versioned as `bomly.scan.v1`.
 
 ## This module is the source of truth
 
@@ -45,8 +45,19 @@ out nor a reason to let it in.
 
 Bomly's architecture decisions live in
 [`bomly-cli/dev-docs/adr/`](https://github.com/bomly-dev/bomly-cli/tree/main/dev-docs/adr);
-decisions that shape this module's surface are recorded there even when the
-code lands here.
+this repository has no ADR directory of its own, and a decision that shapes
+this module's surface is recorded there even when the code lands here.
+
+**An ADR records a decision, not an implementation.** Write one only when a
+real alternative exists that someone would propose again, reversing the choice
+is expensive (an output or wire contract, a cross-repository or security
+boundary, a public claim), and the reason is not visible from the code or a
+guard's message. About 300 words, never more than about 400, one decision per
+file, with the rejected alternative and what enforces it; revise in place
+rather than appending amendments. Everything else is a doc comment on the code
+or a paragraph in this file. The full rule is
+[`bomly-cli/dev-docs/adr/README.md`](https://github.com/bomly-dev/bomly-cli/blob/main/dev-docs/adr/README.md);
+the same section appears in bomly-cli's `AGENTS.md`, so change both together.
 
 ### A specification outranks anything Bomly wrote
 

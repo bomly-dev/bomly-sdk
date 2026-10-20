@@ -3,7 +3,7 @@ package purlkit
 import "strings"
 
 // TypeForValues maps ecosystem / package-manager / package-type tokens to a
-// package-url type. It is the one authority for this mapping (ADR-0038); the
+// package-url type. It is the one authority for this mapping (ADR-0040); the
 // root PackageURLTypeForValues delegates here after converting its typed
 // arguments to strings.
 //

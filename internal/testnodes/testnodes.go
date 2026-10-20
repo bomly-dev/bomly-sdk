@@ -21,7 +21,7 @@
 // testing.TB, so a table entry stays one expression.
 //
 // Internal to this module and test-only: the codec's tests came here from the
-// CLI with these fixtures already written against it (bomly-cli ADR-0045).
+// CLI with these fixtures already written against it (bomly-cli ADR-0040).
 // Nothing outside a test file may import it; a fixture that panics on a
 // coordinate the constructor refuses is right for a test and wrong for a
 // scan.
