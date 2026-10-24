@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -194,6 +195,33 @@ func TestComponentScopeAttemptsEveryCleanup(t *testing.T) {
 	}
 }
 
+// TestComponentScopeSecondCloseWaitsForTheFirst: a Close that arrives while
+// the first is still running cleanups must not report success early.
+func TestComponentScopeSecondCloseWaitsForTheFirst(t *testing.T) {
+	scope := NewComponentScope(context.Background(), "slow-cleanup")
+	release := make(chan struct{})
+	started := make(chan struct{})
+	errSlow := errors.New("slow failed")
+	scope.OnCleanup(func() error {
+		close(started)
+		<-release
+		return errSlow
+	})
+	go func() { _ = scope.Close() }()
+	<-started
+	second := make(chan error, 1)
+	go func() { second <- scope.Close() }()
+	select {
+	case err := <-second:
+		t.Fatalf("second Close returned %v while the first was still running cleanups", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(release)
+	if err := <-second; !errors.Is(err, errSlow) {
+		t.Errorf("second Close = %v, want the first Close's error", err)
+	}
+}
+
 // TestComponentScopeContextEndsWithTheLifetime: the constructor's context is
 // cancelled by Close -- before the cleanups run, so a goroutine watching it
 // stops before its resources go -- and by the parent, which runs nothing.
@@ -240,7 +268,13 @@ func TestComponentScopeLateRegistrationRunsAtOnce(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 	ran := false
-	scope.OnCleanup(func() error { ran = true; return errors.New("dropped") })
+	scope.OnCleanup(func() error {
+		ran = true
+		if scope.Context().Err() == nil {
+			t.Error("a late cleanup ran before the lifetime context was cancelled")
+		}
+		return errors.New("dropped")
+	})
 	if !ran {
 		t.Error("a cleanup registered after Close did not run")
 	}

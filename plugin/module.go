@@ -77,6 +77,7 @@ type ComponentScope struct {
 	cleanups []func() error
 	closed   bool
 	closeErr error
+	done     chan struct{} // closed once the first Close has run every cleanup
 }
 
 // NewComponentScope starts a lifetime for the named component, derived from
@@ -87,7 +88,7 @@ func NewComponentScope(parent context.Context, component string) *ComponentScope
 		parent = context.Background()
 	}
 	ctx, cancel := context.WithCancel(parent)
-	return &ComponentScope{component: component, ctx: ctx, cancel: cancel}
+	return &ComponentScope{component: component, ctx: ctx, cancel: cancel, done: make(chan struct{})}
 }
 
 // Context returns the component's lifetime context: the one to pass to a
@@ -119,19 +120,24 @@ func (s *ComponentScope) OnCleanup(fn func() error) {
 // registered cleanup in reverse registration order, each at most once. A
 // cleanup that fails or panics does not stop the rest; the failures are
 // joined, each prefixed with the component name. A second Close runs
-// nothing and returns the first Close's error.
+// nothing: it waits for the first to finish and returns its error, so no
+// caller sees success while cleanups are still running.
 func (s *ComponentScope) Close() error {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
+		<-s.done
 		return s.closeErr
 	}
+	// Cancelled before closed is visible, so a late OnCleanup -- which runs
+	// at once once closed is set -- never runs ahead of the cancellation.
+	s.cancel()
 	s.closed = true
 	cleanups := s.cleanups
 	s.cleanups = nil
 	s.mu.Unlock()
 
-	s.cancel()
+	defer close(s.done)
 	var errs []error
 	for i := len(cleanups) - 1; i >= 0; i-- {
 		if err := runCleanup(cleanups[i]); err != nil {

@@ -1116,12 +1116,20 @@ func TestPackageMarshalDoesNotMutateTheHoldersVulnerabilities(t *testing.T) {
 // and typed npm metadata -- and fails on any memory the clone still shares.
 func TestPackageCloneSharesNothing(t *testing.T) {
 	source := filledPackage("pkg:npm/left-pad@1.3.0")
+	// A nested empty object stays {} rather than becoming a nil map, which
+	// would encode as null; npm metadata held by value is copied too.
+	source.Metadata["empty"] = map[string]any{"labels": map[string]any{}}
+	source.Metadata["npm-by-value"] = NPMPackageMetadata{Engines: map[string]string{"node": ">=18"}}
 	clone := source.Clone()
 	if !reflect.DeepEqual(source, clone) {
 		t.Fatal("clone differs from its source")
 	}
 	assertSharesNothing(t, source, clone)
 
+	clone.Metadata["npm-by-value"].(NPMPackageMetadata).Engines["node"] = "changed"
+	if got := source.Metadata["npm-by-value"].(NPMPackageMetadata).Engines["node"]; got != ">=18" {
+		t.Errorf("source npm metadata held by value changed through the clone: %q", got)
+	}
 	clone.Metadata[MetadataKeyNPM].(*NPMPackageMetadata).PeerDependencies["peer"] = "changed"
 	if got := source.Metadata[MetadataKeyNPM].(*NPMPackageMetadata).PeerDependencies["peer"]; got != "^1" {
 		t.Errorf("source npm metadata changed through the clone: %q", got)
