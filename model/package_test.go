@@ -1109,3 +1109,23 @@ func TestPackageMarshalDoesNotMutateTheHoldersVulnerabilities(t *testing.T) {
 		t.Fatalf("marshal mutated the holder's package: %+v", p.Vulnerabilities)
 	}
 }
+
+// TestPackageCloneSharesNothing walks every field of a fully populated
+// package -- nested vulnerabilities, attestations, contacts, extension maps
+// and typed npm metadata -- and fails on any memory the clone still shares.
+func TestPackageCloneSharesNothing(t *testing.T) {
+	source := filledPackage("pkg:npm/left-pad@1.3.0")
+	clone := source.Clone()
+	if !reflect.DeepEqual(source, clone) {
+		t.Fatal("clone differs from its source")
+	}
+	assertSharesNothing(t, source, clone)
+
+	clone.Metadata[MetadataKeyNPM].(*NPMPackageMetadata).PeerDependencies["peer"] = "changed"
+	if got := source.Metadata[MetadataKeyNPM].(*NPMPackageMetadata).PeerDependencies["peer"]; got != "^1" {
+		t.Errorf("source npm metadata changed through the clone: %q", got)
+	}
+	if (*Package)(nil).Clone() != nil {
+		t.Error("a nil package clones to non-nil")
+	}
+}

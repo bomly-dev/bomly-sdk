@@ -2,6 +2,8 @@ package model
 
 import (
 	"errors"
+	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -1060,5 +1062,122 @@ func TestCanonicalLocationsFoldsSortsAndNormalizesScopes(t *testing.T) {
 	}
 	if CanonicalLocations(nil) != nil {
 		t.Fatal("nothing must canonicalize to nil")
+	}
+}
+
+// cloneFixtureGraph builds a graph with every node kind, typed edges, a
+// diamond, and a removed node whose slot sits on the free list, so a clone
+// that rebuilt rather than copied the slot table would iterate differently.
+func cloneFixtureGraph(t *testing.T) *Graph {
+	t.Helper()
+	g := New()
+	manifest := mustManifest(t, "package.json")
+	module := mustModule(t, "package.json", Coordinates{Ecosystem: EcosystemNPM, Name: "app", Version: "1.0.0"})
+	a := filledDependency(t, "pkg:npm/a@1.0.0")
+	b := filledDependency(t, "pkg:npm/b@1.0.0?arch=x86")
+	c := filledDependency(t, "pkg:npm/c@1.0.0")
+	gone := mustDepPURL(t, "pkg:npm/gone@1.0.0")
+	for _, node := range []GraphNode{manifest, module, a, gone, b, c} {
+		if err := g.AddNode(node); err != nil {
+			t.Fatalf("AddNode(%s): %v", node.NodeID(), err)
+		}
+	}
+	for _, edge := range [][2]string{
+		{manifest.NodeID(), module.NodeID()},
+		{module.NodeID(), a.NodeID()},
+		{module.NodeID(), b.NodeID()},
+		{a.NodeID(), c.NodeID()},
+		{b.NodeID(), c.NodeID()},
+		{a.NodeID(), gone.NodeID()},
+	} {
+		if err := g.AddEdge(edge[0], edge[1]); err != nil {
+			t.Fatalf("AddEdge(%s, %s): %v", edge[0], edge[1], err)
+		}
+	}
+	if !g.RemoveNode(gone.NodeID()) {
+		t.Fatal("RemoveNode reported the fixture node absent")
+	}
+	return g
+}
+
+// TestGraphCloneSharesNothing proves the clone is the same graph -- nodes,
+// edges, edge kinds, slot layout and every derived view -- with no memory in
+// common, and that mutating either side leaves the other unchanged.
+func TestGraphCloneSharesNothing(t *testing.T) {
+	source := cloneFixtureGraph(t)
+	clone := source.Clone()
+	if !reflect.DeepEqual(source, clone) {
+		t.Fatal("clone differs from its source")
+	}
+	assertSharesNothing(t, source, clone)
+	if source.PrettyTree() != clone.PrettyTree() {
+		t.Errorf("clone renders differently:\n%s\nvs\n%s", source.PrettyTree(), clone.PrettyTree())
+	}
+	sourceOrder, err := source.TopologicalSort()
+	if err != nil {
+		t.Fatalf("source TopologicalSort: %v", err)
+	}
+	cloneOrder, err := clone.TopologicalSort()
+	if err != nil {
+		t.Fatalf("clone TopologicalSort: %v", err)
+	}
+	if !slices.Equal(idsOf(sourceOrder), idsOf(cloneOrder)) {
+		t.Errorf("topological order differs: %v vs %v", idsOf(sourceOrder), idsOf(cloneOrder))
+	}
+
+	before := source.PrettyString()
+	cloneA, _ := clone.DependencyNode("pkg:npm/a@1.0.0")
+	cloneA.Scopes = append(cloneA.Scopes[:0], ScopeDevelopment)
+	cloneA.Metadata["added"] = true
+	if !clone.RemoveEdge("pkg:npm/a@1.0.0", "pkg:npm/c@1.0.0") {
+		t.Fatal("clone lost an edge")
+	}
+	if err := clone.AddNode(mustDepPURL(t, "pkg:npm/new@1.0.0")); err != nil {
+		t.Fatalf("AddNode on the clone: %v", err)
+	}
+	clone.RemoveNode("pkg:npm/b@1.0.0?arch=x86")
+	if got := source.PrettyString(); got != before {
+		t.Errorf("mutating the clone changed the source:\n%s\nvs\n%s", before, got)
+	}
+	sourceA, _ := source.DependencyNode("pkg:npm/a@1.0.0")
+	if _, ok := sourceA.Metadata["added"]; ok || slices.Contains(sourceA.Scopes, ScopeDevelopment) {
+		t.Error("mutating a cloned node changed the source node")
+	}
+
+	// And the other way: the source moving on is invisible to the clone.
+	again := source.Clone()
+	source.RemoveNode("pkg:npm/c@1.0.0")
+	if _, ok := again.Node("pkg:npm/c@1.0.0"); !ok {
+		t.Error("removing a node from the source removed it from the clone")
+	}
+
+	if (*Graph)(nil).Clone() != nil {
+		t.Error("a nil graph clones to non-nil")
+	}
+	empty := New().Clone()
+	if empty.Size() != 0 || empty.AddNode(mustDepPURL(t, "pkg:npm/x@1.0.0")) != nil {
+		t.Error("an empty graph's clone is not a usable empty graph")
+	}
+}
+
+func BenchmarkGraphClone(b *testing.B) {
+	g := New()
+	var previous string
+	for i := range 500 {
+		node := mustDepPURL(b, fmt.Sprintf("pkg:npm/dep-%d@1.0.0", i))
+		node.Metadata = map[string]any{"index": i}
+		if err := g.AddNode(node); err != nil {
+			b.Fatal(err)
+		}
+		if previous != "" {
+			if err := g.AddEdge(previous, node.NodeID()); err != nil {
+				b.Fatal(err)
+			}
+		}
+		previous = node.NodeID()
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = g.Clone()
 	}
 }

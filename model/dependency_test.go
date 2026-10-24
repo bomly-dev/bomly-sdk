@@ -1,6 +1,9 @@
 package model
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestDependencyRegistryMatchEligible(t *testing.T) {
 	// Eligibility is a DependencyNode method now: ownership and structure are
@@ -49,4 +52,16 @@ func TestDependencyRegistryMatchEligible(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestDependencyNodeCloneSharesNothing covers the unexported identity state
+// -- the parsed purl's qualifiers and the constructor warnings -- as well as
+// every exported field.
+func TestDependencyNodeCloneSharesNothing(t *testing.T) {
+	source := filledDependency(t, "pkg:npm/%40scope/name@1.0.0?arch=x86&os=linux")
+	clone := source.Clone()
+	if !reflect.DeepEqual(source, clone) {
+		t.Fatal("clone differs from its source")
+	}
+	assertSharesNothing(t, source, clone)
 }

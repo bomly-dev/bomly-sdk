@@ -1,6 +1,9 @@
 package model
 
-import "sort"
+import (
+	"slices"
+	"sort"
+)
 
 // PackageRegistry is the PURL-keyed, deduplicated set of matching artifacts
 // produced by the matching stage. Detection produces Dependency nodes that
@@ -14,6 +17,31 @@ type PackageRegistry struct {
 // NewPackageRegistry creates an empty registry.
 func NewPackageRegistry() *PackageRegistry {
 	return &PackageRegistry{byPURL: make(map[string]*Package)}
+}
+
+// Clone returns a deep copy of the registry that shares no mutable memory
+// with it: every package is copied through Package.Clone, and insertion
+// order is kept, so Merge from the copy folds in the same order as from the
+// source. The copy is taken as stored, not re-gated -- every package already
+// passed Add -- so a snapshot is the registry, not a normalized restatement
+// of it. A nil registry clones to nil.
+//
+// A host hands each matcher and analyzer a clone and commits the component's
+// result only when the call succeeds, which is what makes an embedded
+// component that mutates its request and then fails behave like a managed
+// one, whose request crossed the wire as a copy.
+func (r *PackageRegistry) Clone() *PackageRegistry {
+	if r == nil {
+		return nil
+	}
+	clone := &PackageRegistry{
+		byPURL: make(map[string]*Package, len(r.byPURL)),
+		order:  slices.Clone(r.order),
+	}
+	for purl, pkg := range r.byPURL {
+		clone.byPURL[purl] = pkg.Clone()
+	}
+	return clone
 }
 
 // AddEntryPackages folds the detection-time package facts carried on each

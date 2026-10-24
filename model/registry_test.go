@@ -2,6 +2,8 @@ package model
 
 import (
 	"encoding/json"
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -167,4 +169,106 @@ func TestAddEntryPackagesGoesThroughAdd(t *testing.T) {
 	}
 	var nilRegistry *PackageRegistry
 	nilRegistry.AddEntryPackages(nil)
+}
+
+// TestPackageRegistryCloneSharesNothing proves the clone holds the same
+// packages in the same insertion order with no memory in common, in both
+// directions of mutation.
+func TestPackageRegistryCloneSharesNothing(t *testing.T) {
+	source := NewPackageRegistry()
+	for _, purl := range []string{"pkg:npm/b@1.0.0", "pkg:npm/a@1.0.0", "pkg:npm/c@1.0.0"} {
+		source.Add(filledPackage(purl))
+	}
+	clone := source.Clone()
+	if !reflect.DeepEqual(source, clone) {
+		t.Fatal("clone differs from its source")
+	}
+	assertSharesNothing(t, source, clone)
+
+	before, err := json.Marshal(source)
+	if err != nil {
+		t.Fatalf("marshal source: %v", err)
+	}
+	pkg, _ := clone.Get("pkg:npm/a@1.0.0")
+	pkg.Vulnerabilities[0].ID = "CHANGED"
+	pkg.Licenses = append(pkg.Licenses, PackageLicense{Value: "MIT"})
+	clone.Ensure("pkg:npm/new@1.0.0")
+	clone.Add(&Package{Coordinates: Coordinates{PURL: "pkg:npm/b@1.0.0"}, Matched: true, Vulnerabilities: []Vulnerability{{Source: "osv", ID: "GHSA-new"}}})
+	after, err := json.Marshal(source)
+	if err != nil {
+		t.Fatalf("marshal source: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Error("mutating the clone changed the source registry")
+	}
+
+	again := source.Clone()
+	source.Ensure("pkg:npm/late@1.0.0")
+	if _, ok := again.Get("pkg:npm/late@1.0.0"); ok {
+		t.Error("a package added to the source appeared in the clone")
+	}
+
+	if (*PackageRegistry)(nil).Clone() != nil {
+		t.Error("a nil registry clones to non-nil")
+	}
+	if empty := NewPackageRegistry().Clone(); empty.Len() != 0 || empty.Ensure("pkg:npm/x@1.0.0") == nil {
+		t.Error("an empty registry's clone is not a usable empty registry")
+	}
+}
+
+// TestPackageRegistryCloneIsNotAJSONRoundTrip keeps the snapshot a host takes
+// before every component call off the codec path. A round trip would
+// normalize -- so the copy would not be the source -- and costs several
+// times the allocations; the bound is loose enough to survive new fields and
+// tight enough to fail if Clone were ever rewritten as Marshal+Unmarshal.
+func TestPackageRegistryCloneIsNotAJSONRoundTrip(t *testing.T) {
+	registry := NewPackageRegistry()
+	for i := range 50 {
+		registry.Add(enrichedPackage(i))
+	}
+	cloneAllocs := testing.AllocsPerRun(5, func() { _ = registry.Clone() })
+	roundTripAllocs := testing.AllocsPerRun(5, func() {
+		data, err := json.Marshal(registry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded PackageRegistry
+		if err := json.Unmarshal(data, &decoded); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if cloneAllocs*2 > roundTripAllocs {
+		t.Errorf("Clone allocates %.0f times against a JSON round trip's %.0f; it should be well under half", cloneAllocs, roundTripAllocs)
+	}
+}
+
+// enrichedPackage is a package shaped like a matched one -- valid enums, a
+// license, two advisories with an analysis, npm metadata -- that the codecs
+// accept, so a round trip measures the codec rather than an early error.
+func enrichedPackage(i int) *Package {
+	return &Package{
+		Coordinates: Coordinates{PURL: fmt.Sprintf("pkg:npm/dep-%d@1.0.0", i), Ecosystem: EcosystemNPM, Name: fmt.Sprintf("dep-%d", i), Version: "1.0.0"},
+		Assertions: Assertions{
+			Description: "a dependency",
+			Licenses:    []PackageLicense{{Value: "MIT", SPDXExpression: "MIT", Type: LicenseTypeDeclared}},
+			CPEs:        []string{"cpe:2.3:a:acme:dep:1.0.0:*:*:*:*:*:*:*"},
+		},
+		Vulnerabilities: []Vulnerability{
+			{Source: "osv", ID: fmt.Sprintf("GHSA-%d-a", i), Summary: "first", Aliases: []string{"CVE-2024-1"}},
+			{Source: "osv", ID: fmt.Sprintf("GHSA-%d-b", i), Summary: "second", DatabaseSpecific: map[string]any{"severity": "HIGH"}},
+		},
+		Matched:  true,
+		Metadata: map[string]any{"nested": map[string]any{"list": []any{"a", "b"}}},
+	}
+}
+
+func BenchmarkPackageRegistryClone(b *testing.B) {
+	registry := NewPackageRegistry()
+	for i := range 500 {
+		registry.Add(enrichedPackage(i))
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = registry.Clone()
+	}
 }

@@ -3,6 +3,8 @@ package model
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -730,6 +732,18 @@ type NPMPackageMetadata struct {
 	PeerDependencies         map[string]string `json:"peerDependencies,omitempty"`
 	OptionalPeerDependencies []string          `json:"optionalPeerDependencies,omitempty"`
 	Engines                  map[string]string `json:"engines,omitempty"`
+}
+
+// Clone returns a deep copy of the npm metadata.
+func (m *NPMPackageMetadata) Clone() *NPMPackageMetadata {
+	if m == nil {
+		return nil
+	}
+	clone := *m
+	clone.PeerDependencies = maps.Clone(m.PeerDependencies)
+	clone.OptionalPeerDependencies = slices.Clone(m.OptionalPeerDependencies)
+	clone.Engines = maps.Clone(m.Engines)
+	return &clone
 }
 
 // QualifiedName returns the package name prefixed with its organization when present.

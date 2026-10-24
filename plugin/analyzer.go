@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"slices"
 
 	"github.com/bomly-dev/bomly-sdk/model"
 )
@@ -71,6 +72,23 @@ type AnalyzeRequest struct {
 	// only when this is true.
 	AcceptPackageUpdates bool      `json:"acceptPackageUpdates,omitempty"`
 	Stderr               io.Writer `json:"-"`
+}
+
+// Clone returns a deep copy of the request that shares no mutable memory
+// with it, on the terms MatchRequest.Clone states: the graph, registry and
+// target are copied, every slice is copied, and Stderr is kept as the host's
+// writer.
+func (r AnalyzeRequest) Clone() AnalyzeRequest {
+	clone := r
+	clone.SubprojectInfo = r.SubprojectInfo.Clone()
+	clone.Graph = r.Graph.Clone()
+	clone.Registry = r.Registry.Clone()
+	clone.Target = r.Target.Clone()
+	clone.AnalyzerFilter = AnalyzerFilter{
+		Include: slices.Clone(r.AnalyzerFilter.Include),
+		Exclude: slices.Clone(r.AnalyzerFilter.Exclude),
+	}
+	return clone
 }
 
 // ReachabilityStats tallies the per-analyzer outcome distribution.

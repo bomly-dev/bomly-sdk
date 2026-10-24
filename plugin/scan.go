@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 
 	"github.com/bomly-dev/bomly-sdk/model"
@@ -95,6 +96,15 @@ type Subproject struct {
 	DetectedPackageManagers []model.PackageManager `json:"detectedPackageManagers,omitempty"`
 	PlannedDetectors        []string               `json:"plannedDetectors,omitempty"`
 	Ecosystem               model.Ecosystem        `json:"ecosystem,omitempty"`
+}
+
+// Clone returns a deep copy of the subproject: its slices are copied, so a
+// component handed the copy cannot reorder the host's planned detectors.
+func (s Subproject) Clone() Subproject {
+	clone := s
+	clone.DetectedPackageManagers = slices.Clone(s.DetectedPackageManagers)
+	clone.PlannedDetectors = slices.Clone(s.PlannedDetectors)
+	return clone
 }
 
 // PrimaryPackageManager returns the first entry in DetectedPackageManagers, or
