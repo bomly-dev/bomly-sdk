@@ -1254,8 +1254,7 @@ func packageMergeFieldNames() []string {
 	var names []string
 	var collect func(reflect.Type)
 	collect = func(typ reflect.Type) {
-		for i := range typ.NumField() {
-			field := typ.Field(i)
+		for field := range typ.Fields() {
 			if !field.IsExported() {
 				continue
 			}

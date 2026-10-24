@@ -21,9 +21,12 @@
 //	}
 //
 // ServeModule builds the managed plugin.HostContext (a stderr logger, an HTTP
-// client provider from the BOMLY_HTTP_* environment via httpkit, and config
-// decoding from the file named by BOMLY_PLUGIN_CONFIG_FILE) and adapts the
-// component to the wire protocol. ServeDetector, ServeMatcher, ServeAuditor,
+// client provider from the BOMLY_HTTP_* environment via httpkit, config
+// decoding from the file named by BOMLY_PLUGIN_CONFIG_FILE, and a
+// process-lifetime scope for OnCleanup) and adapts the component to the wire
+// protocol. It constructs the component under that lifetime rather than the
+// first request's context, and runs its cleanups when the host shuts the
+// plugin down. ServeDetector, ServeMatcher, ServeAuditor,
 // and ServeAnalyzer serve a hand-written ServedDetector, ServedMatcher,
 // ServedAuditor, or ServedAnalyzer directly; they use the same request and
 // response types as the in-process contract in the plugin package.

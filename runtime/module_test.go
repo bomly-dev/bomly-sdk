@@ -3,8 +3,11 @@ package runtime
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -24,6 +27,7 @@ func (fakeHostContext) Runtime() plugin.RuntimeInfo {
 	return plugin.RuntimeInfo{Execution: plugin.ExecutionManaged}
 }
 func (fakeHostContext) DecodeConfig(any) error { return nil }
+func (fakeHostContext) OnCleanup(func() error) {}
 
 // fakeModuleDetector implements Detector (and InstallFirstDetector) for the
 // adapter round-trip tests.
@@ -221,5 +225,117 @@ func TestServedMatcherModuleRoundTrip(t *testing.T) {
 	result, err := unmarshalBytes[plugin.MatchResponse](matchOut.Value)
 	if err != nil || result.MatcherStats.MatchedPackages != 3 {
 		t.Fatalf("match round-trip mismatch: %+v err=%v", result, err)
+	}
+}
+
+// TestLazyComponentOutlivesTheFirstRequest is the defect this construction
+// path exists to fix: the component used to be built under the first RPC's
+// context, so anything it tied to that context died when the RPC returned.
+func TestLazyComponentOutlivesTheFirstRequest(t *testing.T) {
+	host := newManagedHostContext("lifetime")
+	var constructed context.Context
+	lazy := &lazyComponent[plugin.Matcher]{
+		newFn: func(ctx context.Context, _ plugin.HostContext) (plugin.Matcher, error) {
+			constructed = ctx
+			return nil, nil
+		},
+		host: host,
+	}
+	request, cancel := context.WithCancel(context.Background())
+	if _, err := lazy.get(request); err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	cancel()
+	if constructed.Err() != nil {
+		t.Fatal("the constructor's context ended with the first request")
+	}
+	if err := host.scope.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if constructed.Err() == nil {
+		t.Error("the constructor's context outlived the component's lifetime")
+	}
+}
+
+// TestLazyComponentWaitIsBoundedByTheRequest: a request that gives up on a
+// slow constructor abandons its wait, not the construction, and the next
+// request receives the component built once.
+func TestLazyComponentWaitIsBoundedByTheRequest(t *testing.T) {
+	release := make(chan struct{})
+	var calls atomic.Int32
+	lazy := &lazyComponent[*fakeModuleDetector]{
+		newFn: func(context.Context, plugin.HostContext) (*fakeModuleDetector, error) {
+			calls.Add(1)
+			<-release
+			return &fakeModuleDetector{}, nil
+		},
+		host: newManagedHostContext("slow"),
+	}
+	impatient, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := lazy.get(impatient); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("get with an expired request = %v, want a deadline error", err)
+	}
+	close(release)
+	component, err := lazy.get(context.Background())
+	if err != nil || component == nil {
+		t.Fatalf("get after construction finished = %v, %v", component, err)
+	}
+	if calls.Load() != 1 {
+		t.Errorf("constructor ran %d times, want once", calls.Load())
+	}
+}
+
+// TestLazyComponentNeverFinishingConstructorEndsWithTheScope: a constructor
+// that blocks on its context is released when the component's lifetime
+// ends, and its error is what later requests see.
+func TestLazyComponentNeverFinishingConstructorEndsWithTheScope(t *testing.T) {
+	host := newManagedHostContext("stuck")
+	lazy := &lazyComponent[*fakeModuleDetector]{
+		newFn: func(ctx context.Context, _ plugin.HostContext) (*fakeModuleDetector, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+		host: host,
+	}
+	impatient, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := lazy.get(impatient); err == nil {
+		t.Fatal("a request waiting on a stuck constructor succeeded")
+	}
+	if err := host.scope.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if _, err := lazy.get(context.Background()); !errors.Is(err, context.Canceled) {
+		t.Errorf("get after the lifetime ended = %v, want the constructor's cancellation", err)
+	}
+}
+
+// TestLazyComponentContainsConstructorPanic: construction runs on its own
+// goroutine, where an uncontained panic would end the plugin process.
+func TestLazyComponentContainsConstructorPanic(t *testing.T) {
+	lazy := &lazyComponent[*fakeModuleDetector]{
+		newFn: func(context.Context, plugin.HostContext) (*fakeModuleDetector, error) {
+			panic("constructor bug")
+		},
+		host: newManagedHostContext("panicky"),
+	}
+	if _, err := lazy.get(context.Background()); err == nil || !strings.Contains(err.Error(), "panic: constructor bug") {
+		t.Errorf("get = %v, want the contained panic", err)
+	}
+}
+
+// TestManagedHostContextRunsCleanupsOnClose: the managed host's OnCleanup
+// lands on the scope ServeModule closes after the transport stops.
+func TestManagedHostContextRunsCleanupsOnClose(t *testing.T) {
+	host := newManagedHostContext("managed")
+	var order []int
+	host.OnCleanup(func() error { order = append(order, 1); return nil })
+	host.OnCleanup(func() error { order = append(order, 2); return nil })
+	if err := host.scope.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if !slices.Equal(order, []int{2, 1}) {
+		t.Errorf("cleanup order = %v, want [2 1]", order)
 	}
 }

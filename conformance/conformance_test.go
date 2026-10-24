@@ -198,6 +198,7 @@ replace github.com/bomly-dev/bomly-sdk => %s
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/bomly-dev/bomly-sdk/plugin"
 	"github.com/bomly-dev/bomly-sdk/runtime"
@@ -237,6 +238,11 @@ func main() {
 				if err := host.DecodeConfig(&m.config); err != nil {
 					return nil, fmt.Errorf("decode config: %w", err)
 				}
+				// The lifecycle probe: a cleanup that leaves a mark, so the
+				// test can see it ran when the host shut the plugin down.
+				if marker := os.Getenv("BOMLY_CONFORMANCE_CLEANUP_MARKER"); marker != "" {
+					host.OnCleanup(func() error { return os.WriteFile(marker, []byte("cleaned"), 0o600) })
+				}
 				return m, nil
 			},
 		},
@@ -267,6 +273,35 @@ func main() {
 
 	ProbeBinary(t, binaryPath)
 	ProbeBinary(t, binaryPath, WithModule(fakeMatcherModule()))
+	assertManagedCleanupRunsOnShutdown(t, binaryPath)
+}
+
+// assertManagedCleanupRunsOnShutdown is the managed half of the lifecycle
+// contract, over the real transport: a cleanup the constructor registered
+// runs when the host shuts the plugin down with go-plugin's ordinary Kill,
+// which closes the connection and lets ServeModule return before it would
+// force the process down. No RPC is involved, so a host of any SDK version
+// gets this.
+func assertManagedCleanupRunsOnShutdown(t *testing.T, binaryPath string) {
+	t.Helper()
+	marker := filepath.Join(t.TempDir(), "cleanup-marker")
+	cmd := exec.Command(binaryPath)
+	cmd.Env = append(os.Environ(), "BOMLY_CONFORMANCE_CLEANUP_MARKER="+marker)
+	service, shutdown := startManagedPlugin(t, cmd)
+	defer shutdown()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	// Ready is the first call that needs the component, so it constructs it.
+	if _, err := service.MatcherReady(ctx, &plugin.MatchRequest{}); err != nil {
+		t.Fatalf("MatcherReady: %v", err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the cleanup ran before shutdown")
+	}
+	shutdown()
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "cleaned" {
+		t.Errorf("the component's cleanup did not run on shutdown: %q, %v", data, err)
+	}
 }
 
 // sdkModuleRoot resolves the SDK checkout root from this file's location.

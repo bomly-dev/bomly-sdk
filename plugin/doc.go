@@ -6,10 +6,19 @@
 // managed plugin.
 //
 // A component reaches host services only through HostContext -- a logger, an
-// HTTP client provider, runtime information, and DecodeConfig for its own
-// configuration block -- and is otherwise a pure function of its request. It
-// does not know which execution mode it is in: the embedded host and the
-// managed transport (the runtime package) both satisfy HostContext.
+// HTTP client provider, runtime information, DecodeConfig for its own
+// configuration block, and OnCleanup for releasing what it acquired -- and is
+// otherwise a pure function of its request. It does not know which execution
+// mode it is in: the embedded host and the managed transport (the runtime
+// package) both satisfy HostContext, and both give it the same lifetime. Its
+// constructor's context lasts as long as the component, and the cleanups it
+// registers run in reverse order when that lifetime ends; ComponentScope is
+// the implementation a host uses.
+//
+// A matcher or analyzer receives a copy of the host's graph and registry
+// (MatchRequest.Clone, AnalyzeRequest.Clone), and the host keeps what it
+// returns only when the call succeeds: changing the request in place and then
+// failing leaves the host's state as it was, in both execution modes.
 //
 // A plugin binary packages its component as a Module and serves it from main
 // through the runtime package:

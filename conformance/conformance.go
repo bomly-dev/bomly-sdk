@@ -76,7 +76,7 @@ func Test(t *testing.T, cfg Config) {
 	})
 
 	host := newStubHostContext(cfg.SampleConfig)
-	component, err := constructComponent(context.Background(), cfg.Module, host)
+	component, err := constructComponent(host.scope.Context(), cfg.Module, host)
 	t.Run("construct", func(t *testing.T) {
 		if err != nil {
 			t.Fatalf("module New: %v", err)
@@ -86,6 +86,11 @@ func Test(t *testing.T, cfg Config) {
 		}
 	})
 	if err != nil || component == nil {
+		// A constructor that failed after registering a cleanup still owes
+		// its release.
+		if closeErr := host.scope.Close(); closeErr != nil {
+			t.Errorf("cleanup after a failed construction: %v", closeErr)
+		}
 		return
 	}
 
@@ -105,6 +110,26 @@ func Test(t *testing.T, cfg Config) {
 		t.Run("manifest", func(t *testing.T) {
 			testManifest(t, cfg.Module, cfg.ManifestPath)
 		})
+	}
+
+	// Last, because it ends the component's lifetime: every cleanup the
+	// constructor registered must run and succeed, as it would when the host
+	// finishes a command or shuts the plugin down.
+	t.Run("lifecycle", func(t *testing.T) {
+		testLifecycle(t, host)
+	})
+}
+
+// testLifecycle closes the component's scope and holds its cleanups to the
+// contract: none fails or panics, and the constructor's context is
+// cancelled once the lifetime has ended.
+func testLifecycle(t *testing.T, host *stubHostContext) {
+	t.Helper()
+	if err := host.scope.Close(); err != nil {
+		t.Errorf("component cleanup failed: %v", err)
+	}
+	if host.scope.Context().Err() == nil {
+		t.Error("the constructor's context is still live after the component's lifetime ended")
 	}
 }
 
@@ -318,26 +343,8 @@ func ProbeBinary(t *testing.T, binaryPath string, opts ...ProbeOption) {
 		opt(&cfg)
 	}
 
-	client := hplugin.NewClient(&hplugin.ClientConfig{
-		HandshakeConfig:  runtime.HandshakeConfig(),
-		Plugins:          runtime.ClientPluginMap(),
-		Cmd:              exec.Command(binaryPath),
-		AllowedProtocols: []hplugin.Protocol{hplugin.ProtocolGRPC},
-	})
-	t.Cleanup(client.Kill)
-
-	rpcClient, err := client.Client()
-	if err != nil {
-		t.Fatalf("start managed plugin %s: %v", binaryPath, err)
-	}
-	raw, err := rpcClient.Dispense("bomly")
-	if err != nil {
-		t.Fatalf("dispense plugin service: %v", err)
-	}
-	service, ok := raw.(runtime.Client)
-	if !ok {
-		t.Fatalf("dispensed value %T does not implement runtime.Client", raw)
-	}
+	service, shutdown := startManagedPlugin(t, exec.Command(binaryPath))
+	t.Cleanup(shutdown)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -347,6 +354,36 @@ func ProbeBinary(t *testing.T, binaryPath string, opts ...ProbeOption) {
 		return
 	}
 	probeAnyDescriptor(ctx, t, service)
+}
+
+// startManagedPlugin launches cmd as a managed plugin over the real
+// transport and returns its service and the host's ordinary shutdown --
+// go-plugin's Kill, which closes the connection, gives the plugin its grace
+// period to return from ServeModule, and only then forces it down.
+func startManagedPlugin(t *testing.T, cmd *exec.Cmd) (runtime.Client, func()) {
+	t.Helper()
+	client := hplugin.NewClient(&hplugin.ClientConfig{
+		HandshakeConfig:  runtime.HandshakeConfig(),
+		Plugins:          runtime.ClientPluginMap(),
+		Cmd:              cmd,
+		AllowedProtocols: []hplugin.Protocol{hplugin.ProtocolGRPC},
+	})
+	rpcClient, err := client.Client()
+	if err != nil {
+		client.Kill()
+		t.Fatalf("start managed plugin %s: %v", cmd.Path, err)
+	}
+	raw, err := rpcClient.Dispense("bomly")
+	if err != nil {
+		client.Kill()
+		t.Fatalf("dispense plugin service: %v", err)
+	}
+	service, ok := raw.(runtime.Client)
+	if !ok {
+		client.Kill()
+		t.Fatalf("dispensed value %T does not implement runtime.Client", raw)
+	}
+	return service, client.Kill
 }
 
 // probeModuleDescriptor fetches the descriptor for the module's kind over the
@@ -483,6 +520,7 @@ type stubHostContext struct {
 	logger *zap.Logger
 	http   *httpkit.ClientProvider
 	sample json.RawMessage
+	scope  *plugin.ComponentScope
 }
 
 func newStubHostContext(sample json.RawMessage) *stubHostContext {
@@ -490,8 +528,15 @@ func newStubHostContext(sample json.RawMessage) *stubHostContext {
 	if err != nil {
 		provider = nil
 	}
-	return &stubHostContext{logger: zap.NewNop(), http: provider, sample: sample}
+	return &stubHostContext{
+		logger: zap.NewNop(),
+		http:   provider,
+		sample: sample,
+		scope:  plugin.NewComponentScope(context.Background(), "conformance"),
+	}
 }
+
+func (s *stubHostContext) OnCleanup(fn func() error) { s.scope.OnCleanup(fn) }
 
 func (s *stubHostContext) Logger() *zap.Logger                 { return s.logger }
 func (s *stubHostContext) HTTPClient() *httpkit.ClientProvider { return s.http }
