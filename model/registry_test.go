@@ -272,3 +272,113 @@ func BenchmarkPackageRegistryClone(b *testing.B) {
 		_ = registry.Clone()
 	}
 }
+
+// permutations returns every ordering of updates.
+func permutations(updates []*Package) [][]*Package {
+	if len(updates) <= 1 {
+		return [][]*Package{updates}
+	}
+	var out [][]*Package
+	for i := range updates {
+		rest := append(append([]*Package(nil), updates[:i]...), updates[i+1:]...)
+		for _, tail := range permutations(rest) {
+			out = append(out, append([]*Package{updates[i]}, tail...))
+		}
+	}
+	return out
+}
+
+// appliedJSON applies the updates in order to a fresh registry seeded with
+// the same base package and returns its canonical encoding.
+func appliedJSON(t *testing.T, updates []*Package) string {
+	t.Helper()
+	registry := NewPackageRegistry()
+	registry.Add(&Package{Coordinates: Coordinates{PURL: "pkg:npm/a@1.0.0", Ecosystem: EcosystemNPM, Name: "a", Version: "1.0.0"}})
+	clones := make([]*Package, len(updates))
+	for i, update := range updates {
+		clones[i] = update.Clone()
+	}
+	data, err := json.Marshal(ApplyPackageUpdates(registry, clones))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return string(data)
+}
+
+// TestApplyPackageUpdatesIndependentOrdersAgree is the registry-level law:
+// updates that touch disjoint packages, or disjoint fields of one package,
+// or only union fields, give the same registry in every order -- so
+// independent components cannot make the order they ran in observable.
+func TestApplyPackageUpdatesIndependentOrdersAgree(t *testing.T) {
+	a := func() *Package { return &Package{Coordinates: Coordinates{PURL: "pkg:npm/a@1.0.0"}} }
+	licensed := a()
+	licensed.Licenses = []PackageLicense{{Value: "MIT", SPDXExpression: "MIT", Type: LicenseTypeDeclared}}
+	advised := a()
+	advised.Vulnerabilities = []Vulnerability{{Source: "osv", ID: "GHSA-aaaa-aaaa-aaaa"}}
+	advised.Matched = true
+	described := a()
+	described.Description = "a package"
+	otherAdvice := a()
+	otherAdvice.Vulnerabilities = []Vulnerability{{Source: "nvd", ID: "CVE-2024-0001"}}
+	otherAdvice.Licenses = []PackageLicense{{Value: "Apache-2.0", SPDXExpression: "Apache-2.0", Type: LicenseTypeConcluded}}
+	elsewhere := &Package{Coordinates: Coordinates{PURL: "pkg:npm/b@1.0.0"}, Description: "b", Matched: true}
+
+	updates := []*Package{licensed, advised, described, otherAdvice, elsewhere}
+	want := appliedJSON(t, updates)
+	for _, order := range permutations(updates) {
+		if got := appliedJSON(t, order); got != want {
+			t.Fatalf("independent updates disagree by order:\n%s\nvs\n%s", got, want)
+		}
+	}
+}
+
+// TestApplyPackageUpdatesConflictingDescriptionFirstWriterWins makes the
+// deliberate precedence visible: two components that disagree about a
+// fill-gaps field are ordered by the pipeline, and the first one wins.
+func TestApplyPackageUpdatesConflictingDescriptionFirstWriterWins(t *testing.T) {
+	first := &Package{Coordinates: Coordinates{PURL: "pkg:npm/a@1.0.0"}, Assertions: Assertions{Description: "from the first matcher"}}
+	second := &Package{Coordinates: Coordinates{PURL: "pkg:npm/a@1.0.0"}, Assertions: Assertions{Description: "from the second matcher"}}
+	registry := ApplyPackageUpdates(nil, []*Package{first.Clone(), second.Clone()})
+	if got, _ := registry.Get("pkg:npm/a@1.0.0"); got.Description != "from the first matcher" {
+		t.Errorf("Description = %q; the first writer should win", got.Description)
+	}
+	registry = ApplyPackageUpdates(nil, []*Package{second.Clone(), first.Clone()})
+	if got, _ := registry.Get("pkg:npm/a@1.0.0"); got.Description != "from the second matcher" {
+		t.Errorf("Description = %q; reversing the order should reverse the winner", got.Description)
+	}
+}
+
+// TestApplyPackageUpdatesConflictingAdvisoryDetailFirstWriterWins pins the
+// same precedence one level down: two witnesses of one advisory union by
+// identity, and the advisory's own scalars fill gaps first-writer.
+func TestApplyPackageUpdatesConflictingAdvisoryDetailFirstWriterWins(t *testing.T) {
+	update := func(recommendation string) *Package {
+		return &Package{
+			Coordinates:     Coordinates{PURL: "pkg:npm/a@1.0.0"},
+			Vulnerabilities: []Vulnerability{{Source: "osv", ID: "GHSA-aaaa-aaaa-aaaa", Recommendation: recommendation}},
+		}
+	}
+	registry := ApplyPackageUpdates(nil, []*Package{update("upgrade to 2"), update("upgrade to 3"), update("upgrade to 2")})
+	got, _ := registry.Get("pkg:npm/a@1.0.0")
+	if len(got.Vulnerabilities) != 1 {
+		t.Fatalf("duplicate evidence was not folded: %d advisories", len(got.Vulnerabilities))
+	}
+	if got.Vulnerabilities[0].Recommendation != "upgrade to 2" {
+		t.Errorf("Recommendation = %q; the first writer should win", got.Vulnerabilities[0].Recommendation)
+	}
+}
+
+// TestPackageMergeFromIsNilSafeAndSharesNothing covers the edges every
+// class shares: nil on either side is a no-op, and the merged package holds
+// copies of what it took, so a caller that later changes the update it
+// passed cannot reach into the registry.
+func TestPackageMergeFromIsNilSafeAndSharesNothing(t *testing.T) {
+	var nilPackage *Package
+	nilPackage.MergeFrom(&Package{})
+	(&Package{}).MergeFrom(nil)
+
+	source := filledPackage("pkg:npm/a@1.0.0")
+	merged := &Package{Coordinates: Coordinates{PURL: "pkg:npm/a@1.0.0"}}
+	merged.MergeFrom(source)
+	assertSharesNothing(t, source, merged)
+}

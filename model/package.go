@@ -692,7 +692,10 @@ type Package struct {
 	Attestations    []PackageAttestation `json:"attestations,omitempty"`
 	Scorecard       *PackageScorecard    `json:"scorecard,omitempty"`
 	EOL             *PackageEOL          `json:"eol,omitempty"`
-	Remediation     *PackageRemediation  `json:"remediation,omitempty"`
+	// Remediation is derived by the host from the merged vulnerabilities
+	// after matching. Merge class: derived -- MergeFrom never takes a
+	// witness's copy, which would be a conclusion drawn from another set.
+	Remediation *PackageRemediation `json:"remediation,omitempty"`
 
 	// Matched indicates that this package was successfully matched by one or
 	// more external enrichment sources.
@@ -904,7 +907,12 @@ func (p *Package) Clone() *Package {
 // MergeFrom folds enrichment from src into p in place. Used by the package
 // registry to deduplicate multiple records for the same PURL. Existing typed
 // data on p wins; src contributes anything p is missing, and vulnerability
-// lists are unioned by (Source, ID).
+// lists are unioned by (Source, ID). What p takes from src is copied, so the
+// caller keeps sole ownership of src.
+//
+// Every field's merge class -- fill-gaps, union, contradiction-preserving,
+// derived -- is listed in packageMergeInventory in package_test.go, which
+// holds each class to its laws and fails when a field is added without one.
 func (p *Package) MergeFrom(src *Package) {
 	if p == nil || src == nil {
 		return
@@ -962,9 +970,11 @@ func (p *Package) MergeFrom(src *Package) {
 		if p.Metadata == nil {
 			p.Metadata = make(map[string]any, len(src.Metadata))
 		}
+		// Fill-gaps per key, and the value taken is a copy: the witness is
+		// the caller's update, which it may go on changing.
 		for k, v := range src.Metadata {
 			if _, exists := p.Metadata[k]; !exists {
-				p.Metadata[k] = v
+				p.Metadata[k] = cloneAnyValue(v)
 			}
 		}
 	}
