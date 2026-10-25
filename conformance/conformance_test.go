@@ -21,7 +21,11 @@ type fakeDetector struct {
 }
 
 func (fakeDetector) Descriptor() plugin.DetectorDescriptor {
-	return plugin.DetectorDescriptor{Name: "conformance-fake-detector", Version: "0.0.1"}
+	return plugin.DetectorDescriptor{
+		Name:     "conformance-fake-detector",
+		Version:  "0.0.1",
+		Requires: plugin.Requirements{plugin.RequirementSourceTree},
+	}
 }
 
 func (fakeDetector) PackageManagerSupport() []plugin.PackageManagerSupport {
@@ -36,7 +40,7 @@ func fakeDetectorModule() plugin.Module {
 	return plugin.Module{
 		Kind: plugin.PluginKindDetector,
 		Detector: &plugin.DetectorModule{
-			Descriptor: plugin.DetectorDescriptor{Name: "conformance-fake-detector", Version: "0.0.1"},
+			Descriptor: fakeDetector{}.Descriptor(),
 			Support:    []plugin.PackageManagerSupport{plugin.Support(model.PackageManagerNPM, "package-lock.json")},
 			New: func(context.Context, plugin.HostContext) (plugin.Detector, error) {
 				return fakeDetector{}, nil
@@ -114,7 +118,12 @@ func TestSuiteAgainstFakeMatcher(t *testing.T) {
   "kind": "matcher",
   "runtime": %q,
   "pluginApiVersion": %q,
-  "entrypoint": {"%s/%s": "bin/conformance-fake-matcher"}
+  "entrypoint": {"%s/%s": "bin/conformance-fake-matcher"},
+  "access": {
+    "filesystemRead": ["project"],
+    "network": ["api.osv.dev"],
+    "environment": ["BOMLY_HTTP_*"]
+  }
 }`, plugin.PackageManifestSchemaVersion, plugin.RuntimeHashiCorpGRPC, plugin.PluginAPIVersion, runtime.GOOS, runtime.GOARCH)
 	if err := os.WriteFile(manifestPath, []byte(manifest), 0o644); err != nil {
 		t.Fatalf("write manifest fixture: %v", err)

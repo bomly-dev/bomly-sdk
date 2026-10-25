@@ -490,6 +490,36 @@ func testDescriptor(t *testing.T, m plugin.Module) {
 		}
 		requireRoundTrip(t, &descriptor, new(plugin.AnalyzerDescriptor))
 	}
+	requireKnownRequirements(t, descriptorRequires(m))
+}
+
+// requireKnownRequirements holds an author to the vocabulary of the SDK they
+// build against. A host keeps a token it does not know and treats it as
+// unsatisfied -- so a misspelled requirement would quietly keep the component
+// from ever running -- which is why the author's side is the strict one.
+func requireKnownRequirements(t *testing.T, requires plugin.Requirements) {
+	t.Helper()
+	for _, requirement := range requires {
+		if !requirement.Known() {
+			t.Errorf("descriptor requires %q, which this SDK does not define (known: %v); a host would treat it as never satisfied", requirement, plugin.KnownRequirements())
+		}
+	}
+}
+
+// descriptorRequires returns the requirements the module's descriptor declares.
+func descriptorRequires(m plugin.Module) plugin.Requirements {
+	switch m.Kind {
+	case plugin.PluginKindDetector:
+		return m.Detector.Descriptor.Requires
+	case plugin.PluginKindMatcher:
+		return m.Matcher.Descriptor.Requires
+	case plugin.PluginKindAuditor:
+		return m.Auditor.Descriptor.Requires
+	case plugin.PluginKindAnalyzer:
+		return m.Analyzer.Descriptor.Requires
+	default:
+		return nil
+	}
 }
 
 // requireRoundTrip asserts marshal → unmarshal → marshal stability for a
@@ -800,6 +830,7 @@ type manifestIdentity struct {
 	Runtime          string            `json:"runtime"`
 	PluginAPIVersion string            `json:"pluginApiVersion"`
 	Entrypoint       map[string]string `json:"entrypoint"`
+	Access           *plugin.Access    `json:"access"`
 }
 
 func testManifest(t *testing.T, m plugin.Module, manifestPath string) {
@@ -831,6 +862,28 @@ func testManifest(t *testing.T, m plugin.Module, manifestPath string) {
 	}
 	if len(manifest.Entrypoint) == 0 {
 		t.Error("manifest entrypoint map must declare at least one GOOS/GOARCH binary")
+	}
+	testManifestAccess(t, manifest.Access)
+}
+
+// testManifestAccess checks the manifest's access disclosure. Its absence is
+// legal -- a host then shows the plugin's access as unknown -- and is logged
+// rather than failed. A present block must validate, and every filesystem
+// scope must be one this SDK defines, since a host would show an unknown
+// scope to the user verbatim.
+func testManifestAccess(t *testing.T, access *plugin.Access) {
+	t.Helper()
+	if access == nil {
+		t.Log("manifest declares no access block; hosts will show this plugin's filesystem, network, environment and subprocess access as unknown")
+		return
+	}
+	if err := plugin.ValidateAccess(access); err != nil {
+		t.Errorf("manifest access: %v", err)
+	}
+	for _, scope := range slices.Concat(access.FilesystemRead, access.FilesystemWrite) {
+		if !scope.Known() {
+			t.Errorf("manifest access names filesystem scope %q, which this SDK does not define", scope)
+		}
 	}
 }
 

@@ -160,6 +160,8 @@ func TestWireV1NewFieldsAreOmitEmpty(t *testing.T) {
 			// The source document's format token, an advisory's VEX block, and
 			// its stated remediation guidance.
 			"format", "analysis", "recommendation",
+			// A descriptor's declared prerequisites (bomly-sdk#29).
+			"requires",
 		} {
 			if _, ok := decoded[forbidden]; ok {
 				t.Errorf("%s: zero-valued %q must be omitted from the wire", name, forbidden)

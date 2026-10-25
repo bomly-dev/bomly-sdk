@@ -271,10 +271,12 @@ type that already has a home. What lives where:
   `helpers_test.go`.
 - `plugin/` — `component.go` (descriptors, the `Base*` defaults, the
   `Validate*Descriptor` gates), `detector.go`, `matcher.go`, `auditor.go`,
-  `analyzer.go`, `scan.go` (execution targets and subprojects), `module.go`,
-  `plugin.go` (manifest and wire vocabulary), `config_schema.go`,
-  `consolidation.go` (the host's consolidated view), `detection_filter.go`
-  (scope filtering of a detection result). Guards: `wire_compat_test.go`
+  `analyzer.go`, `scan.go` (execution targets and subprojects), `module.go`
+  (`Module`, `HostContext`, `ComponentScope`), `plugin.go` (manifest and wire
+  vocabulary), `requirement.go` (the prerequisite vocabulary descriptors
+  declare in `Requires`), `access.go` (a manifest's access disclosure),
+  `config_schema.go`, `consolidation.go` (the host's consolidated view),
+  `detection_filter.go` (scope filtering of a detection result). Guards: `wire_compat_test.go`
   (frozen v1 fixtures) and `wire_omitempty_coverage_test.go`, whose walk
   starts at the wire roots here and follows exported fields into `model`.
 - `runtime/` — `serve.go` (the bomly.plugin.v1 service, both ends),
@@ -282,6 +284,9 @@ type that already has a home. What lives where:
   (the per-process environment). `boundary_test.go` fails on any json-tagged
   struct here: the transport carries payloads and declares none.
 - `httpkit/` — `client.go`, `proxy.go`.
+- `internal/` — test support only, each with a guard that fails a non-test
+  import: `testnodes` (fixture constructors that panic) and `deepcopytest`
+  (fills every field and reports what a Clone still shares with its source).
 - `scan/` — `record.go` (the record and its sections, `SchemaVersion`),
   `encode.go` (`Encode`, `Decode`, `Digest`, the bounds), `build.go`
   (`FromGraphEntries`, `VerdictOf`), `compare.go`. Guard: `record_test.go`
