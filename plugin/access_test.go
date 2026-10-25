@@ -98,6 +98,13 @@ func TestAccessAbsentAndEmptyEncodeApart(t *testing.T) {
 	if string(absent) != `{}` || string(empty) != `{"access":{}}` {
 		t.Errorf("absent = %s, empty = %s", absent, empty)
 	}
+	repeated, _ := json.Marshal(map[string][]string{"network": slices.Repeat([]string{"api.osv.dev"}, MaxAccessEntries+1)})
+	if err := json.Unmarshal(repeated, new(Access)); err == nil {
+		t.Error("a list over MaxAccessEntries decoded because its entries were duplicates")
+	}
+	if err := json.Unmarshal([]byte(`{"subprocesses":["`+strings.Repeat("a", maxAccessBytes)+`"]}`), new(Access)); err == nil {
+		t.Error("an oversized disclosure was parsed")
+	}
 	var decoded manifest
 	if err := json.Unmarshal([]byte(`{}`), &decoded); err != nil || decoded.Access != nil {
 		t.Errorf("an absent block decodes as %+v, %v; want nil (unknown)", decoded.Access, err)

@@ -47,6 +47,15 @@ func TestRequirementsNormalizeAndRoundTrip(t *testing.T) {
 	if err := json.Unmarshal([]byte(`["vulnerability-records-v1","future-input-v2","future-input-v2"]`), &decoded); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
+	// Bounded before deduplication: repeats cannot collapse under the limit,
+	// and oversized input is refused before it is parsed.
+	repeated, _ := json.Marshal(slices.Repeat([]string{string(RequirementSourceTree)}, MaxRequirements+1))
+	if err := json.Unmarshal(repeated, new(Requirements)); err == nil {
+		t.Error("a list over MaxRequirements decoded because its entries were duplicates")
+	}
+	if err := json.Unmarshal([]byte(`["`+strings.Repeat("a", maxRequirementsBytes)+`"]`), new(Requirements)); err == nil {
+		t.Error("an oversized declaration was parsed")
+	}
 	// The unknown token survives: a host must see it to refuse it.
 	if !slices.Equal(decoded, Requirements{"future-input-v2", RequirementVulnerabilityRecords}) {
 		t.Errorf("decoded %v", decoded)

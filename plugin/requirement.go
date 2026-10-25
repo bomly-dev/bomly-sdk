@@ -104,11 +104,24 @@ func (r Requirements) MarshalJSON() ([]byte, error) {
 	return json.Marshal([]Requirement(r.Normalized()))
 }
 
-// UnmarshalJSON reads a list and normalizes it.
+// maxRequirementsBytes bounds an encoded declaration before it is parsed:
+// a generous multiple of the largest list Validate accepts, so the limit
+// rejects only input no valid descriptor could be.
+const maxRequirementsBytes = 4 << 10
+
+// UnmarshalJSON reads a list and normalizes it. The input is bounded before
+// it is parsed, and the decoded list is held to MaxRequirements before it is
+// deduplicated, so a repeated token cannot pass the bound by collapsing.
 func (r *Requirements) UnmarshalJSON(data []byte) error {
+	if len(data) > maxRequirementsBytes {
+		return fmt.Errorf("requirements exceed %d bytes", maxRequirementsBytes)
+	}
 	var decoded []Requirement
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return err
+	}
+	if len(decoded) > MaxRequirements {
+		return fmt.Errorf("declares %d requirements, more than %d", len(decoded), MaxRequirements)
 	}
 	*r = Requirements(decoded).Normalized()
 	return nil

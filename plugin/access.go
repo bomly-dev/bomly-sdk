@@ -215,11 +215,35 @@ func validCommand(command string) bool {
 // below can encode and decode without recursing.
 type accessWire Access
 
-// UnmarshalJSON normalizes the disclosure as it is read.
+// maxAccessBytes bounds an encoded disclosure before it is parsed: a
+// generous multiple of the largest block Validate accepts.
+const maxAccessBytes = 256 << 10
+
+// UnmarshalJSON normalizes the disclosure as it is read. The input is
+// bounded before it is parsed, and every list is held to MaxAccessEntries
+// before it is canonicalized or deduplicated, so neither the host gate's
+// work nor a repeated entry escapes the bound.
 func (a *Access) UnmarshalJSON(data []byte) error {
+	if len(data) > maxAccessBytes {
+		return fmt.Errorf("access exceeds %d bytes", maxAccessBytes)
+	}
 	var wire accessWire
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
+	}
+	for _, list := range []struct {
+		field string
+		count int
+	}{
+		{"filesystemRead", len(wire.FilesystemRead)},
+		{"filesystemWrite", len(wire.FilesystemWrite)},
+		{"network", len(wire.Network)},
+		{"environment", len(wire.Environment)},
+		{"subprocesses", len(wire.Subprocesses)},
+	} {
+		if list.count > MaxAccessEntries {
+			return fmt.Errorf("access %s lists %d entries, more than %d", list.field, list.count, MaxAccessEntries)
+		}
 	}
 	*a = Access(wire).Normalized()
 	return nil
