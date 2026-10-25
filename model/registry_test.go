@@ -2,6 +2,8 @@ package model
 
 import (
 	"encoding/json"
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -167,4 +169,216 @@ func TestAddEntryPackagesGoesThroughAdd(t *testing.T) {
 	}
 	var nilRegistry *PackageRegistry
 	nilRegistry.AddEntryPackages(nil)
+}
+
+// TestPackageRegistryCloneSharesNothing proves the clone holds the same
+// packages in the same insertion order with no memory in common, in both
+// directions of mutation.
+func TestPackageRegistryCloneSharesNothing(t *testing.T) {
+	source := NewPackageRegistry()
+	for _, purl := range []string{"pkg:npm/b@1.0.0", "pkg:npm/a@1.0.0", "pkg:npm/c@1.0.0"} {
+		source.Add(filledPackage(purl))
+	}
+	clone := source.Clone()
+	if !reflect.DeepEqual(source, clone) {
+		t.Fatal("clone differs from its source")
+	}
+	assertSharesNothing(t, source, clone)
+
+	before, err := json.Marshal(source)
+	if err != nil {
+		t.Fatalf("marshal source: %v", err)
+	}
+	pkg, _ := clone.Get("pkg:npm/a@1.0.0")
+	pkg.Vulnerabilities[0].ID = "CHANGED"
+	pkg.Licenses = append(pkg.Licenses, PackageLicense{Value: "MIT"})
+	clone.Ensure("pkg:npm/new@1.0.0")
+	clone.Add(&Package{Coordinates: Coordinates{PURL: "pkg:npm/b@1.0.0"}, Matched: true, Vulnerabilities: []Vulnerability{{Source: "osv", ID: "GHSA-new"}}})
+	after, err := json.Marshal(source)
+	if err != nil {
+		t.Fatalf("marshal source: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Error("mutating the clone changed the source registry")
+	}
+
+	again := source.Clone()
+	source.Ensure("pkg:npm/late@1.0.0")
+	if _, ok := again.Get("pkg:npm/late@1.0.0"); ok {
+		t.Error("a package added to the source appeared in the clone")
+	}
+
+	if (*PackageRegistry)(nil).Clone() != nil {
+		t.Error("a nil registry clones to non-nil")
+	}
+	if empty := NewPackageRegistry().Clone(); empty.Len() != 0 || empty.Ensure("pkg:npm/x@1.0.0") == nil {
+		t.Error("an empty registry's clone is not a usable empty registry")
+	}
+}
+
+// TestPackageRegistryCloneIsNotAJSONRoundTrip keeps the snapshot a host takes
+// before every component call off the codec path. A round trip would
+// normalize -- so the copy would not be the source -- and costs several
+// times the allocations; the bound is loose enough to survive new fields and
+// tight enough to fail if Clone were ever rewritten as Marshal+Unmarshal.
+func TestPackageRegistryCloneIsNotAJSONRoundTrip(t *testing.T) {
+	registry := NewPackageRegistry()
+	for i := range 50 {
+		registry.Add(enrichedPackage(i))
+	}
+	cloneAllocs := testing.AllocsPerRun(5, func() { _ = registry.Clone() })
+	roundTripAllocs := testing.AllocsPerRun(5, func() {
+		data, err := json.Marshal(registry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded PackageRegistry
+		if err := json.Unmarshal(data, &decoded); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if cloneAllocs*2 > roundTripAllocs {
+		t.Errorf("Clone allocates %.0f times against a JSON round trip's %.0f; it should be well under half", cloneAllocs, roundTripAllocs)
+	}
+}
+
+// enrichedPackage is a package shaped like a matched one -- valid enums, a
+// license, two advisories with an analysis, npm metadata -- that the codecs
+// accept, so a round trip measures the codec rather than an early error.
+func enrichedPackage(i int) *Package {
+	return &Package{
+		Coordinates: Coordinates{PURL: fmt.Sprintf("pkg:npm/dep-%d@1.0.0", i), Ecosystem: EcosystemNPM, Name: fmt.Sprintf("dep-%d", i), Version: "1.0.0"},
+		Assertions: Assertions{
+			Description: "a dependency",
+			Licenses:    []PackageLicense{{Value: "MIT", SPDXExpression: "MIT", Type: LicenseTypeDeclared}},
+			CPEs:        []string{"cpe:2.3:a:acme:dep:1.0.0:*:*:*:*:*:*:*"},
+		},
+		Vulnerabilities: []Vulnerability{
+			{Source: "osv", ID: fmt.Sprintf("GHSA-%d-a", i), Summary: "first", Aliases: []string{"CVE-2024-1"}},
+			{Source: "osv", ID: fmt.Sprintf("GHSA-%d-b", i), Summary: "second", DatabaseSpecific: map[string]any{"severity": "HIGH"}},
+		},
+		Matched:  true,
+		Metadata: map[string]any{"nested": map[string]any{"list": []any{"a", "b"}}},
+	}
+}
+
+func BenchmarkPackageRegistryClone(b *testing.B) {
+	registry := NewPackageRegistry()
+	for i := range 500 {
+		registry.Add(enrichedPackage(i))
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = registry.Clone()
+	}
+}
+
+// permutations returns every ordering of updates.
+func permutations(updates []*Package) [][]*Package {
+	if len(updates) <= 1 {
+		return [][]*Package{updates}
+	}
+	var out [][]*Package
+	for i := range updates {
+		rest := append(append([]*Package(nil), updates[:i]...), updates[i+1:]...)
+		for _, tail := range permutations(rest) {
+			out = append(out, append([]*Package{updates[i]}, tail...))
+		}
+	}
+	return out
+}
+
+// appliedJSON applies the updates in order to a fresh registry seeded with
+// the same base package and returns its canonical encoding.
+func appliedJSON(t *testing.T, updates []*Package) string {
+	t.Helper()
+	registry := NewPackageRegistry()
+	registry.Add(&Package{Coordinates: Coordinates{PURL: "pkg:npm/a@1.0.0", Ecosystem: EcosystemNPM, Name: "a", Version: "1.0.0"}})
+	clones := make([]*Package, len(updates))
+	for i, update := range updates {
+		clones[i] = update.Clone()
+	}
+	data, err := json.Marshal(ApplyPackageUpdates(registry, clones))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return string(data)
+}
+
+// TestApplyPackageUpdatesIndependentOrdersAgree is the registry-level law:
+// updates that touch disjoint packages, or disjoint fields of one package,
+// or only union fields, give the same registry in every order -- so
+// independent components cannot make the order they ran in observable.
+func TestApplyPackageUpdatesIndependentOrdersAgree(t *testing.T) {
+	a := func() *Package { return &Package{Coordinates: Coordinates{PURL: "pkg:npm/a@1.0.0"}} }
+	licensed := a()
+	licensed.Licenses = []PackageLicense{{Value: "MIT", SPDXExpression: "MIT", Type: LicenseTypeDeclared}}
+	advised := a()
+	advised.Vulnerabilities = []Vulnerability{{Source: "osv", ID: "GHSA-aaaa-aaaa-aaaa"}}
+	advised.Matched = true
+	described := a()
+	described.Description = "a package"
+	otherAdvice := a()
+	otherAdvice.Vulnerabilities = []Vulnerability{{Source: "nvd", ID: "CVE-2024-0001"}}
+	otherAdvice.Licenses = []PackageLicense{{Value: "Apache-2.0", SPDXExpression: "Apache-2.0", Type: LicenseTypeConcluded}}
+	elsewhere := &Package{Coordinates: Coordinates{PURL: "pkg:npm/b@1.0.0"}, Description: "b", Matched: true}
+
+	updates := []*Package{licensed, advised, described, otherAdvice, elsewhere}
+	want := appliedJSON(t, updates)
+	for _, order := range permutations(updates) {
+		if got := appliedJSON(t, order); got != want {
+			t.Fatalf("independent updates disagree by order:\n%s\nvs\n%s", got, want)
+		}
+	}
+}
+
+// TestApplyPackageUpdatesConflictingDescriptionFirstWriterWins makes the
+// deliberate precedence visible: two components that disagree about a
+// fill-gaps field are ordered by the pipeline, and the first one wins.
+func TestApplyPackageUpdatesConflictingDescriptionFirstWriterWins(t *testing.T) {
+	first := &Package{Coordinates: Coordinates{PURL: "pkg:npm/a@1.0.0"}, Assertions: Assertions{Description: "from the first matcher"}}
+	second := &Package{Coordinates: Coordinates{PURL: "pkg:npm/a@1.0.0"}, Assertions: Assertions{Description: "from the second matcher"}}
+	registry := ApplyPackageUpdates(nil, []*Package{first.Clone(), second.Clone()})
+	if got, _ := registry.Get("pkg:npm/a@1.0.0"); got.Description != "from the first matcher" {
+		t.Errorf("Description = %q; the first writer should win", got.Description)
+	}
+	registry = ApplyPackageUpdates(nil, []*Package{second.Clone(), first.Clone()})
+	if got, _ := registry.Get("pkg:npm/a@1.0.0"); got.Description != "from the second matcher" {
+		t.Errorf("Description = %q; reversing the order should reverse the winner", got.Description)
+	}
+}
+
+// TestApplyPackageUpdatesConflictingAdvisoryDetailFirstWriterWins pins the
+// same precedence one level down: two witnesses of one advisory union by
+// identity, and the advisory's own scalars fill gaps first-writer.
+func TestApplyPackageUpdatesConflictingAdvisoryDetailFirstWriterWins(t *testing.T) {
+	update := func(recommendation string) *Package {
+		return &Package{
+			Coordinates:     Coordinates{PURL: "pkg:npm/a@1.0.0"},
+			Vulnerabilities: []Vulnerability{{Source: "osv", ID: "GHSA-aaaa-aaaa-aaaa", Recommendation: recommendation}},
+		}
+	}
+	registry := ApplyPackageUpdates(nil, []*Package{update("upgrade to 2"), update("upgrade to 3"), update("upgrade to 2")})
+	got, _ := registry.Get("pkg:npm/a@1.0.0")
+	if len(got.Vulnerabilities) != 1 {
+		t.Fatalf("duplicate evidence was not folded: %d advisories", len(got.Vulnerabilities))
+	}
+	if got.Vulnerabilities[0].Recommendation != "upgrade to 2" {
+		t.Errorf("Recommendation = %q; the first writer should win", got.Vulnerabilities[0].Recommendation)
+	}
+}
+
+// TestPackageMergeFromIsNilSafeAndSharesNothing covers the edges every
+// class shares: nil on either side is a no-op, and the merged package holds
+// copies of what it took, so a caller that later changes the update it
+// passed cannot reach into the registry.
+func TestPackageMergeFromIsNilSafeAndSharesNothing(t *testing.T) {
+	var nilPackage *Package
+	nilPackage.MergeFrom(&Package{})
+	(&Package{}).MergeFrom(nil)
+
+	source := filledPackage("pkg:npm/a@1.0.0")
+	merged := &Package{Coordinates: Coordinates{PURL: "pkg:npm/a@1.0.0"}}
+	merged.MergeFrom(source)
+	assertSharesNothing(t, source, merged)
 }

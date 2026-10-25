@@ -1,6 +1,10 @@
 package model
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/bomly-dev/bomly-sdk/internal/deepcopytest"
+)
 
 // Shared fixture constructors for the root test suite. They fail the test
 // on constructor error so a case reads as the graph it builds, not as error
@@ -81,4 +85,53 @@ func workspaceNode(t *testing.T) *DependencyNode {
 		},
 	}
 	return node
+}
+
+// filledDependency constructs a dependency node from a raw package URL and
+// populates every field outside its identity -- assertions, scopes,
+// locations, origins, metadata, warnings -- so a deep-copy test exercises
+// all of them. The identity stays the constructor's, so the node is one a
+// graph accepts.
+func filledDependency(t testing.TB, raw string) *DependencyNode {
+	t.Helper()
+	node := mustDepPURL(t, raw)
+	var scratch DependencyNode
+	deepcopytest.Fill(&scratch)
+	node.Assertions = scratch.Assertions
+	node.Relationship = scratch.Relationship
+	node.Source = scratch.Source
+	node.Scopes = scratch.Scopes
+	node.SourceScope = scratch.SourceScope
+	node.Locations = scratch.Locations
+	node.FoundBy = scratch.FoundBy
+	node.ResolvedURL = scratch.ResolvedURL
+	node.Origins = scratch.Origins
+	node.Metadata = scratch.Metadata
+	node.Metadata[MetadataKeyNPM] = &NPMPackageMetadata{
+		PeerDependencies:         map[string]string{"peer": "^1"},
+		OptionalPeerDependencies: []string{"optional"},
+		Engines:                  map[string]string{"node": ">=18"},
+	}
+	node.warnings = []NodeWarning{{}, {}}
+	return node
+}
+
+// filledPackage returns a registry package for purl with every exported
+// field populated, nested enrichment and metadata included.
+func filledPackage(purl string) *Package {
+	var pkg Package
+	deepcopytest.Fill(&pkg)
+	pkg.PURL = purl
+	pkg.ID = purl
+	pkg.Metadata[MetadataKeyNPM] = &NPMPackageMetadata{PeerDependencies: map[string]string{"peer": "^1"}}
+	return &pkg
+}
+
+// assertSharesNothing fails the test for every pointer, map or slice backing
+// array clone still shares with source.
+func assertSharesNothing(t testing.TB, source, clone any) {
+	t.Helper()
+	for _, alias := range deepcopytest.Aliases(source, clone) {
+		t.Errorf("clone aliases its source at %s", alias)
+	}
 }

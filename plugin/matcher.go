@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"slices"
 
 	"github.com/bomly-dev/bomly-sdk/model"
 )
@@ -66,6 +67,27 @@ type MatchRequest struct {
 	// only when this is true.
 	AcceptPackageUpdates bool      `json:"acceptPackageUpdates,omitempty"`
 	Stderr               io.Writer `json:"-"`
+}
+
+// Clone returns a deep copy of the request that shares no mutable memory
+// with it: the graph, registry and target are copied through their own
+// Clone methods, and every slice is copied. Stderr is kept as is -- it is
+// the host's writer, shared on purpose. A host calls Clone before each
+// Ready, Applicable and Match call and commits the result only on success,
+// so an embedded matcher that changes its request and then fails leaves the
+// host's state as a managed one would, whose request crossed the wire as a
+// copy.
+func (r MatchRequest) Clone() MatchRequest {
+	clone := r
+	clone.SubprojectInfo = r.SubprojectInfo.Clone()
+	clone.Graph = r.Graph.Clone()
+	clone.Registry = r.Registry.Clone()
+	clone.Target = r.Target.Clone()
+	clone.MatcherFilter = MatcherFilter{
+		Include: slices.Clone(r.MatcherFilter.Include),
+		Exclude: slices.Clone(r.MatcherFilter.Exclude),
+	}
+	return clone
 }
 
 // MatchResult contains the package registry after matcher enrichment.

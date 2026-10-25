@@ -27,12 +27,20 @@ const EnvVerbosity = "BOMLY_VERBOSE"
 // client provider from Bomly environment variables, config decoding from the
 // file named by BOMLY_PLUGIN_CONFIG_FILE), constructs the component lazily on
 // first use, and adapts it to the served plugin protocol.
+//
+// The component's lifetime is the process's. Its constructor runs under a
+// context that outlives any one request, and the cleanups it registers
+// through HostContext.OnCleanup run when the host shuts the plugin down: the
+// host's go-plugin client closes the connection, the transport stops
+// serving, and ServeModule closes the scope before it returns -- inside the
+// grace period the client allows before it kills the process. No RPC carries
+// this, so a host of any SDK version gets it.
 func ServeModule(m plugin.Module) {
 	if err := plugin.ValidateModule(m); err != nil {
 		fmt.Fprintf(os.Stderr, "bomly plugin: invalid module: %v\n", err)
 		os.Exit(1)
 	}
-	host := newManagedHostContext()
+	host := newManagedHostContext(moduleName(m))
 	switch m.Kind {
 	case plugin.PluginKindDetector:
 		ServeDetector(newServedDetectorModule(m.Detector, host))
@@ -43,6 +51,25 @@ func ServeModule(m plugin.Module) {
 	case plugin.PluginKindAnalyzer:
 		ServeAnalyzer(newServedAnalyzerModule(m.Analyzer, host))
 	}
+	if err := host.scope.Close(); err != nil {
+		host.Logger().Warn("bomly plugin: component cleanup failed", zap.Error(err))
+	}
+}
+
+// moduleName is the component name a module's cleanup errors carry.
+func moduleName(m plugin.Module) string {
+	switch {
+	case m.Detector != nil:
+		return m.Detector.Descriptor.Name
+	case m.Matcher != nil:
+		return m.Matcher.Descriptor.Name
+	case m.Auditor != nil:
+		return m.Auditor.Descriptor.Name
+	case m.Analyzer != nil:
+		return m.Analyzer.Descriptor.Name
+	default:
+		return string(m.Kind)
+	}
 }
 
 // managedHostContext implements HostContext for components running as managed
@@ -51,9 +78,10 @@ type managedHostContext struct {
 	logger  *zap.Logger
 	http    *httpkit.ClientProvider
 	runtime plugin.RuntimeInfo
+	scope   *plugin.ComponentScope
 }
 
-func newManagedHostContext() *managedHostContext {
+func newManagedHostContext(component string) *managedHostContext {
 	logger := newManagedLogger()
 	provider, err := httpkit.NewClientProviderFromEnv()
 	if err != nil {
@@ -64,7 +92,18 @@ func newManagedHostContext() *managedHostContext {
 		logger:  logger,
 		http:    provider,
 		runtime: plugin.RuntimeInfo{Execution: plugin.ExecutionManaged},
+		scope:   plugin.NewComponentScope(context.Background(), component),
 	}
+}
+
+// OnCleanup registers fn on the process-lifetime scope ServeModule closes.
+func (c *managedHostContext) OnCleanup(fn func() error) {
+	c.scope.OnCleanup(fn)
+}
+
+// lifetime is the context a component is constructed under.
+func (c *managedHostContext) lifetime() context.Context {
+	return c.scope.Context()
 }
 
 func (c *managedHostContext) Logger() *zap.Logger {
@@ -115,23 +154,62 @@ func newManagedLogger() *zap.Logger {
 
 // lazyComponent constructs a module component at most once and caches the
 // outcome for every subsequent protocol call.
+//
+// Construction runs under the component's lifetime context, not the context
+// of the request that happened to need it first: a constructor that ties a
+// resource to its context must not see that resource cancelled when the
+// first RPC returns. A request waits for construction as long as its own
+// context allows; giving up abandons the wait, not the construction, so the
+// next request finds the component built.
 type lazyComponent[T any] struct {
 	newFn func(context.Context, plugin.HostContext) (T, error)
 	host  plugin.HostContext
 
 	once      sync.Once
+	done      chan struct{}
 	component T
 	err       error
 }
 
+// lifetimeHost is the managed host's view of a component's lifetime.
+type lifetimeHost interface {
+	lifetime() context.Context
+}
+
 func (l *lazyComponent[T]) get(ctx context.Context) (T, error) {
 	l.once.Do(func() {
-		l.component, l.err = l.newFn(ctx, l.host)
-		if l.err != nil {
-			l.err = fmt.Errorf("construct component: %w", l.err)
+		lifetime := context.Background()
+		if host, ok := l.host.(lifetimeHost); ok {
+			lifetime = host.lifetime()
 		}
+		l.done = make(chan struct{})
+		go func() {
+			defer close(l.done)
+			l.component, l.err = construct(lifetime, l.newFn, l.host)
+		}()
 	})
-	return l.component, l.err
+	select {
+	case <-l.done:
+		return l.component, l.err
+	case <-ctx.Done():
+		var zero T
+		return zero, fmt.Errorf("construct component: %w", ctx.Err())
+	}
+}
+
+// construct runs a module constructor, containing a panic as a constructor
+// error: it runs on its own goroutine, where a panic would end the process.
+func construct[T any](ctx context.Context, newFn func(context.Context, plugin.HostContext) (T, error), host plugin.HostContext) (component T, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("construct component: panic: %v", recovered)
+		}
+	}()
+	component, err = newFn(ctx, host)
+	if err != nil {
+		err = fmt.Errorf("construct component: %w", err)
+	}
+	return component, err
 }
 
 // readyResponseFromError maps a component's Ready error contract (nil = ready)

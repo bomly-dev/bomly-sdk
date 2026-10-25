@@ -3,6 +3,7 @@ package model
 import (
 	"encoding/json"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1108,4 +1109,308 @@ func TestPackageMarshalDoesNotMutateTheHoldersVulnerabilities(t *testing.T) {
 	if p.Vulnerabilities[0].ID != "CVE-2" || p.Vulnerabilities[0].Recommendation != " x " {
 		t.Fatalf("marshal mutated the holder's package: %+v", p.Vulnerabilities)
 	}
+}
+
+// TestPackageCloneSharesNothing walks every field of a fully populated
+// package -- nested vulnerabilities, attestations, contacts, extension maps
+// and typed npm metadata -- and fails on any memory the clone still shares.
+func TestPackageCloneSharesNothing(t *testing.T) {
+	source := filledPackage("pkg:npm/left-pad@1.3.0")
+	// A nested empty object stays {} rather than becoming a nil map, which
+	// would encode as null; npm metadata held by value is copied too.
+	source.Metadata["empty"] = map[string]any{"labels": map[string]any{}}
+	source.Metadata["npm-by-value"] = NPMPackageMetadata{Engines: map[string]string{"node": ">=18"}}
+	clone := source.Clone()
+	if !reflect.DeepEqual(source, clone) {
+		t.Fatal("clone differs from its source")
+	}
+	assertSharesNothing(t, source, clone)
+
+	clone.Metadata["npm-by-value"].(NPMPackageMetadata).Engines["node"] = "changed"
+	if got := source.Metadata["npm-by-value"].(NPMPackageMetadata).Engines["node"]; got != ">=18" {
+		t.Errorf("source npm metadata held by value changed through the clone: %q", got)
+	}
+	clone.Metadata[MetadataKeyNPM].(*NPMPackageMetadata).PeerDependencies["peer"] = "changed"
+	if got := source.Metadata[MetadataKeyNPM].(*NPMPackageMetadata).PeerDependencies["peer"]; got != "^1" {
+		t.Errorf("source npm metadata changed through the clone: %q", got)
+	}
+	if (*Package)(nil).Clone() != nil {
+		t.Error("a nil package clones to non-nil")
+	}
+}
+
+// packageMergeClass names the algebra a Package field promises under
+// MergeFrom. The classes are the ones the model's doc comments declare;
+// this test is where each one is held to its laws.
+type packageMergeClass string
+
+const (
+	// mergeIdentity is the registry key: two packages merge only when it
+	// already agrees, and MergeFrom never changes it.
+	mergeIdentity packageMergeClass = "identity"
+	// mergeFillGaps keeps the receiver's value and takes the witness's only
+	// to fill a gap: first-writer precedence, idempotent, and deliberately
+	// not commutative when the two witnesses disagree.
+	mergeFillGaps packageMergeClass = "fill-gaps"
+	// mergeFillGapsPerKey is fill-gaps applied key by key to an extension
+	// map: disjoint keys union, a shared key keeps the first writer.
+	mergeFillGapsPerKey packageMergeClass = "fill-gaps per key"
+	// mergeUnion is a canonical set: commutative, associative and
+	// idempotent once normalized, so the order components ran in is not
+	// content.
+	mergeUnion packageMergeClass = "union"
+	// mergeUnionInArrivalOrder is a union whose members are commutative,
+	// associative and idempotent but whose order is not canonicalized: the
+	// receiver's entries come first, then each witness's additions as they
+	// arrive (MergeOrigins documents this). The set is order-independent;
+	// the encoded list is not.
+	mergeUnionInArrivalOrder packageMergeClass = "union, arrival order"
+	// mergeWitnesses keeps every distinct witness, in any input order,
+	// because folding two of them would misattribute a claim (an
+	// attestation verified for one issuer is not verified for another).
+	mergeWitnesses packageMergeClass = "contradiction-preserving"
+	// mergeDerived is recomputed by the host from other fields after
+	// matching and never merged: PackageRemediation is derived from the
+	// merged vulnerabilities, so merging a witness's copy would carry a
+	// conclusion drawn from a different set.
+	mergeDerived packageMergeClass = "derived"
+)
+
+// packageMergeField is one inventory row: the field's class and three
+// pairwise-distinct values, each valid under the field's gate, so a law can
+// be checked on values that survive normalization.
+type packageMergeField struct {
+	class   packageMergeClass
+	samples [3]any
+}
+
+func contact(name string) *Contact {
+	return &Contact{Kind: ContactKindOrganization, Name: name}
+}
+
+func sha256Digest(nibble string) Digest {
+	return Digest{Algorithm: DigestAlgorithmSHA256, Value: strings.Repeat(nibble, 64)}
+}
+
+// packageMergeInventory is the single place every field MergeFrom touches
+// is classified. TestPackageMergeInventoryIsComplete fails when Package
+// grows a field this table does not name, so a new field cannot make the
+// order components ran in observable without someone deciding it should.
+var packageMergeInventory = map[string]packageMergeField{
+	// Coordinates.
+	"PURL":           {mergeIdentity, [3]any{"pkg:npm/a@1.0.0", "pkg:npm/a@1.0.0", "pkg:npm/a@1.0.0"}},
+	"Ecosystem":      {mergeFillGaps, [3]any{EcosystemNPM, Ecosystem("pypi"), EcosystemGo}},
+	"PackageManager": {mergeFillGaps, [3]any{PackageManagerNPM, PackageManagerYarn, PackageManagerPNPM}},
+	"Type":           {mergeFillGaps, [3]any{PackageTypeApplication, PackageTypePackage, PackageType("library")}},
+	"Org":            {mergeFillGaps, [3]any{"org-a", "org-b", "org-c"}},
+	"Name":           {mergeFillGaps, [3]any{"name-a", "name-b", "name-c"}},
+	"Version":        {mergeFillGaps, [3]any{"1.0.0", "2.0.0", "3.0.0"}},
+	"Language":       {mergeFillGaps, [3]any{LanguageJavaScript, LanguageGo, Language("python")}},
+	// Assertions.
+	"Description": {mergeFillGaps, [3]any{"first", "second", "third"}},
+	"Homepage":    {mergeFillGaps, [3]any{"https://a.example", "https://b.example", "https://c.example"}},
+	"Supplier":    {mergeFillGaps, [3]any{contact("Acme"), contact("Beta"), contact("Gamma")}},
+	"Originator":  {mergeFillGaps, [3]any{contact("Ann"), contact("Bob"), contact("Cid")}},
+	"Copyright":   {mergeFillGaps, [3]any{"(c) A", "(c) B", "(c) C"}},
+	"ExternalReferences": {mergeUnion, [3]any{
+		[]ExternalReference{{Category: "OTHER", Type: "website", Locator: "https://a.test"}},
+		[]ExternalReference{{Category: "OTHER", Type: "website", Locator: "https://b.test"}},
+		[]ExternalReference{{Category: "OTHER", Type: "website", Locator: "https://c.test"}},
+	}},
+	"CPEs": {mergeUnion, [3]any{
+		[]string{"cpe:2.3:a:acme:a:1.0.0:*:*:*:*:*:*:*"},
+		[]string{"cpe:2.3:a:acme:b:1.0.0:*:*:*:*:*:*:*"},
+		[]string{"cpe:2.3:a:acme:c:1.0.0:*:*:*:*:*:*:*"},
+	}},
+	"Digests": {mergeUnion, [3]any{[]Digest{sha256Digest("a")}, []Digest{sha256Digest("b")}, []Digest{sha256Digest("c")}}},
+	"Licenses": {mergeUnion, [3]any{
+		[]PackageLicense{{Value: "MIT", SPDXExpression: "MIT", Type: LicenseTypeDeclared}},
+		[]PackageLicense{{Value: "Apache-2.0", SPDXExpression: "Apache-2.0", Type: LicenseTypeDeclared}},
+		[]PackageLicense{{Value: "MIT", SPDXExpression: "MIT", Type: LicenseTypeConcluded}},
+	}},
+	// Package's own fields.
+	"ID":          {mergeFillGaps, [3]any{"id-a", "id-b", "id-c"}},
+	"ResolvedURL": {mergeFillGaps, [3]any{"https://a.test/a.tgz", "https://b.test/b.tgz", "https://c.test/c.tgz"}},
+	"DetectedOrigins": {mergeUnionInArrivalOrder, [3]any{
+		[]DependencyOrigin{{ArtifactURL: "https://registry.npmjs.org/a/-/a-1.0.0.tgz"}},
+		[]DependencyOrigin{{Repository: "https://github.com/acme/a"}},
+		[]DependencyOrigin{{ArtifactURL: "https://mirror.example/a-1.0.0.tgz"}},
+	}},
+	"Vulnerabilities": {mergeUnion, [3]any{
+		[]Vulnerability{{Source: "osv", ID: "GHSA-aaaa-aaaa-aaaa"}},
+		[]Vulnerability{{Source: "osv", ID: "GHSA-bbbb-bbbb-bbbb"}},
+		[]Vulnerability{{Source: "nvd", ID: "CVE-2024-0001"}},
+	}},
+	"Attestations": {mergeWitnesses, [3]any{
+		[]PackageAttestation{{PredicateType: "https://slsa.dev/provenance/v1", Issuer: "issuer-a", Verified: true}},
+		[]PackageAttestation{{PredicateType: "https://slsa.dev/provenance/v1", Issuer: "issuer-b", Verified: true}},
+		[]PackageAttestation{{PredicateType: "https://slsa.dev/provenance/v1", Issuer: "issuer-c", Verified: true}},
+	}},
+	"Scorecard":   {mergeFillGaps, [3]any{&PackageScorecard{Source: "a"}, &PackageScorecard{Source: "b"}, &PackageScorecard{Source: "c"}}},
+	"EOL":         {mergeFillGaps, [3]any{&PackageEOL{Source: "a", Cycle: "1"}, &PackageEOL{Source: "b", Cycle: "2"}, &PackageEOL{Source: "c", Cycle: "3"}}},
+	"Remediation": {mergeDerived, [3]any{&PackageRemediation{Status: PackageRemediationComplete}, &PackageRemediation{Status: PackageRemediationPartial}, &PackageRemediation{Status: PackageRemediationPartial}}},
+	// Matched is a one-bit union: any witness that matched makes the package
+	// matched, so it is commutative, associative and idempotent like any set.
+	"Matched":  {mergeUnion, [3]any{true, false, true}},
+	"Metadata": {mergeFillGapsPerKey, [3]any{map[string]any{"k": "a"}, map[string]any{"k": "b"}, map[string]any{"k": "c"}}},
+}
+
+// packageMergeFieldNames returns every field MergeFrom can see on a Package,
+// with the embedded Coordinates and Assertions flattened to the names they
+// promote.
+func packageMergeFieldNames() []string {
+	var names []string
+	var collect func(reflect.Type)
+	collect = func(typ reflect.Type) {
+		for field := range typ.Fields() {
+			if !field.IsExported() {
+				continue
+			}
+			if field.Anonymous {
+				collect(field.Type)
+				continue
+			}
+			names = append(names, field.Name)
+		}
+	}
+	collect(reflect.TypeFor[Package]())
+	return names
+}
+
+// TestPackageMergeInventoryIsComplete is the guard: a Package field without
+// an inventory row fails here, naming it, and so does a row whose field no
+// longer exists.
+func TestPackageMergeInventoryIsComplete(t *testing.T) {
+	names := packageMergeFieldNames()
+	for _, name := range names {
+		if _, ok := packageMergeInventory[name]; !ok {
+			t.Errorf("Package.%s has no merge class in packageMergeInventory; classify it and give it three samples", name)
+		}
+	}
+	for name := range packageMergeInventory {
+		if !slices.Contains(names, name) {
+			t.Errorf("packageMergeInventory names %s, which Package no longer has", name)
+		}
+	}
+}
+
+// withField returns a package carrying only the identity and one field.
+func withField(name string, value any) *Package {
+	pkg := &Package{Coordinates: Coordinates{PURL: "pkg:npm/a@1.0.0"}}
+	if name != "PURL" {
+		reflect.ValueOf(pkg).Elem().FieldByName(name).Set(reflect.ValueOf(value))
+	}
+	return pkg
+}
+
+// mergedField folds the witnesses left to right into an empty package and
+// returns the named field in its canonical, normalized form.
+func mergedField(name string, witnesses ...*Package) any {
+	result := &Package{Coordinates: Coordinates{PURL: "pkg:npm/a@1.0.0"}}
+	for _, witness := range witnesses {
+		result.MergeFrom(witness.Clone())
+	}
+	result.NormalizeAssertions()
+	return reflect.ValueOf(result).Elem().FieldByName(name).Interface()
+}
+
+func normalizedField(name string, pkg *Package) any {
+	return mergedField(name, pkg)
+}
+
+// sortedWitnesses orders an attestation list so two results that hold the
+// same witnesses compare equal whatever order they were appended in.
+func sortedWitnesses(value any) any {
+	list, ok := value.([]PackageAttestation)
+	if !ok {
+		return value
+	}
+	list = slices.Clone(list)
+	slices.SortFunc(list, func(a, b PackageAttestation) int { return strings.Compare(a.Issuer, b.Issuer) })
+	return list
+}
+
+// sortedOrigins orders an origin list by its normalized key.
+func sortedOrigins(value any) []DependencyOrigin {
+	list := slices.Clone(value.([]DependencyOrigin))
+	slices.SortFunc(list, func(a, b DependencyOrigin) int {
+		return strings.Compare(a.ArtifactURL+"\x00"+a.Repository+"\x00"+a.Revision, b.ArtifactURL+"\x00"+b.Repository+"\x00"+b.Revision)
+	})
+	return list
+}
+
+// TestPackageMergeLawsByClass holds every inventoried field to the laws its
+// class promises, on values that pass the field's gate.
+func TestPackageMergeLawsByClass(t *testing.T) {
+	for name, field := range packageMergeInventory {
+		a := withField(name, field.samples[0])
+		b := withField(name, field.samples[1])
+		c := withField(name, field.samples[2])
+		empty := withField("PURL", nil)
+		t.Run(name+"/"+string(field.class), func(t *testing.T) {
+			if got := mergedField(name, a, a); !reflect.DeepEqual(got, normalizedField(name, a)) && field.class != mergeDerived {
+				t.Errorf("not idempotent: merge(a, a) = %#v, want %#v", got, normalizedField(name, a))
+			}
+			switch field.class {
+			case mergeIdentity:
+				if got := mergedField(name, a, b); got != field.samples[0] {
+					t.Errorf("identity changed under merge: %v", got)
+				}
+			case mergeFillGaps, mergeFillGapsPerKey:
+				if got, want := mergedField(name, empty, b), normalizedField(name, b); !reflect.DeepEqual(got, want) {
+					t.Errorf("gap not filled: merge(empty, b) = %#v, want %#v", got, want)
+				}
+				if got, want := mergedField(name, a, b), normalizedField(name, a); !reflect.DeepEqual(got, want) {
+					t.Errorf("first writer did not win: merge(a, b) = %#v, want %#v", got, want)
+				}
+				// The reason this class is not claimed commutative: under a
+				// conflict the order is the precedence.
+				if reflect.DeepEqual(mergedField(name, a, b), mergedField(name, b, a)) {
+					t.Errorf("merge(a, b) equals merge(b, a) on conflicting samples; the samples do not conflict")
+				}
+			case mergeUnion:
+				if got, want := mergedField(name, a, b), mergedField(name, b, a); !reflect.DeepEqual(got, want) {
+					t.Errorf("not commutative: merge(a, b) = %#v, merge(b, a) = %#v", got, want)
+				}
+				if got, want := mergedField(name, a, b, c), mergedField(name, a, withMerged(name, b, c)); !reflect.DeepEqual(got, want) {
+					t.Errorf("not associative: ((a b) c) = %#v, (a (b c)) = %#v", got, want)
+				}
+			case mergeUnionInArrivalOrder:
+				ab, ba := sortedOrigins(mergedField(name, a, b)), sortedOrigins(mergedField(name, b, a))
+				if !reflect.DeepEqual(ab, ba) {
+					t.Errorf("members depend on order: %#v vs %#v", ab, ba)
+				}
+				if got, want := sortedOrigins(mergedField(name, a, b, c)), sortedOrigins(mergedField(name, a, withMerged(name, b, c))); !reflect.DeepEqual(got, want) {
+					t.Errorf("not associative: ((a b) c) = %#v, (a (b c)) = %#v", got, want)
+				}
+				// The order is the arrival order, by design; this pins it so a
+				// change to canonical order is a decision, not an accident.
+				if got := mergedField(name, b, a).([]DependencyOrigin); got[0] != field.samples[1].([]DependencyOrigin)[0] {
+					t.Errorf("merge(b, a) does not lead with b's origin: %#v", got)
+				}
+			case mergeWitnesses:
+				ab, ba := sortedWitnesses(mergedField(name, a, b, c)), sortedWitnesses(mergedField(name, c, b, a))
+				if !reflect.DeepEqual(ab, ba) {
+					t.Errorf("witnesses depend on order: %#v vs %#v", ab, ba)
+				}
+				if got := reflect.ValueOf(ab).Len(); got != 3 {
+					t.Errorf("kept %d of 3 distinct witnesses: %#v", got, ab)
+				}
+			case mergeDerived:
+				if got := mergedField(name, empty, b); !reflect.ValueOf(got).IsNil() {
+					t.Errorf("a derived field was merged from a witness: %#v", got)
+				}
+			default:
+				t.Fatalf("no laws written for class %q", field.class)
+			}
+		})
+	}
+}
+
+// withMerged returns a single witness carrying merge(x, y) for one field, so
+// associativity can fold a pre-merged right-hand side.
+func withMerged(name string, x, y *Package) *Package {
+	merged := x.Clone()
+	merged.MergeFrom(y.Clone())
+	return merged
 }

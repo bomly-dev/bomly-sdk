@@ -3,9 +3,12 @@ package model
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/bomly-dev/bomly-sdk/internal/deepcopytest"
 )
 
 func TestAddNodeRejectsTypedNilPointers(t *testing.T) {
@@ -728,4 +731,23 @@ func TestFoldGatesBothWitnessesBeforeMeasuringTheGap(t *testing.T) {
 	if !strings.Contains(string(encoded), "https://react.test") {
 		t.Fatalf("the valid homepage did not survive to the wire: %s", encoded)
 	}
+}
+
+// TestStructuralNodeClonesShareNothing covers the manifest and module kinds.
+func TestStructuralNodeClonesShareNothing(t *testing.T) {
+	manifest := mustManifest(t, "package.json")
+	manifest.Metadata = map[string]any{"nested": map[string]any{"list": []any{"a"}}}
+	assertSharesNothing(t, manifest, manifest.Clone())
+
+	module := mustModule(t, "package.json", Coordinates{Ecosystem: EcosystemNPM, Name: "app", Version: "1.0.0"})
+	var scratch ModuleNode
+	deepcopytest.Fill(&scratch)
+	module.Locations = scratch.Locations
+	module.Metadata = scratch.Metadata
+	module.warnings = []NodeWarning{{Message: "w"}}
+	clone := module.Clone()
+	if !reflect.DeepEqual(module, clone) {
+		t.Fatal("module clone differs from its source")
+	}
+	assertSharesNothing(t, module, clone)
 }

@@ -49,7 +49,10 @@ func main() {
 
 The same `Module` value registers embedded in the host; a component never
 learns which mode it runs in, because it reaches the host only through
-`plugin.HostContext`. See the
+`plugin.HostContext`. The two modes also share a lifetime: register cleanup
+for anything the constructor acquires with `host.OnCleanup`, and it runs when
+the host finishes the command (embedded) or shuts the plugin down (managed).
+See the
 [Bomly plugin documentation](https://github.com/bomly-dev/bomly-cli/blob/main/docs/PLUGINS.md)
 for the full authoring guide, packaging layout (`bomly-plugin.json`), and
 installation flow.

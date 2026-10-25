@@ -5,6 +5,7 @@ import (
 	"container/heap"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -160,6 +161,54 @@ func NewWithCapacity(nodeCount int) *Graph {
 		outgoing:  make([]map[int]EdgeKind, 0, nodeCount),
 		incoming:  make([]map[int]EdgeKind, 0, nodeCount),
 	}
+}
+
+// Clone returns a deep copy of the graph that shares no mutable memory with
+// it: every live node is copied through its own CloneNode and every edge set
+// is rebuilt, so a component handed the copy can neither change the host's
+// graph nor observe a later change to it. The copy keeps the slot layout --
+// node indexes, the free list, edge kinds -- so it iterates, sorts and
+// renders exactly as the source does. A nil graph clones to nil.
+//
+// The copy is written out by hand rather than delegated to a reflective
+// deep-copy library: that would be a new dependency for every consumer of
+// this module, it is several times slower on the per-component hot path a
+// host snapshots on, and it cannot know that a node is shared between the
+// slot table and the ID index. A JSON round trip is rejected for the same
+// cost and because the codecs normalize, so the copy would not be the
+// source. internal/deepcopytest walks both sides to prove nothing is shared.
+func (g *Graph) Clone() *Graph {
+	if g == nil {
+		return nil
+	}
+	clone := &Graph{
+		indexByID: maps.Clone(g.indexByID),
+		nodes:     make([]GraphNode, len(g.nodes)),
+		alive:     slices.Clone(g.alive),
+		outgoing:  make([]map[int]EdgeKind, len(g.outgoing)),
+		incoming:  make([]map[int]EdgeKind, len(g.incoming)),
+		free:      slices.Clone(g.free),
+		size:      g.size,
+	}
+	if clone.indexByID == nil {
+		clone.indexByID = make(map[string]int)
+	}
+	for idx, node := range g.nodes {
+		if node != nil {
+			clone.nodes[idx] = node.CloneNode()
+		}
+	}
+	for idx, edges := range g.outgoing {
+		if edges != nil {
+			clone.outgoing[idx] = maps.Clone(edges)
+		}
+	}
+	for idx, edges := range g.incoming {
+		if edges != nil {
+			clone.incoming[idx] = maps.Clone(edges)
+		}
+	}
+	return clone
 }
 
 // AddNode inserts a node, rejecting a duplicate identity. Use InsertNode
