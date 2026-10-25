@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -32,7 +33,8 @@ import (
 // well-formed entry this SDK does not recognize is kept, so an older host
 // shows a newer plugin's claim rather than hiding it, and a malformed entry
 // fails Validate rather than being dropped, because silently dropping an
-// entry would under-report access.
+// entry would under-report access. The set of lists is closed: a key this
+// SDK does not know fails decoding, for the same reason.
 type Access struct {
 	// FilesystemRead lists the areas the plugin reads; see FilesystemScope.
 	FilesystemRead []FilesystemScope `json:"filesystemRead,omitempty"`
@@ -227,9 +229,18 @@ func (a *Access) UnmarshalJSON(data []byte) error {
 	if len(data) > maxAccessBytes {
 		return fmt.Errorf("access exceeds %d bytes", maxAccessBytes)
 	}
+	// An unknown key is refused, not ignored: a misspelled list
+	// ("filesystemReads") would otherwise decode as an empty block -- a claim
+	// of no access -- which is the one misreading a disclosure must not
+	// allow. A new kind of access arrives with an SDK that can read it.
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
 	var wire accessWire
-	if err := json.Unmarshal(data, &wire); err != nil {
-		return err
+	if err := decoder.Decode(&wire); err != nil {
+		return fmt.Errorf("access: %w", err)
+	}
+	if decoder.More() {
+		return fmt.Errorf("access: trailing data after the block")
 	}
 	for _, list := range []struct {
 		field string

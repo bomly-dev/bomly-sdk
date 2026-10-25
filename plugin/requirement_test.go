@@ -195,6 +195,11 @@ func TestDescriptorsCarryRequirements(t *testing.T) {
 			if err != nil {
 				t.Fatalf("marshal: %v", err)
 			}
+			// The populated key itself, so a renamed tag cannot pass by
+			// renaming both ends of the round trip.
+			if !strings.Contains(string(data), `"requires":["source-tree-v1","vulnerability-records-v1"]`) {
+				t.Errorf("encoded %s lacks the requires key", data)
+			}
 			got, err := c.decode(data)
 			if err != nil {
 				t.Fatalf("unmarshal: %v", err)

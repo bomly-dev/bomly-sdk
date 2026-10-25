@@ -92,8 +92,9 @@ a host shows the user before the plugin is enabled:
 
 This is the publisher's claim, not a sandbox: nothing restricts a plugin to it.
 A manifest without the block is shown as unknown access, never as none.
-`conformance.Test` validates both and fails on a requirement or filesystem
-scope your SDK version does not define.
+`conformance.Test` checks declared requirements always, and the manifest's
+access block when `Config.ManifestPath` points at your `bomly-plugin.json`; it
+fails on a requirement or filesystem scope your SDK version does not define.
 
 ## Helper packages
 

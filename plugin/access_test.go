@@ -105,6 +105,9 @@ func TestAccessAbsentAndEmptyEncodeApart(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"subprocesses":["`+strings.Repeat("a", maxAccessBytes)+`"]}`), new(Access)); err == nil {
 		t.Error("an oversized disclosure was parsed")
 	}
+	if err := json.Unmarshal([]byte(`{"filesystemReads":["home"]}`), new(Access)); err == nil {
+		t.Error("a misspelled access list decoded as an empty block, which claims no access")
+	}
 	var decoded manifest
 	if err := json.Unmarshal([]byte(`{}`), &decoded); err != nil || decoded.Access != nil {
 		t.Errorf("an absent block decodes as %+v, %v; want nil (unknown)", decoded.Access, err)
