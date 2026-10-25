@@ -61,6 +61,41 @@ Embed the `Base*` types (`plugin.BaseDetector`, `plugin.BaseMatcher`,
 `plugin.BaseAuditor`, `plugin.BaseAnalyzer`) in your implementation so future
 additions to the component interfaces do not break your build.
 
+### Say what a component needs, and what a plugin touches
+
+A descriptor can declare the pipeline inputs its component needs, so a host
+explains an impossible plan before running anything ("this analyzer needs a
+source tree; the target is an SBOM"):
+
+```go
+plugin.AnalyzerDescriptor{
+	Name:     "my-reachability",
+	Requires: plugin.Requirements{plugin.RequirementSourceTree, plugin.RequirementVulnerabilityRecords},
+}
+```
+
+Requirements name data, never another plugin. They are advisory to the plan:
+`Ready` and `Applicable` still run and stay authoritative, and a descriptor
+that declares nothing keeps the behavior every component had before.
+
+A managed plugin's `bomly-plugin.json` can disclose the access it expects, which
+a host shows the user before the plugin is enabled:
+
+```json
+"access": {
+  "filesystemRead": ["project", "cache"],
+  "network": ["api.osv.dev", "*.github.com"],
+  "environment": ["GITHUB_TOKEN", "BOMLY_HTTP_*"],
+  "subprocesses": ["go"]
+}
+```
+
+This is the publisher's claim, not a sandbox: nothing restricts a plugin to it.
+A manifest without the block is shown as unknown access, never as none.
+`conformance.Test` checks declared requirements always, and the manifest's
+access block when `Config.ManifestPath` points at your `bomly-plugin.json`; it
+fails on a requirement or filesystem scope your SDK version does not define.
+
 ## Helper packages
 
 The SDK ships shared helper subpackages so component modules and external

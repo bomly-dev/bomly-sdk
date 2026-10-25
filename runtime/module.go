@@ -318,7 +318,7 @@ func newServedMatcherModule(module *plugin.MatcherModule, host plugin.HostContex
 }
 
 func (s *servedMatcherModule) Descriptor(context.Context) (*plugin.MatcherDescriptor, error) {
-	descriptor := s.module.Descriptor
+	descriptor := s.module.Descriptor.Clone()
 	return &descriptor, nil
 }
 
@@ -368,7 +368,7 @@ func newServedAuditorModule(module *plugin.AuditorModule, host plugin.HostContex
 }
 
 func (s *servedAuditorModule) Descriptor(context.Context) (*plugin.AuditorDescriptor, error) {
-	descriptor := s.module.Descriptor
+	descriptor := s.module.Descriptor.Clone()
 	return &descriptor, nil
 }
 
@@ -418,7 +418,7 @@ func newServedAnalyzerModule(module *plugin.AnalyzerModule, host plugin.HostCont
 }
 
 func (s *servedAnalyzerModule) Descriptor(context.Context) (*plugin.AnalyzerDescriptor, error) {
-	descriptor := s.module.Descriptor
+	descriptor := s.module.Descriptor.Clone()
 	return &descriptor, nil
 }
 

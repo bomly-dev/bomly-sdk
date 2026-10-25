@@ -325,16 +325,12 @@ func hostToASCII(parsed *url.URL) (string, bool) {
 	if p := parsed.Port(); p != "" {
 		port = ":" + p
 	}
-	// Two passes, each doing the job the library documents for it. Lookup
-	// maps and canonicalizes: punycode, case, and the label separators.
-	mapped, err := idna.Lookup.ToASCII(name)
-	if err != nil {
+	// CanonicalHostname maps and validates: punycode, case, the label
+	// separators, and DNS lengths.
+	mapped, ok := CanonicalHostname(name)
+	if !ok {
 		return "", false
 	}
-	// hostLengths then validates what the mapping produced. Its output is the
-	// input again -- the value is already mapped -- so only its verdict is
-	// used; TestTheValidationPassOnlyJudges pins that.
-	//
 	// A trailing separator does not survive this. It marks an absolute name
 	// and is legal, but label validation reads it as an empty final label and
 	// refuses the host, so a Unicode name written "例え.テスト." is refused
@@ -348,10 +344,31 @@ func hostToASCII(parsed *url.URL) (string, bool) {
 	// rather than sharpened again. The cost is refusing a rare legal name,
 	// which is the direction this gate errs in everywhere else. Restoring it
 	// needs a reason better than symmetry.
+	return mapped + port, true
+}
+
+// CanonicalHostname maps a bare DNS host name -- no scheme, port or path --
+// to the ASCII form a resolver accepts and reports whether it is one: a
+// Unicode name becomes punycode, case and label separators fold, and a name
+// with an empty label, a label over 63 bytes, a total over 253 bytes or a
+// code point IDNA disallows is refused. It is the one host gate in this
+// module: published URLs reach it through their host, and a plugin's
+// declared network destinations through plugin.Access.
+//
+// golang.org/x/net/idna does the work in two passes, each the job the
+// library documents for it. Lookup maps and canonicalizes; hostLengths then
+// validates what the mapping produced. Its output is the input again -- the
+// value is already mapped -- so only its verdict is used;
+// TestTheValidationPassOnlyJudges pins that.
+func CanonicalHostname(name string) (string, bool) {
+	mapped, err := idna.Lookup.ToASCII(name)
+	if err != nil {
+		return "", false
+	}
 	if _, err := hostLengths.ToASCII(mapped); err != nil {
 		return "", false
 	}
-	return mapped + port, true
+	return mapped, true
 }
 
 // hostLengths is the IDNA lookup profile plus DNS length verification.

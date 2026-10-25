@@ -368,3 +368,27 @@ func TestTheValidationPassOnlyJudges(t *testing.T) {
 		t.Fatalf("only %d of %d names reached the comparison", checked, len(names))
 	}
 }
+
+// TestCanonicalHostname pins the exported host gate on bare names, the form
+// plugin.Access hands it: case and Unicode fold to the resolver's ASCII
+// form, and anything that is not a resolvable name is refused.
+func TestCanonicalHostname(t *testing.T) {
+	for input, want := range map[string]string{
+		"api.osv.dev":    "api.osv.dev",
+		"API.OSV.Dev":    "api.osv.dev",
+		"例え.テスト":         "xn--r8jz45g.xn--zckzah",
+		"xn--r8jz45g.jp": "xn--r8jz45g.jp",
+	} {
+		if got, ok := CanonicalHostname(input); !ok || got != want {
+			t.Errorf("CanonicalHostname(%q) = %q, %v; want %q", input, got, ok, want)
+		}
+	}
+	for _, refused := range []string{
+		"", "a..b", "*.example.com", "example.com:443", "https://example.com",
+		"bad host", strings.Repeat("a", 64) + ".example", "\u00ad.example",
+	} {
+		if got, ok := CanonicalHostname(refused); ok {
+			t.Errorf("CanonicalHostname(%q) accepted it as %q", refused, got)
+		}
+	}
+}

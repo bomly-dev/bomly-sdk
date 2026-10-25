@@ -15,6 +15,12 @@
 // registers run in reverse order when that lifetime ends; ComponentScope is
 // the implementation a host uses.
 //
+// A descriptor may declare the pipeline inputs its component needs in
+// Requires (see Requirement), so a host can explain an impossible plan before
+// running it; Ready and Applicable still decide at run time. A managed
+// plugin's manifest may disclose the access it expects (see Access), which a
+// host shows the user as an unverified claim before the plugin is enabled.
+//
 // A matcher or analyzer receives a copy of the host's graph and registry
 // (MatchRequest.Clone, AnalyzeRequest.Clone), and the host keeps what it
 // returns only when the call succeeds: changing the request in place and then

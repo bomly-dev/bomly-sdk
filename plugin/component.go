@@ -32,6 +32,11 @@ type ComponentDescriptor struct {
 	// version of a component produced it. Optional; held to the name's
 	// domain (bounded, valid UTF-8, no control characters) when present.
 	Version string `json:"version,omitempty"`
+	// Requires declares the pipeline inputs and host capabilities the
+	// component needs; see Requirement. Optional: absent means legacy and
+	// unspecified, never "needs nothing". Ready and Applicable still run.
+	// Gate: Requirements.Validate, through the kind's Validate*Descriptor.
+	Requires Requirements `json:"requires,omitempty"`
 }
 
 // Label returns the user-facing component label, falling back to Name.
@@ -231,23 +236,26 @@ func validateComponentDescriptor(kind string, descriptor ComponentDescriptor) er
 			return fmt.Errorf("%s descriptor supported managers must not contain empty values", kind)
 		}
 	}
+	if err := descriptor.Requires.Validate(); err != nil {
+		return fmt.Errorf("%s descriptor %w", kind, err)
+	}
 	return nil
 }
 
 func componentFromDetectorDescriptor(descriptor DetectorDescriptor) ComponentDescriptor {
-	return ComponentDescriptor{Name: descriptor.Name, DisplayName: descriptor.DisplayName, Aliases: descriptor.Aliases, Tags: descriptor.Tags, SupportedEcosystems: descriptor.SupportedEcosystems, SupportedManagers: descriptor.SupportedManagers, Version: descriptor.Version}
+	return ComponentDescriptor{Name: descriptor.Name, DisplayName: descriptor.DisplayName, Aliases: descriptor.Aliases, Tags: descriptor.Tags, SupportedEcosystems: descriptor.SupportedEcosystems, SupportedManagers: descriptor.SupportedManagers, Version: descriptor.Version, Requires: descriptor.Requires}
 }
 
 func componentFromMatcherDescriptor(descriptor MatcherDescriptor) ComponentDescriptor {
-	return ComponentDescriptor{Name: descriptor.Name, DisplayName: descriptor.DisplayName, Aliases: descriptor.Aliases, Tags: descriptor.Tags, SupportedEcosystems: descriptor.SupportedEcosystems, SupportedManagers: descriptor.SupportedManagers, Version: descriptor.Version}
+	return ComponentDescriptor{Name: descriptor.Name, DisplayName: descriptor.DisplayName, Aliases: descriptor.Aliases, Tags: descriptor.Tags, SupportedEcosystems: descriptor.SupportedEcosystems, SupportedManagers: descriptor.SupportedManagers, Version: descriptor.Version, Requires: descriptor.Requires}
 }
 
 func componentFromAuditorDescriptor(descriptor AuditorDescriptor) ComponentDescriptor {
-	return ComponentDescriptor{Name: descriptor.Name, DisplayName: descriptor.DisplayName, Aliases: descriptor.Aliases, Tags: descriptor.Tags, SupportedEcosystems: descriptor.SupportedEcosystems, SupportedManagers: descriptor.SupportedManagers, Version: descriptor.Version}
+	return ComponentDescriptor{Name: descriptor.Name, DisplayName: descriptor.DisplayName, Aliases: descriptor.Aliases, Tags: descriptor.Tags, SupportedEcosystems: descriptor.SupportedEcosystems, SupportedManagers: descriptor.SupportedManagers, Version: descriptor.Version, Requires: descriptor.Requires}
 }
 
 func componentFromAnalyzerDescriptor(descriptor AnalyzerDescriptor) ComponentDescriptor {
-	return ComponentDescriptor{Name: descriptor.Name, DisplayName: descriptor.DisplayName, Aliases: descriptor.Aliases, Tags: descriptor.Tags, SupportedEcosystems: descriptor.SupportedEcosystems, SupportedManagers: descriptor.SupportedManagers, Version: descriptor.Version}
+	return ComponentDescriptor{Name: descriptor.Name, DisplayName: descriptor.DisplayName, Aliases: descriptor.Aliases, Tags: descriptor.Tags, SupportedEcosystems: descriptor.SupportedEcosystems, SupportedManagers: descriptor.SupportedManagers, Version: descriptor.Version, Requires: descriptor.Requires}
 }
 
 func includesComponentName(include []string, name string) bool {

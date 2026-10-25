@@ -40,12 +40,32 @@ type MatcherDescriptor struct {
 	// Version is the component's own release version; see
 	// ComponentDescriptor.Version. Optional.
 	Version string `json:"version,omitempty"`
+	// Requires declares the pipeline inputs and host capabilities the
+	// component needs; see Requirement. Optional: absent means legacy and
+	// unspecified, never "needs nothing". Ready and Applicable still run.
+	// Gate: Requirements.Validate, through the kind's Validate*Descriptor.
+	Requires Requirements `json:"requires,omitempty"`
 	// Capabilities advertises optional protocol features this matcher
 	// supports, such as CapabilityPackageUpdates.
 	Capabilities []string `json:"capabilities,omitempty"`
 	// ConfigSchema optionally documents the matcher's configuration block as
 	// a JSON Schema. Build it with ConfigSchemaFor.
 	ConfigSchema json.RawMessage `json:"configSchema,omitempty"`
+}
+
+// Clone returns a deep copy of the descriptor: every slice, the declared
+// requirements and the config schema are copied, so a host that keeps a
+// descriptor cannot have it changed by the component that returned it.
+func (d MatcherDescriptor) Clone() MatcherDescriptor {
+	clone := d
+	clone.Aliases = slices.Clone(d.Aliases)
+	clone.Tags = slices.Clone(d.Tags)
+	clone.SupportedEcosystems = slices.Clone(d.SupportedEcosystems)
+	clone.SupportedManagers = slices.Clone(d.SupportedManagers)
+	clone.Capabilities = slices.Clone(d.Capabilities)
+	clone.Requires = slices.Clone(d.Requires)
+	clone.ConfigSchema = slices.Clone(d.ConfigSchema)
+	return clone
 }
 
 // MatchRequest defines input for a matcher. Matchers enrich the package

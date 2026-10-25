@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"slices"
 
 	"github.com/bomly-dev/bomly-sdk/model"
 )
@@ -67,9 +68,28 @@ type AuditorDescriptor struct {
 	// Version is the component's own release version; see
 	// ComponentDescriptor.Version. Optional.
 	Version string `json:"version,omitempty"`
+	// Requires declares the pipeline inputs and host capabilities the
+	// component needs; see Requirement. Optional: absent means legacy and
+	// unspecified, never "needs nothing". Ready and Applicable still run.
+	// Gate: Requirements.Validate, through the kind's Validate*Descriptor.
+	Requires Requirements `json:"requires,omitempty"`
 	// ConfigSchema optionally documents the auditor's configuration block as
 	// a JSON Schema. Build it with ConfigSchemaFor.
 	ConfigSchema json.RawMessage `json:"configSchema,omitempty"`
+}
+
+// Clone returns a deep copy of the descriptor: every slice, the declared
+// requirements and the config schema are copied, so a host that keeps a
+// descriptor cannot have it changed by the component that returned it.
+func (d AuditorDescriptor) Clone() AuditorDescriptor {
+	clone := d
+	clone.Aliases = slices.Clone(d.Aliases)
+	clone.Tags = slices.Clone(d.Tags)
+	clone.SupportedEcosystems = slices.Clone(d.SupportedEcosystems)
+	clone.SupportedManagers = slices.Clone(d.SupportedManagers)
+	clone.Requires = slices.Clone(d.Requires)
+	clone.ConfigSchema = slices.Clone(d.ConfigSchema)
+	return clone
 }
 
 // Auditor analyzes graphs or components and returns findings.

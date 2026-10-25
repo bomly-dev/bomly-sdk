@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"slices"
 
 	"go.uber.org/zap"
 
@@ -115,7 +116,12 @@ type DetectorDescriptor struct {
 	SupportedManagers   []model.PackageManager `json:"supportedManagers,omitempty"`
 	// Version is the component's own release version; see
 	// ComponentDescriptor.Version. Optional.
-	Version               string                  `json:"version,omitempty"`
+	Version string `json:"version,omitempty"`
+	// Requires declares the pipeline inputs and host capabilities the
+	// component needs; see Requirement. Optional: absent means legacy and
+	// unspecified, never "needs nothing". Ready and Applicable still run.
+	// Gate: Requirements.Validate, through the kind's Validate*Descriptor.
+	Requires              Requirements            `json:"requires,omitempty"`
 	Technique             DetectorTechnique       `json:"technique,omitempty"`
 	PackageManagerSupport []PackageManagerSupport `json:"packageManagerSupport,omitempty"`
 	FallbackDetectors     []string                `json:"fallbackDetectors,omitempty"`
@@ -149,6 +155,7 @@ func (d DetectorDescriptor) Clone() DetectorDescriptor {
 	clone.SupportedEcosystems = append([]model.Ecosystem(nil), d.SupportedEcosystems...)
 	clone.SupportedManagers = append([]model.PackageManager(nil), d.SupportedManagers...)
 	clone.FallbackDetectors = append([]string(nil), d.FallbackDetectors...)
+	clone.Requires = slices.Clone(d.Requires)
 	clone.IgnoredDirectories = append([]string(nil), d.IgnoredDirectories...)
 	clone.IgnoredDirectoryMarkers = append([]string(nil), d.IgnoredDirectoryMarkers...)
 	clone.ConfigSchema = append(json.RawMessage(nil), d.ConfigSchema...)
