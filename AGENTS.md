@@ -54,8 +54,13 @@ is expensive (an output or wire contract, a cross-repository or security
 boundary, a public claim), and the reason is not visible from the code or a
 guard's message. About 300 words, never more than about 400, one decision per
 file, with the rejected alternative and what enforces it; revise in place
-rather than appending amendments. Everything else is a doc comment on the code
-or a paragraph in this file. The full rule is
+rather than appending amendments. An issue, plan or acceptance checklist that
+asks for an ADR is asking for the decision to be recorded, not for a new file,
+and the bar above still decides: when the decision fails it, the reasoning
+goes in a doc comment or a paragraph in this file and the pull request says
+so; when it passes, revise the live record that owns the topic, and start a
+new one only when none does. Everything else is a doc comment on the code or a
+paragraph in this file. The full rule is
 [`bomly-cli/dev-docs/adr/README.md`](https://github.com/bomly-dev/bomly-cli/blob/main/dev-docs/adr/README.md);
 the same section appears in bomly-cli's `AGENTS.md`, so change both together.
 
