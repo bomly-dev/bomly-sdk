@@ -122,3 +122,56 @@ func TestFileCache_HostileIdentityCannotEscapeCacheDirectory(t *testing.T) {
 		t.Fatalf("hostile identity wrote outside cache: %v", err)
 	}
 }
+
+// TestDefaultDirIsUnderTheHomeCacheRoot pins the location every component
+// caches under, which the "home" access plugins declare depends on.
+func TestDefaultDirIsUnderTheHomeCacheRoot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	dir, err := DefaultDir("licenses", "depsdev")
+	if err != nil {
+		t.Fatalf("DefaultDir: %v", err)
+	}
+	if want := filepath.Join(home, ".bomly", "cache", "licenses", "depsdev"); dir != want {
+		t.Errorf("DefaultDir = %q, want %q", dir, want)
+	}
+}
+
+// TestDefaultDirRefusesARelativeFallback is bomly-planning#115: with no home
+// directory there is no default, and the caller runs uncached rather than
+// writing into whatever directory it was started in.
+func TestDefaultDirRefusesARelativeFallback(t *testing.T) {
+	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
+	t.Setenv("home", "")
+	dir, err := DefaultDir("osv")
+	if err == nil {
+		t.Fatalf("DefaultDir = %q with no home directory, want an error", dir)
+	}
+	if dir != "" {
+		t.Errorf("DefaultDir returned %q alongside its error", dir)
+	}
+}
+
+func TestDefaultDirRejectsPathElementsThatAreNotNames(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	for _, part := range []string{"", ".", "..", "a/b", `a\b`} {
+		if dir, err := DefaultDir("ok", part); err == nil {
+			t.Errorf("DefaultDir(%q) = %q, want an error", part, dir)
+		}
+	}
+}
+
+// TestNilFileCacheStoresNothing: a component without a cache directory passes
+// nil and keeps working, without guarding each call.
+func TestNilFileCacheStoresNothing(t *testing.T) {
+	var cache *FileCache
+	key := NewKey("pkg:npm/a@1.0.0", "a", "npm", "1.0.0")
+	if err := Set(cache, key, "value"); err != nil {
+		t.Fatalf("Set on a nil cache: %v", err)
+	}
+	if value, ok := Get[string](cache, key); ok || value != "" {
+		t.Errorf("Get on a nil cache = %q, %v; want a miss", value, ok)
+	}
+}

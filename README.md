@@ -102,7 +102,7 @@ The SDK ships shared helper subpackages so component modules and external
 plugins reuse the same implementations Bomly's built-ins use:
 
 - `system` — bounded filesystem reads plus exec, path, and environment wrappers.
-- `filecache` — TTL-based on-disk JSON cache with typed `Get`/`Set` helpers.
+- `filecache` — TTL-based on-disk JSON cache with typed `Get`/`Set` helpers, and `DefaultDir`, the one default cache location (`~/.bomly/cache/...`); a nil cache stores nothing, for a component that runs uncached.
 - `logkit` — secret-safe subprocess logging: argument/URL sanitizers, command fields, stderr counter.
 - `detectorkit` — detector helpers: manifest metadata, source positions, remediation hints, subgraphs, build-tool readiness and timeouts.
 - `matcherkit` — matcher helpers: registry package seeding and license normalization.
