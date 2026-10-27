@@ -563,8 +563,15 @@ func isValidOriginRevision(revision string) bool {
 // MergeOrigins unions two origin lists into one, deduplicating by the
 // normalized value and dropping entries that do not survive validation — the
 // publication gates above remain the only door into a stored list. Merge
-// class: union keyed by the normalized origin; order is deterministic —
-// existing entries first, then new additions in arrival order. Two lists
+// class: union keyed by the normalized origin, with first-writer precedence
+// for the primary origin -- existing entries first, then new additions in
+// arrival order. The order is content, not an accident to canonicalize away:
+// the first origin is the primary one, which an SBOM export writes as the
+// component's download and VCS location (sbom.Component's ArtifactURL,
+// VCSURL and VCSRevision) and the plugin wire writes as the legacy single
+// "origin" field. Sorting would let the alphabet pick a package's download
+// location, so the witness that arrived first keeps it, exactly as a
+// fill-gaps scalar keeps its first writer (bomly-sdk#119). Two lists
 // asserting the same location in different spellings collapse to one entry
 // because the key is the normalized form, not the input bytes.
 func MergeOrigins(existing, additions []DependencyOrigin) []DependencyOrigin {

@@ -1160,11 +1160,13 @@ const (
 	// content.
 	mergeUnion packageMergeClass = "union"
 	// mergeUnionInArrivalOrder is a union whose members are commutative,
-	// associative and idempotent but whose order is not canonicalized: the
-	// receiver's entries come first, then each witness's additions as they
-	// arrive (MergeOrigins documents this). The set is order-independent;
-	// the encoded list is not.
-	mergeUnionInArrivalOrder packageMergeClass = "union, arrival order"
+	// associative and idempotent, and whose first element is the primary
+	// origin under first-writer precedence: the receiver's entries come
+	// first, then each witness's additions as they arrive. The set is
+	// order-independent; which origin is primary is the precedence, exactly
+	// as for a fill-gaps scalar, and an SBOM export depends on it
+	// (MergeOrigins, bomly-sdk#119).
+	mergeUnionInArrivalOrder packageMergeClass = "union, first-writer primary"
 	// mergeWitnesses keeps every distinct witness, in any input order,
 	// because folding two of them would misattribute a claim (an
 	// attestation verified for one issuer is not verified for another).

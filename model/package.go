@@ -685,7 +685,9 @@ type Package struct {
 	// the seeded registry package, so matchers that resolved repositories
 	// from the (now identity-stripped) URL-valued purl qualifiers receive
 	// the relocated signal. Additive and optional; every element passes the
-	// origin codecs' validation. Merge class: union by normalized value.
+	// origin codecs' validation. Merge class: union by normalized value,
+	// with the first element the primary origin (first-writer); see
+	// MergeOrigins.
 	DetectedOrigins []DependencyOrigin `json:"detected_origins,omitempty"`
 
 	Vulnerabilities []Vulnerability      `json:"vulnerabilities,omitempty"`

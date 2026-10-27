@@ -125,7 +125,9 @@ type DependencyNode struct {
 	// identity (ADR-0041). Union-merged and deduplicated by normalized
 	// value; the ADR-0033 publication gates are the only door in. A list
 	// with more than one element is an observable fact — the shape of a
-	// dependency-confusion signal — not a reason to split the node.
+	// dependency-confusion signal — not a reason to split the node. The
+	// first element is the primary origin, kept by the witness that
+	// arrived first (see MergeOrigins).
 	Origins  []DependencyOrigin
 	Metadata map[string]any
 	// Matched is true when the referenced package was enriched by a matcher.
