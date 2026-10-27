@@ -686,8 +686,8 @@ type Package struct {
 	// from the (now identity-stripped) URL-valued purl qualifiers receive
 	// the relocated signal. Additive and optional; every element passes the
 	// origin codecs' validation. Merge class: union by normalized value,
-	// with the first element the primary origin (first-writer); see
-	// MergeOrigins.
+	// with the first retained element the primary origin (first-writer,
+	// after supersession); see MergeOrigins.
 	DetectedOrigins []DependencyOrigin `json:"detected_origins,omitempty"`
 
 	Vulnerabilities []Vulnerability      `json:"vulnerabilities,omitempty"`

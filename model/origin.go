@@ -571,7 +571,11 @@ func isValidOriginRevision(revision string) bool {
 // VCSURL and VCSRevision) and the plugin wire writes as the legacy single
 // "origin" field. Sorting would let the alphabet pick a package's download
 // location, so the witness that arrived first keeps it, exactly as a
-// fill-gaps scalar keeps its first writer (bomly-sdk#119). Two lists
+// fill-gaps scalar keeps its first writer (bomly-sdk#119). Precedence applies
+// to the origins that survive supersession: an unpinned repository origin is
+// dropped when a revision-pinned one names the same place (see
+// dropSupersededOrigins), so a pinned witness can become primary even though
+// the floating one arrived first. Two lists
 // asserting the same location in different spellings collapse to one entry
 // because the key is the normalized form, not the input bytes.
 func MergeOrigins(existing, additions []DependencyOrigin) []DependencyOrigin {

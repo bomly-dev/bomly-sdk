@@ -127,7 +127,8 @@ type DependencyNode struct {
 	// with more than one element is an observable fact — the shape of a
 	// dependency-confusion signal — not a reason to split the node. The
 	// first element is the primary origin, kept by the witness that
-	// arrived first (see MergeOrigins).
+	// arrived first unless a revision-pinned origin supersedes it (see
+	// MergeOrigins).
 	Origins  []DependencyOrigin
 	Metadata map[string]any
 	// Matched is true when the referenced package was enriched by a matcher.
