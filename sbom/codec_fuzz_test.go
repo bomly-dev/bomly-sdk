@@ -26,6 +26,17 @@ func FuzzUnmarshalAutoJSON(f *testing.F) {
 		`{"spdxVersion":"SPDX-2.3","SPDXID":"SPDXRef-DOCUMENT","name":"demo","documentNamespace":"https://example.com/spdx/demo","externalDocumentRefs":[{"externalDocumentId":"DocumentRef-a","spdxDocument":"../../etc/passwd","checksum":{"algorithm":"NOPE","checksumValue":""}}],"packages":[]}`,
 		`{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,"serialNumber":"urn:uuid:3e671687-395b-41f5-a30f-a58921a69b79","externalReferences":[{"type":"bom","url":"urn:cdx:3e671687-395b-41f5-a30f-a58921a69b79/2","hashes":[{"alg":"SHA-256","content":"0000000000000000000000000000000000000000000000000000000000000000"}]}],"components":[]}`,
 		`{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,"externalReferences":[{"type":"bom","url":"file:///etc/passwd"}],"components":[{"bom-ref":"a","name":"a","version":"1","purl":"pkg:npm/a@1","scope":"optional","properties":[{"name":"bomly:scopes","value":"runtime,future"}]}]}`,
+		// SPDX 3.0 JSON-LD: a minimal document, one naming a listed license
+		// by its License List IRI (which ingest defines before the library
+		// reads it), one whose context is a list, one with no SpdxDocument,
+		// and the vocabulary-as-element shape that panicked the library's
+		// reader.
+		`{"@context":"https://spdx.org/rdf/3.0.1/spdx-context.jsonld","@graph":[{"type":"CreationInfo","@id":"_:c","specVersion":"3.0.1","created":"2026-01-01T00:00:00Z","createdBy":["https://example.com/a"]},{"type":"Organization","spdxId":"https://example.com/a","name":"a","creationInfo":"_:c"},{"type":"SpdxDocument","spdxId":"https://example.com/d","creationInfo":"_:c","rootElement":["https://example.com/p"]},{"type":"software_Package","spdxId":"https://example.com/p","name":"p","software_packageVersion":"1","software_packageUrl":"pkg:npm/p@1","creationInfo":"_:c"}]}`,
+		`{"@context":"https://spdx.org/rdf/3.0.1/spdx-context.jsonld","@graph":[{"type":"CreationInfo","@id":"_:c","specVersion":"3.0.1","created":"2026-01-01T00:00:00Z","createdBy":[]},{"type":"SpdxDocument","spdxId":"https://example.com/d","creationInfo":"_:c"},{"type":"software_Package","spdxId":"https://example.com/p","name":"p","creationInfo":"_:c"},{"type":"Relationship","spdxId":"https://example.com/r","from":"https://example.com/p","to":["https://spdx.org/licenses/MIT"],"relationshipType":"hasDeclaredLicense","creationInfo":"_:c"}]}`,
+		`{"@context":["https://spdx.org/rdf/3.0.1/spdx-context.jsonld"],"@graph":[{"type":"SpdxDocument","spdxId":"https://example.com/d"}]}`,
+		`{"@context":"https://spdx.org/rdf/3.0.1/spdx-context.jsonld","@graph":[{"type":"software_Package","spdxId":"https://example.com/p","name":"p"}]}`,
+		`{"@context":"https://spdx.org/rdf/3.0.1/spdx-context.jsonld","@graph":[{"type":"SpdxDocument","spdxId":"https://example.com/d"},{"type":"software_Package","spdxId":"https://example.com/p","verifiedUsing":[{"type":"Hash","algorithm":"https://example.com/h","hashValue":"00"}]},{"type":"HashAlgorithm","spdxId":"https://example.com/h"}]}`,
+		`{"@context":"https://spdx.org/rdf/3.0.1/spdx-context.jsonld","@graph":[{"type":"SpdxDocument","spdxId":"https://exa`,
 		// Malformed inputs: rejection paths must be deterministic, never panic.
 		``,
 		`{}`,

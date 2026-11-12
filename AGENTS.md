@@ -246,7 +246,11 @@ imports only `purlkit`, `spdxkit`, the standard library, and the two format
 libraries whose vocabularies it cites by constant (cyclonedx-go,
 spdx/tools-golang); `httpkit` is a leaf that `plugin` reaches for
 `HostContext`; `scan` imports `model`, `plugin` and `graphview`, and nothing
-imports `scan`. Nothing imports upward. The
+imports `scan`. Nothing imports upward. `sbom` is the only importer of
+`spdx/tools-golang/spdx/v3`: the SPDX 3 reader panics on some untrusted
+graphs and the converter and serializer are nondeterministic, and
+`sbom/spdx3*.go` is where both are contained (`repo_guards_test.go`
+enforces it). The
 module root holds `doc.go` (the map) and `repo_guards_test.go` (the import
 boundary and the single-guidance-file rule, both keyed on the root
 directory) and nothing else; do not add code there.

@@ -46,6 +46,18 @@ var boundedImports = []struct {
 		allowed: map[string]string{},
 	},
 	{
+		// The SPDX 3 model, its JSON-LD reader and its 2.3 converter. The
+		// reader panics on some untrusted graphs, the converter and the
+		// serializer are nondeterministic, and the library's shared license
+		// values are mutated by its serializer: sbom/spdx3*.go contains all
+		// of that, so no other package may reach the library directly.
+		// The 2.3 package stays importable from model, which cites its
+		// vocabulary by constant.
+		module:  "github.com/spdx/tools-golang/spdx/v3",
+		kitDir:  "sbom",
+		allowed: map[string]string{},
+	},
+	{
 		module:  "encoding/json/v2",
 		kitDir:  "sbom",
 		allowed: map[string]string{},

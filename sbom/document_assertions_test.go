@@ -137,7 +137,7 @@ func TestDocumentClaimsSurviveTheGraphHop(t *testing.T) {
 // byte difference. Pinning them would have made this test pass over exactly
 // the defects it exists to catch.
 func TestSingleSourceExportIsAFixedPoint(t *testing.T) {
-	for _, target := range []Target{TargetSPDX23JSON, TargetCycloneDX16JSON} {
+	for _, target := range []Target{TargetSPDX23JSON, TargetSPDX30JSON, TargetCycloneDX16JSON} {
 		t.Run(string(target), func(t *testing.T) {
 			opts := BuildOptions{ToolVersion: "0.0.0-test", RestatesSource: true}
 

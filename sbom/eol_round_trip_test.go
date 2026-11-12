@@ -10,7 +10,7 @@ import (
 // defect 4). Each format keeps exactly what it can write: SPDX has no cycle
 // field in its package comment, CycloneDX does.
 func TestEOLSurvivesADocumentRoundTrip(t *testing.T) {
-	for _, target := range []Target{TargetSPDX23JSON, TargetCycloneDX16JSON} {
+	for _, target := range []Target{TargetSPDX23JSON, TargetSPDX30JSON, TargetCycloneDX16JSON} {
 		t.Run(string(target), func(t *testing.T) {
 			doc := &Document{
 				Name: "eol",

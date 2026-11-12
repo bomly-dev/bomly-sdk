@@ -1,0 +1,121 @@
+{
+  "@context": "https://spdx.org/rdf/3.0.1/spdx-context.jsonld",
+  "@graph": [
+    {
+      "type": "CreationInfo",
+      "@id": "_:creationinfo",
+      "specVersion": "3.0.1",
+      "created": "2025-01-02T03:04:05Z",
+      "createdBy": ["https://example.com/agents/acme"],
+      "createdUsing": ["https://example.com/tools/examplegen"]
+    },
+    {
+      "type": "Organization",
+      "spdxId": "https://example.com/agents/acme",
+      "name": "Acme Corp",
+      "creationInfo": "_:creationinfo",
+      "externalIdentifier": [
+        {"type": "ExternalIdentifier", "externalIdentifierType": "email", "identifier": "sbom@acme.example"}
+      ]
+    },
+    {
+      "type": "Tool",
+      "spdxId": "https://example.com/tools/examplegen",
+      "name": "examplegen-1.2.0",
+      "creationInfo": "_:creationinfo"
+    },
+    {
+      "type": "SpdxDocument",
+      "spdxId": "https://example.com/docs/app-1",
+      "name": "app-sbom",
+      "comment": "produced by another tool",
+      "creationInfo": "_:creationinfo",
+      "profileConformance": ["core", "software", "simpleLicensing"],
+      "rootElement": ["https://example.com/sbom/1"]
+    },
+    {
+      "type": "software_Sbom",
+      "spdxId": "https://example.com/sbom/1",
+      "creationInfo": "_:creationinfo",
+      "rootElement": ["https://example.com/pkg/app"],
+      "element": [
+        "https://example.com/pkg/app",
+        "https://example.com/pkg/lodash",
+        "https://example.com/pkg/jest"
+      ]
+    },
+    {
+      "type": "software_Package",
+      "spdxId": "https://example.com/pkg/app",
+      "name": "app",
+      "software_packageVersion": "2.0.0",
+      "software_primaryPurpose": "application",
+      "creationInfo": "_:creationinfo"
+    },
+    {
+      "type": "software_Package",
+      "spdxId": "https://example.com/pkg/lodash",
+      "name": "lodash",
+      "software_packageVersion": "4.17.21",
+      "software_packageUrl": "pkg:npm/lodash@4.17.21",
+      "software_downloadLocation": "https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz",
+      "suppliedBy": "https://example.com/agents/acme",
+      "verifiedUsing": [
+        {"type": "Hash", "algorithm": "sha512", "hashValue": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+      ],
+      "externalRef": [
+        {"type": "ExternalRef", "externalRefType": "issueTracker", "locator": ["https://github.com/lodash/lodash/issues"]}
+      ],
+      "creationInfo": "_:creationinfo"
+    },
+    {
+      "type": "software_Package",
+      "spdxId": "https://example.com/pkg/jest",
+      "name": "jest",
+      "software_packageVersion": "29.0.0",
+      "externalIdentifier": [
+        {"type": "ExternalIdentifier", "externalIdentifierType": "packageUrl", "identifier": "pkg:npm/jest@29.0.0"}
+      ],
+      "creationInfo": "_:creationinfo"
+    },
+    {
+      "type": "Relationship",
+      "spdxId": "https://example.com/relationships/app-lodash",
+      "from": "https://example.com/pkg/app",
+      "to": ["https://example.com/pkg/lodash"],
+      "relationshipType": "dependsOn",
+      "creationInfo": "_:creationinfo"
+    },
+    {
+      "type": "LifecycleScopedRelationship",
+      "spdxId": "https://example.com/relationships/app-jest",
+      "from": "https://example.com/pkg/app",
+      "to": ["https://example.com/pkg/jest"],
+      "relationshipType": "dependsOn",
+      "scope": "development",
+      "creationInfo": "_:creationinfo"
+    },
+    {
+      "type": "Relationship",
+      "spdxId": "https://example.com/relationships/lodash-license",
+      "from": "https://example.com/pkg/lodash",
+      "to": ["https://spdx.org/licenses/MIT"],
+      "relationshipType": "hasDeclaredLicense",
+      "creationInfo": "_:creationinfo"
+    },
+    {
+      "type": "simplelicensing_LicenseExpression",
+      "spdxId": "https://example.com/licenses/jest",
+      "simplelicensing_licenseExpression": "MIT OR Apache-2.0",
+      "creationInfo": "_:creationinfo"
+    },
+    {
+      "type": "Relationship",
+      "spdxId": "https://example.com/relationships/jest-license",
+      "from": "https://example.com/pkg/jest",
+      "to": ["https://example.com/licenses/jest"],
+      "relationshipType": "hasConcludedLicense",
+      "creationInfo": "_:creationinfo"
+    }
+  ]
+}

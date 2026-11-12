@@ -176,7 +176,7 @@ func TestSourceLinkChecksumCoversTheSourceBytes(t *testing.T) {
 // be built from nothing (bomly-dev/bomly-sdk#61). Provenance now survives more
 // than one hop, which is the SDK's declared merge class for the source set.
 func TestMergedSourceLinksSurviveASecondConversion(t *testing.T) {
-	for _, target := range []Target{TargetSPDX23JSON, TargetCycloneDX16JSON} {
+	for _, target := range []Target{TargetSPDX23JSON, TargetSPDX30JSON, TargetCycloneDX16JSON} {
 		t.Run(string(target), func(t *testing.T) {
 			first, _ := mergedExport(t, target, documentRichSPDX, serialCycloneDX)
 
@@ -195,6 +195,10 @@ func TestMergedSourceLinksSurviveASecondConversion(t *testing.T) {
 			case TargetSPDX23JSON:
 				for _, ref := range spdxExternalDocumentRefs(t, second) {
 					named = append(named, ref.URI)
+				}
+			case TargetSPDX30JSON:
+				for _, imported := range spdx3DocumentImports(t, second) {
+					named = append(named, imported.LocationHint)
 				}
 			default:
 				for _, ref := range cycloneDXSourceRefs(t, second) {
@@ -245,7 +249,7 @@ func TestCycloneDXSourceLinksCarryTheirChecksum(t *testing.T) {
 // A native scan names no sources: there were none.
 func TestNativeExportNamesNoSources(t *testing.T) {
 	g := scopedGraph(t, model.ScopeRuntime)
-	for _, target := range []Target{TargetSPDX23JSON, TargetCycloneDX16JSON} {
+	for _, target := range []Target{TargetSPDX23JSON, TargetSPDX30JSON, TargetCycloneDX16JSON} {
 		t.Run(string(target), func(t *testing.T) {
 			raw, err := MarshalDepGraphJSON(g, target, BuildOptions{Created: fixedExportTime()}, EncodeOptions{Pretty: true})
 			if err != nil {
@@ -255,6 +259,10 @@ func TestNativeExportNamesNoSources(t *testing.T) {
 			case TargetSPDX23JSON:
 				if refs := spdxExternalDocumentRefs(t, raw); len(refs) != 0 {
 					t.Errorf("externalDocumentRefs = %+v, want none", refs)
+				}
+			case TargetSPDX30JSON:
+				if imports := spdx3DocumentImports(t, raw); len(imports) != 0 {
+					t.Errorf("imports = %+v, want none", imports)
 				}
 			default:
 				if refs := cycloneDXSourceRefs(t, raw); len(refs) != 0 {

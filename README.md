@@ -160,7 +160,7 @@ an SBOM cannot say.
 
 ## The SBOM codec
 
-- `sbom` — the SBOM codec: projects a graph into SPDX 2.3 or CycloneDX JSON and reads such a document back into a graph, with the document model, the strict ingest preflight, and the assertions a document carries about itself.
+- `sbom` — the SBOM codec: projects a graph into SPDX 2.3, SPDX 3.0 (JSON-LD) or CycloneDX JSON and reads such a document back into a graph, with the document model, the strict ingest preflight, and the assertions a document carries about itself.
 - `graphview` — what a document may say about a node: the package URL it publishes, which of its children a document can name, and which nodes count as top-level parents.
 
 Both come from the CLI's `internal/sbom` and `internal/graphview`

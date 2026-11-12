@@ -1,8 +1,9 @@
 // Package sbom is the SBOM codec: it projects a dependency graph into an
-// SPDX 2.3 or CycloneDX document and reads such a document back into a graph.
+// SPDX 2.3, SPDX 3.0 or CycloneDX document and reads such a document back
+// into a graph.
 //
 // It owns the document model (Document, Component, Dependency and the
-// assertions they carry), the two format codecs, the strict preflight that
+// assertions they carry), the format codecs, the strict preflight that
 // refuses a document without one unambiguous reading (bomly-cli ADR-0026),
 // and the projection in both directions: FromDepGraph and FromGraphEntries
 // build a Document from a graph, ToGraph builds a graph from a Document, and

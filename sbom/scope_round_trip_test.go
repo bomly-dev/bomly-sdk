@@ -36,7 +36,7 @@ func componentScopes(t *testing.T, doc *Document, name string) []model.Scope {
 // formats. Before this, export wrote the single merged precedence value and
 // the union PR #406 established stopped at the SBOM boundary.
 func TestScopeSetSurvivesTheExportBoundary(t *testing.T) {
-	for _, target := range []Target{TargetSPDX23JSON, TargetCycloneDX16JSON} {
+	for _, target := range []Target{TargetSPDX23JSON, TargetSPDX30JSON, TargetCycloneDX16JSON} {
 		t.Run(string(target), func(t *testing.T) {
 			g := scopedGraph(t, model.ScopeRuntime, model.ScopeDevelopment)
 			raw, err := MarshalDepGraphJSON(g, target, BuildOptions{}, EncodeOptions{Pretty: true})
@@ -441,7 +441,7 @@ func TestUnknownScopeTokenKeepsTheKnownScopes(t *testing.T) {
 // A document Bomly wrote names no unknown tokens, so the warning stays quiet
 // on the ordinary path.
 func TestAKnownCarrierReportsNoUnknownTokens(t *testing.T) {
-	for _, target := range []Target{TargetSPDX23JSON, TargetCycloneDX16JSON} {
+	for _, target := range []Target{TargetSPDX23JSON, TargetSPDX30JSON, TargetCycloneDX16JSON} {
 		t.Run(string(target), func(t *testing.T) {
 			g := scopedGraph(t, model.ScopeRuntime, model.ScopeDevelopment)
 			raw, err := MarshalDepGraphJSON(g, target, BuildOptions{}, EncodeOptions{Pretty: true})
