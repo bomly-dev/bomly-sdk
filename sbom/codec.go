@@ -60,6 +60,7 @@ type codec interface {
 
 var codecs = map[Target]codec{
 	TargetSPDX23JSON:      spdx23Codec{},
+	TargetSPDX30JSON:      spdx30Codec{},
 	TargetCycloneDX14JSON: cycloneDXCodec{version: TargetCycloneDX14JSON},
 	TargetCycloneDX15JSON: cycloneDXCodec{version: TargetCycloneDX15JSON},
 	TargetCycloneDX16JSON: cycloneDXCodec{version: TargetCycloneDX16JSON},
@@ -200,6 +201,10 @@ func DetectJSONTarget(data []byte) (Target, error) {
 		Schema      struct {
 			URL string `json:"url"`
 		} `json:"schema"`
+		// Raw, so a document whose @context or @graph has an unexpected
+		// shape is an unsupported format rather than malformed JSON.
+		Context json.RawMessage `json:"@context"`
+		Graph   json.RawMessage `json:"@graph"`
 	}
 	if err := json.Unmarshal(trimmed, &sniff); err != nil {
 		return "", ErrMalformedJSON
@@ -212,6 +217,8 @@ func DetectJSONTarget(data []byte) (Target, error) {
 	switch {
 	case sniff.SPDXVersion == "SPDX-2.3":
 		return TargetSPDX23JSON, nil
+	case spdx3ContextNamed(sniff.Context) && nonEmptyJSONArray(sniff.Graph):
+		return TargetSPDX30JSON, nil
 	case sniff.BOMFormat == "CycloneDX":
 		switch sniff.SpecVersion {
 		case "1.4":
@@ -227,6 +234,43 @@ func DetectJSONTarget(data []byte) (Target, error) {
 	}
 
 	return "", ErrUnsupportedFormat
+}
+
+// spdx3ContextMarker is what makes a JSON-LD document an SPDX 3.0 one: the
+// specification publishes its JSON-LD context under
+// https://spdx.org/rdf/3.0.<patch>/spdx-context.jsonld (3.0.1 today), and a
+// document names it in @context, as a string or as one entry of a list. SPDX
+// 3 has no other discriminator -- no version member like 2.3's spdxVersion --
+// so the context is the format's own declaration of what it is. Which patch
+// release is readable is the library's decision: its reader resolves the
+// context offline and refuses one it does not carry.
+const spdx3ContextMarker = "spdx.org/rdf/3.0."
+
+// spdx3ContextNamed reports whether a JSON-LD @context names an SPDX 3.0
+// context.
+func spdx3ContextNamed(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var single string
+	if json.Unmarshal(raw, &single) == nil {
+		return strings.Contains(single, spdx3ContextMarker)
+	}
+	var list []json.RawMessage
+	if json.Unmarshal(raw, &list) != nil {
+		return false
+	}
+	for _, entry := range list {
+		if json.Unmarshal(entry, &single) == nil && strings.Contains(single, spdx3ContextMarker) {
+			return true
+		}
+	}
+	return false
+}
+
+func nonEmptyJSONArray(raw json.RawMessage) bool {
+	var list []json.RawMessage
+	return json.Unmarshal(raw, &list) == nil && len(list) > 0
 }
 
 // UnmarshalAutoJSON parses a supported SBOM JSON payload without requiring the caller to preselect a target.

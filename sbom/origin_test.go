@@ -572,7 +572,7 @@ func TestExportKeepsEveryFoldedOrigin(t *testing.T) {
 		t.Fatalf("graph holds %d dependency nodes; want the fixture's two", got)
 	}
 
-	for _, target := range []Target{TargetCycloneDX16JSON, TargetSPDX23JSON} {
+	for _, target := range []Target{TargetCycloneDX16JSON, TargetSPDX23JSON, TargetSPDX30JSON} {
 		out, err := MarshalDepGraphJSON(g, target, BuildOptions{}, EncodeOptions{})
 		if err != nil {
 			t.Fatalf("marshal %v: %v", target, err)

@@ -12,6 +12,7 @@ type Target string
 
 const (
 	TargetSPDX23JSON      Target = "spdx-2.3+json"
+	TargetSPDX30JSON      Target = "spdx-3.0+json"
 	TargetCycloneDX14JSON Target = "cyclonedx-1.4+json"
 	TargetCycloneDX15JSON Target = "cyclonedx-1.5+json"
 	TargetCycloneDX16JSON Target = "cyclonedx-1.6+json"

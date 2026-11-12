@@ -153,7 +153,7 @@ func TestStrictIngestDoesNotRejectMerelyUnusualDocuments(t *testing.T) {
 // Bomly's own output always passes its own gate, in both formats. A gate that
 // rejected what the encoder writes would be a released defect, not a defense.
 func TestBomlyOutputPassesTheStrictGate(t *testing.T) {
-	for _, target := range []Target{TargetSPDX23JSON, TargetCycloneDX16JSON} {
+	for _, target := range []Target{TargetSPDX23JSON, TargetSPDX30JSON, TargetCycloneDX16JSON} {
 		t.Run(string(target), func(t *testing.T) {
 			raw, err := MarshalDepGraphJSON(scopedGraph(t, "runtime"), target, BuildOptions{}, EncodeOptions{Pretty: true})
 			if err != nil {

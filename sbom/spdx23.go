@@ -18,6 +18,14 @@ import (
 type spdx23Codec struct{}
 
 func (spdx23Codec) encodeJSON(doc *Document, opts EncodeOptions) ([]byte, error) {
+	return marshalJSON(buildSPDX23Document(doc), opts.Pretty)
+}
+
+// buildSPDX23Document projects the intermediate document onto SPDX 2.3's
+// model. It is shared with the SPDX 3 encoder, which converts this document
+// with the specification library rather than projecting a second time, so
+// the two SPDX encodings of one scan cannot disagree about what they say.
+func buildSPDX23Document(doc *Document) *v23.Document {
 	idByComponent := make(map[string]common.ElementID, len(doc.Components))
 	ids := newSPDXIDAllocator(len(doc.Components))
 	packages := make([]*v23.Package, 0, len(doc.Components))
@@ -133,8 +141,7 @@ func (spdx23Codec) encodeJSON(doc *Document, opts EncodeOptions) ([]byte, error)
 		Relationships:              relationships,
 		OtherLicenses:              spdxOtherLicenses(extractedLicenses),
 	}
-
-	return marshalJSON(spdxDoc, opts.Pretty)
+	return spdxDoc
 }
 
 func (spdx23Codec) decodeJSON(data []byte) (*Document, error) {
@@ -142,7 +149,13 @@ func (spdx23Codec) decodeJSON(data []byte) (*Document, error) {
 	if err := json.Unmarshal(data, &spdxDoc); err != nil {
 		return nil, err
 	}
+	return documentFromSPDX23(&spdxDoc), nil
+}
 
+// documentFromSPDX23 reads an SPDX 2.3 model into the intermediate document.
+// It is shared with the SPDX 3 decoder, which lowers its document to this
+// model first, so both SPDX versions are read by one set of rules.
+func documentFromSPDX23(spdxDoc *v23.Document) *Document {
 	extractedByRef := spdxExtractedTexts(spdxDoc.OtherLicenses)
 
 	components := make([]Component, 0, len(spdxDoc.Packages))
@@ -225,7 +238,7 @@ func (spdx23Codec) decodeJSON(data []byte) (*Document, error) {
 	return &Document{
 		Name:               spdxDoc.DocumentName,
 		Namespace:          spdxDoc.DocumentNamespace,
-		Assertions:         spdxDocumentAssertions(&spdxDoc),
+		Assertions:         spdxDocumentAssertions(spdxDoc),
 		Tool:               extractSPDXToolName(spdxDoc.CreationInfo),
 		Tools:              extractSPDXToolNames(spdxDoc.CreationInfo),
 		Created:            parseSPDXCreated(spdxDoc.CreationInfo),
@@ -236,7 +249,7 @@ func (spdx23Codec) decodeJSON(data []byte) (*Document, error) {
 		Roots:              roots,
 		Described:          roots,
 		UnknownScopeTokens: unknownScopes,
-	}, nil
+	}
 }
 
 func sanitizeSPDXID(raw string) string {
